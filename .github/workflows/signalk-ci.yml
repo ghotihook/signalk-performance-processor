@@ -1,10 +1,12 @@
 name: SignalK Plugin CI
 
+# The private repo pays for Actions minutes, and this shared workflow always runs on
+# macOS and Windows (10x and 2x minutes). So it runs once per release tag, or by hand;
+# test.yml runs the unit tests on Linux on every push.
 on:
   push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
 
 jobs:
   test:
