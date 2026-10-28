@@ -8,7 +8,7 @@ If your TWD swings 5–10° every time you tack or gybe, the wind hasn't shifted
 
 This plugin does the calibration job of a B&G H5000-class instrument processor inside Signal K. It corrects boat speed and leeway, then applies H5000-style TWA and TWS correction tables, and publishes corrected true wind and current. You edit everything in a webapp and can watch each correction work live. Run it in **Shadow mode** first: it publishes alongside your existing instruments without changing anything they do.
 
-> **Proof of concept (0.0.4).** Compare it against your instruments in Shadow mode before relying on it. See the [changelog](CHANGELOG.md).
+> **Proof of concept (0.0.5).** Compare it against your instruments in Shadow mode before relying on it. See the [changelog](CHANGELOG.md).
 
 ## Why it exists
 
@@ -73,7 +73,17 @@ The corrections run in this order, each on the output of the one before:
 
 True wind is worked out on every apparent wind update. Inputs older than 3 seconds are not used. Without STW there is no true wind. Without heel, the heel correction and leeway are skipped. Without heading, there is no TWD or current.
 
-Feed it **measured** apparent wind and **raw** paddlewheel speed. If another plugin already corrects STW (for example `signalk-stw-heel-correction`), choose the instrument as the STW source in Settings, or the correction is applied twice.
+Feed it **measured** apparent wind and **raw** paddlewheel speed. Unless you choose an STW source in Settings, STW is read **from sensors only**: updates that came in through a data connection (NMEA 0183, NMEA 2000), which carry a `source` object, and not STW published by another plugin, which does not. See [Running alongside other STW plugins](#running-alongside-other-stw-plugins).
+
+### Running alongside other STW plugins
+
+This plugin publishes STW too, so it must never correct another plugin's STW and hand the result back. Two correctors on `navigation.speedThroughWater` that each take any source but their own correct each other's output without end: STW, and true wind with it, run away. Signal K's own pattern for correction plugins (subscribe with `sourcePolicy: 'all'`, skip your own `$source`, publish on the same path) does not cover this case, because neither plugin ever sees its own source come back.
+
+- **By default it reads STW from sensors only**, so another corrector's output is ignored and no loop can form.
+- **Choosing a source in Settings overrides this**, including choosing another plugin, for a deliberate chain such as `signalk-stw-heel-correction` → this plugin with the STW correction here turned off. That plugin must then read only the paddlewheel (its own default from 0.3.0).
+- **Circuit breaker:** whatever the sources, the plugin never publishes a path more often than 20 Hz: an update less than 50 ms after the last one on that path is not published. A loop's next hop arrives within the same millisecond, so the chain ends at the first repeat instead of running away, and the server stays responsive. A backlog flushed after a dropout is thinned, not stopped. Nothing latches. While updates are being dropped the status and the Live page end with `Rate limited: N updates over 20 Hz not published in the last 10 s, driven by "…"`, naming the source. If it stays up, look for a loop with another STW plugin; a loop that is cut still leaves STW corrected twice.
+
+Only one plugin should correct STW. Otherwise the correction is applied twice even without a loop. In Shadow mode, note that `signalk-stw-heel-correction` also uses `navigation.speedThroughWaterCorrected` for its separate-path output, so the two would overwrite each other there.
 
 ### Outputs
 
@@ -86,7 +96,7 @@ Feed it **measured** apparent wind and **raw** paddlewheel speed. If another plu
 | Leeway (when on) | `navigation.leewayAngle` | `navigation.leewayAngleCorrected` |
 | Current | `environment.current` (`drift`, `setTrue`) | `environment.currentCorrected` |
 
-Everything is published under this plugin's own `$source`. Corrected STW goes out each time the paddlewheel reports, while the STW correction is on; the rest goes out with each apparent wind update. Shadow paths carry `meta` with units, since they are not in the Signal K schema.
+Everything is published under this plugin's own `$source`. Corrected STW goes out each time the paddlewheel reports, while the STW correction is on; the rest goes out with each apparent wind update. No path goes out more often than 20 Hz (see **Circuit breaker** under [Running alongside other STW plugins](#running-alongside-other-stw-plugins)). Shadow paths carry `meta` with units, since they are not in the Signal K schema.
 
 ## Modes
 
@@ -101,7 +111,7 @@ Open **Webapps → Performance Processor**.
 
 - **Live**: the outputs next to their uncorrected values; the pipeline, with each step's result tagged **Published** (sent to Signal K) or **Working** (only feeds the next step); a **Published to Signal K** table listing every value sent and its path; and which source and how fresh each input is.
 - **Calibration**: every correction in pipeline order with an on/off switch. Select one to edit its values, then **Save**. Table headings (the breakpoints) are fixed; only the values are edited, and blank cells are allowed where a table says so. The boat speed table also has **Paste a table**, which reads the `signalk-stw-heel-correction` CSV format. **Reset to defaults** puts back this boat's values for that correction.
-- **Settings**: Shadow or Replace, the fallback magnetic variation, and which source to read for each input.
+- **Settings**: Shadow or Replace, the fallback magnetic variation, and which source to read for each input. **Any** takes every source; for STW the blank choice is **Auto (sensors only)**.
 
 All configuration lives in the webapp. It is saved to `config.json` in the plugin's data directory (under `~/.signalk/plugin-config-data/`), not in the admin **Plugin Config** form, which only points here; saving that form cannot overwrite the tables. Saving needs write access when Signal K security is on.
 

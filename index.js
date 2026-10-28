@@ -20,6 +20,12 @@ const MAX_PLAUSIBLE_HEEL_DEG = 90
 // See signalk-stw-heel-correction: below this a correction is float noise, and recording
 // it as an output would make the next identical raw sample look like an echo.
 const ECHO_MIN_DELTA_MS = 1e-6
+// Circuit breaker: no path is published more often than this (20 Hz). A feedback loop
+// through another plugin delivers its next update within the same millisecond, so the
+// chain ends at the first repeat rather than running away, and the server stays
+// responsive. Nothing latches; the status says while it is happening.
+const MIN_PUBLISH_INTERVAL_MS = 50
+const RATE_NOTE_MS = 10000 // how long a dropped update keeps the status flagged
 
 // Inputs, grouped the way they are chosen in Settings.
 const INPUTS = {
@@ -84,10 +90,38 @@ module.exports = function (app) {
     return s === plugin.id || s.startsWith(plugin.id + '.')
   }
 
+  // A plugin publishes with no source object, so the server gives its update only a
+  // $source. Data from a connection (NMEA 0183, NMEA 2000) always carries one.
+  const fromSensor = update => update.source != null && typeof update.source === 'object'
+
   // Backstop echo detector for the one path that is both input and output (STW in
   // replace mode): remember published values that differ from their input.
   const recentStw = []
   let loopWarned = false
+
+  // Rate limit (see MIN_PUBLISH_INTERVAL_MS): when each path was last published, and
+  // when updates were dropped recently, for the status.
+  let publishedAt = {}
+  let dropsAt = []
+  let dropFrom = ''
+  function recentDrops (now) {
+    while (dropsAt.length && now - dropsAt[0] > RATE_NOTE_MS) dropsAt.shift()
+    return dropsAt.length
+  }
+  function noteDrop (now, from) {
+    const first = !recentDrops(now)
+    dropsAt.push(now)
+    dropFrom = from
+    if (!first) return
+    app.error(`Rate limited: "${from}" is driving updates faster than ${1000 / MIN_PUBLISH_INTERVAL_MS} Hz. Is another plugin correcting this plugin's output?`)
+    lastStatus = statusText + rateNote(now) // flag it now, not at the next refresh
+    app.setPluginStatus(lastStatus)
+  }
+  function rateNote (now) {
+    const n = recentDrops(now)
+    return n ? ` · Rate limited: ${n} update${n === 1 ? '' : 's'} over ${1000 / MIN_PUBLISH_INTERVAL_MS} Hz not published in the last ${RATE_NOTE_MS / 1000} s, ` +
+      `driven by "${dropFrom}". Usually a feedback loop with another STW plugin: check the STW source in Settings` : ''
+  }
   function noteStw (ms) {
     recentStw.push(ms)
     if (recentStw.length > 32) recentStw.shift()
@@ -103,10 +137,13 @@ module.exports = function (app) {
   // live numbers in the status keep moving without flooding the admin UI.
   let statusAt = 0
   let statusKind = null
+  let statusText = ''
   function status (kind, text) {
     const now = Date.now()
     if (kind === statusKind && now - statusAt < STATUS_INTERVAL_MS) return
     statusKind = kind
+    statusText = text
+    text += rateNote(now)
     lastStatus = text
     statusAt = now
     app.setPluginStatus(text)
@@ -120,7 +157,15 @@ module.exports = function (app) {
     return Math.abs(h) > MAX_PLAUSIBLE_HEEL_DEG ? null : h
   }
 
-  function publish (values, timestamp) {
+  function publish (values, timestamp, from) {
+    const now = Date.now()
+    const kept = values.filter(v => {
+      if (now - (publishedAt[v.path] ?? -Infinity) < MIN_PUBLISH_INTERVAL_MS) return false
+      publishedAt[v.path] = now
+      return true
+    })
+    if (kept.length < values.length) noteDrop(now, from)
+    values = kept
     if (!values.length) return
     // No source object: the server stamps $source with plugin.id, which is what the
     // loop guard and the user's Source Priorities entry match on.
@@ -128,7 +173,7 @@ module.exports = function (app) {
   }
 
   // Corrected STW goes out as soon as the paddlewheel reports, at its own rate.
-  function onStw (rawMs, timestamp, now) {
+  function onStw (rawMs, timestamp, now, from) {
     const stw = config.corrections.stw
     if (!stw.enabled) return
     const stwKn = rawMs * MS_TO_KN
@@ -138,16 +183,21 @@ module.exports = function (app) {
     const { c } = correctInputs({ stw: stwKn, heel: heelDeg(now) }, config)
     const ms = c.stw / MS_TO_KN
     if (config.mode === 'replace' && Math.abs(ms - rawMs) > ECHO_MIN_DELTA_MS) noteStw(ms)
-    publish([{ path: outPath('stw'), value: ms }], timestamp)
+    publish([{ path: outPath('stw'), value: ms }], timestamp, from)
   }
 
   // True wind, current and leeway go out on every apparent wind update.
-  function onWind (timestamp, now) {
+  function onWind (timestamp, now, from) {
     const awa = fresh('environment.wind.angleApparent', now)
     const aws = fresh('environment.wind.speedApparent', now)
     const stw = fresh('navigation.speedThroughWater', now)
     if (awa == null || aws == null) return status('nowind', 'Waiting for apparent wind')
-    if (stw == null) return status('nostw', 'Waiting for speed through water — no true wind without it')
+    if (stw == null) {
+      const others = !config.sources.stw && sourcesSeen.stw ? Array.from(sourcesSeen.stw) : []
+      return status('nostw', others.length
+        ? `No speed through water from a sensor, only from ${others.join(', ')}. Choose the STW source in Settings`
+        : 'Waiting for speed through water — no true wind without it')
+    }
 
     const awsKn = aws * MS_TO_KN
     const stwKn = stw * MS_TO_KN
@@ -178,7 +228,7 @@ module.exports = function (app) {
     if (o.twd != null) values.push({ path: outPath('twd'), value: o.twd / RAD_TO_DEG })
     if (config.corrections.leeway.enabled) values.push({ path: outPath('leeway'), value: o.leeway / RAD_TO_DEG })
     if (o.current) values.push({ path: outPath('current'), value: { drift: o.current.drift / MS_TO_KN, setTrue: o.current.set / RAD_TO_DEG } })
-    publish(values, timestamp)
+    publish(values, timestamp, from)
 
     const missing = []
     if (input.heel == null) missing.push('heel')
@@ -191,6 +241,7 @@ module.exports = function (app) {
     const now = Date.now()
     let windChanged = false
     let windTimestamp = null
+    let windFrom = ''
     for (const update of (delta.updates || [])) {
       if (isOwnSource(update.$source)) continue
       for (const v of (update.values || [])) {
@@ -199,9 +250,14 @@ module.exports = function (app) {
         if (v.path !== 'navigation.attitude' && !Number.isFinite(v.value)) continue
 
         const src = String(update.$source || '')
+        const sensor = fromSensor(update)
         ;(sourcesSeen[group] = sourcesSeen[group] || new Set()).add(src)
         const wanted = config.sources[group]
         if (wanted && src !== wanted) continue
+        // Without a chosen source, STW is read from sensors only. Another plugin's STW
+        // is already corrected, and this plugin publishes STW too: taking each other's
+        // output, two correctors feed each other without end.
+        if (!wanted && group === 'stw' && !sensor) continue
 
         if (v.path === 'navigation.speedThroughWater' && config.mode === 'replace' && isStwEcho(v.value)) {
           if (!loopWarned) {
@@ -212,16 +268,18 @@ module.exports = function (app) {
         }
 
         latest[v.path] = { value: v.value, source: src, at: now }
-        if (group === 'apparentWind') { windChanged = true; windTimestamp = update.timestamp }
-        if (group === 'stw') onStw(v.value, update.timestamp, now)
+        if (group === 'apparentWind') { windChanged = true; windTimestamp = update.timestamp; windFrom = src }
+        if (group === 'stw') onStw(v.value, update.timestamp, now, src)
       }
     }
-    if (windChanged) onWind(windTimestamp, now)
+    if (windChanged) onWind(windTimestamp, now, windFrom)
   }
 
   function startWith (cfg) {
     stopEverything()
     config = cfg
+    publishedAt = {}
+    dropsAt = []
     latest = {}
     sourcesSeen = {}
     lastResult = null

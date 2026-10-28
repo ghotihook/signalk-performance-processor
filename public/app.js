@@ -357,7 +357,7 @@
       const chosen = state.draft.sources[key] || ''
       const opts = Array.from(new Set([...(seen[key] || []), chosen].filter(Boolean)))
       return `<label>${esc(label)}<select data-path="sources.${key}">` +
-        `<option value="">Any</option>` +
+        `<option value="">${key === 'stw' ? 'Auto (sensors only)' : 'Any'}</option>` +
         opts.map(s => `<option value="${esc(s)}" ${s === chosen ? 'selected' : ''}>${esc(s)}${(seen[key] || []).includes(s) ? '' : ' (not seen)'}</option>`).join('') +
         '</select></label>'
     }).join('')

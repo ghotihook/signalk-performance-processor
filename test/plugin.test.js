@@ -8,6 +8,11 @@ const factory = require('../index.js')
 const MS_TO_KN = 1.94384
 const RAD = Math.PI / 180
 
+// A clock the tests move. Each sample arrives 100 ms after the last, as from a 10 Hz
+// sensor, unless a test says otherwise; the publish rate limit depends on it.
+let clock = Date.parse('2026-01-01T00:00:00Z')
+Date.now = () => clock
+
 // A fake Signal K app: collects what the plugin publishes, says and saves.
 // options: what the server would pass to start(); stored: a config.json already on disk.
 function harness (stored = null, options = {}) {
@@ -38,10 +43,15 @@ function harness (stored = null, options = {}) {
   })
   plugin.start(options)
 
-  function feed (values, source = 'h2000.II') {
+  // Sensors arrive with a source object, as from a data connection; a source named
+  // like a plugin arrives without one, as a plugin's output does.
+  function feed (values, source = 'h2000.II', afterMs = 100) {
     if (!onDelta) return []
+    clock += afterMs
     const before = published.length
-    onDelta({ updates: [{ $source: source, timestamp: '2026-01-01T00:00:00.000Z', values }] })
+    const update = { $source: source, timestamp: '2026-01-01T00:00:00.000Z', values }
+    if (!source.startsWith('signalk-')) update.source = { label: source.split('.')[0], type: 'NMEA0183', talker: 'II' }
+    onDelta({ updates: [update] })
     return published.slice(before)
   }
   async function call (method, path, body) {
@@ -131,6 +141,99 @@ test('reads only the chosen source when one is set', () => {
   h.feed([{ path: 'navigation.speedThroughWater', value: 1 / MS_TO_KN }], 'signalk-stw-heel-correction')
   const out = paths(h.feed(wind))
   assert.ok(Math.abs(out['environment.wind.speedTrueCorrected'] * MS_TO_KN - 13.0) < 0.1)
+})
+
+test('without a chosen STW source, ignores STW from other plugins', () => {
+  const h = harness()
+  h.feed(boat)
+  const out = h.feed([{ path: 'navigation.speedThroughWater', value: 1 / MS_TO_KN }], 'signalk-stw-heel-correction')
+  assert.deepStrictEqual(out, [])
+  const tw = paths(h.feed(wind))
+  assert.ok(Math.abs(tw['environment.wind.speedTrueCorrected'] * MS_TO_KN - 13.0) < 0.1)
+})
+
+test('reads STW from a plugin when it is chosen in Settings', () => {
+  const h = harness({ mode: 'replace', sources: { stw: 'signalk-stw-heel-correction' } })
+  h.feed([{ path: 'navigation.attitude', value: { roll: -20 * RAD } }])
+  const out = paths(h.feed([{ path: 'navigation.speedThroughWater', value: 6 / MS_TO_KN }], 'signalk-stw-heel-correction'))
+  assert.ok('navigation.speedThroughWater' in out)
+})
+
+test('says so when STW comes only from another plugin', () => {
+  const h = harness()
+  h.feed([{ path: 'navigation.speedThroughWater', value: 6 / MS_TO_KN }], 'signalk-stw-heel-correction')
+  h.feed(wind)
+  assert.match(h.statuses[h.statuses.length - 1], /only from signalk-stw-heel-correction/)
+})
+
+// Two STW correctors on one server, each handing its output to the other the way the
+// server delivers it: synchronously, to every subscriber of the path.
+function twoCorrectors (sources) {
+  const subs = []; let stwDeliveries = 0; let depth = 0; const errors = []; const statuses = []
+  const deliver = (id, delta) => {
+    const u = { $source: id, timestamp: '2026-01-01T00:00:00.000Z', ...delta.updates[0] }
+    if (u.values && u.values.some(v => v.path === 'navigation.speedThroughWater')) stwDeliveries++
+    if (++depth > 500) throw new Error('unbounded loop')
+    try { for (const cb of subs) cb({ updates: [u] }) } finally { depth-- }
+  }
+  const app = { getDataDirPath: () => fs.mkdtempSync(path.join(os.tmpdir(), 'spp-')), debug () {},
+    error: m => errors.push(m), setPluginError: m => errors.push(m), setPluginStatus: m => statuses.push(m),
+    handleMessage: (id, delta) => { if (delta.updates[0].values) deliver(id, delta) },
+    subscriptionmanager: { subscribe: (s, unsub, onErr, cb) => { subs.push(cb); unsub.push(() => {}) } } }
+  const dir = app.getDataDirPath()
+  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ mode: 'replace', sources }))
+  app.getDataDirPath = () => dir
+  factory(app).start({})
+  // The other corrector: corrects any STW not its own, as signalk-stw-heel-correction 0.2 did.
+  subs.push(d => {
+    const u = d.updates[0]
+    if (u.$source === 'other-corrector') return
+    for (const v of u.values || []) {
+      if (v.path === 'navigation.speedThroughWater') deliver('other-corrector', { updates: [{ values: [{ path: v.path, value: v.value + 0.01 }] }] })
+    }
+  })
+  const sensor = (path, value) => {
+    clock += 300
+    for (const cb of subs.slice()) cb({ updates: [{ $source: 'h2000.II', source: { label: 'h2000', type: 'NMEA0183' }, timestamp: 't', values: [{ path, value }] }] })
+  }
+  sensor('navigation.attitude', { roll: -20 * RAD })
+  return { sensor, errors, statuses, deliveries: () => stwDeliveries }
+}
+
+test('two STW correctors do not feed each other by default', () => {
+  const t = twoCorrectors({})
+  t.sensor('navigation.speedThroughWater', 6 / MS_TO_KN)
+  // ours corrects the sensor; the other corrects the sensor and ours; nothing comes back
+  assert.ok(t.deliveries() <= 3, `${t.deliveries()} STW updates from one sample`)
+  assert.deepStrictEqual(t.errors, [])
+})
+
+test('a loop through another plugin is cut at the first repeat, flagged, and never locks up', () => {
+  const t = twoCorrectors({ stw: 'other-corrector' })
+  for (let k = 0; k < 5; k++) {
+    const before = t.deliveries()
+    assert.doesNotThrow(() => t.sensor('navigation.speedThroughWater', 6 / MS_TO_KN))
+    // sensor -> other -> ours -> other -> ours dropped: the chain ends
+    assert.ok(t.deliveries() - before <= 4, `${t.deliveries() - before} STW updates from one sample`)
+  }
+  t.sensor('environment.wind.angleApparent', 32 * RAD)
+  t.sensor('environment.wind.speedApparent', 16.9 / MS_TO_KN)
+  assert.match(t.statuses[t.statuses.length - 1], /Rate limited: \d+ updates .* "other-corrector"/)
+  assert.strictEqual(t.errors.filter(e => /Rate limited/.test(e)).length, 1, 'logged once per episode')
+})
+
+test('a burst is thinned to 20 Hz, not stopped, and the flag clears', () => {
+  const h = harness({ mode: 'replace' })
+  h.feed([{ path: 'navigation.attitude', value: { roll: -20 * RAD } }])
+  let published = 0
+  for (let i = 0; i < 300; i++) published += h.feed([{ path: 'navigation.speedThroughWater', value: (5 + i * 0.001) / MS_TO_KN }], 'h2000.II', 1).length
+  assert.ok(published >= 6 && published <= 7, `${published} of 300 published over 0.3 s`)
+  // back to a normal rate: every sample goes out again
+  for (let i = 0; i < 5; i++) assert.strictEqual(h.feed([{ path: 'navigation.speedThroughWater', value: 6 / MS_TO_KN }]).length, 1)
+  h.feed(boat); h.feed(wind)
+  assert.match(h.statuses[h.statuses.length - 1], /Rate limited/)
+  h.feed(wind, 'h2000.II', 11000)
+  assert.doesNotMatch(h.statuses[h.statuses.length - 1], /Rate limited/)
 })
 
 test('no true wind without STW, and the status says why', () => {

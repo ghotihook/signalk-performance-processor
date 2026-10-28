@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.5 — 2026-10-29
+
+Still a proof of concept: run it in Shadow mode alongside your instruments.
+
+- **Fix: feedback loop with another STW plugin in Replace mode.** With `signalk-stw-heel-correction` (0.2 or earlier) on the same server, each plugin corrected the other's STW and handed it back, so STW and true wind ran away. Without a chosen STW source, STW is now read from sensors only (updates that carry a `source` object from a data connection), never from another plugin. Choosing a source in Settings still overrides this.
+- **Rate limit as a circuit breaker:** no path is published more often than 20 Hz. A feedback loop is cut at its first repeat, and a backlog flushed after a dropout is thinned rather than stopped; nothing latches. While updates are being dropped, the status and the Live page say so, with a count and the source driving them, for 10 s after the last one; the first is logged.
+- The status says when STW is arriving only from other plugins, and names them.
+- Settings: the STW source's blank choice reads **Auto (sensors only)**.
+
 ## 0.0.4 — 2026-10-29
 
 Still a proof of concept: run it in Shadow mode alongside your instruments. Saved configurations are upgraded to schema 2 on first load.
