@@ -8,10 +8,10 @@
   // Display names and help for each correction, in pipeline order. A correction the
   // plugin knows but this list does not still shows, under its id.
   const CORRECTIONS = {
-    stw: { name: 'Boat speed (STW)', what: 'Paddlewheel linearity at low speed, plus the loss when heeled. Knots added to STW before anything else uses it.' },
+    stw: { name: 'Boat speed (STW)', what: 'Knots added to the paddlewheel by heel (rows, + = starboard side down) and speed (columns), like the H5000 boat speed / heel table. Blank cells are filled from the nearest value in their row. Applied before anything else uses STW.' },
     leeway: { name: 'Leeway', what: 'Sideways slip: leeway = K × heel ÷ STW². Turns the boat’s velocity to leeward for true wind and current.' },
     twa: { name: 'TWA table', what: 'Degrees added to |TWA| by TWS, upwind, reaching and downwind, H5000 style. Negative = TWA was reading too wide. Rows blend by TWA at the angles below.' },
-    tws: { name: 'TWS table', what: 'Percent applied to TWS by TWS, upwind, reaching and downwind. Blended at the TWA table’s angles. H5000 default is −10% downwind.' }
+    tws: { name: 'TWS table', what: 'Knots added to TWS by TWS, upwind, reaching and downwind, H5000 style. Blended at the TWA table’s angles. Blank = no correction. The default downwind row is −10% of each column.' }
   }
 
   const SOURCE_LABELS = {
@@ -119,8 +119,9 @@
     let value
     if (el.type === 'checkbox') value = el.checked
     else if (el.type === 'number') {
-      if (el.value === '') return // keep the old value until something is typed
-      value = Number(el.value)
+      // A blank cell in a table that allows it means "not measured"; elsewhere keep the
+      // old value until something is typed.
+      if (el.value === '') { if (!el.dataset.nullable) return; value = null } else value = Number(el.value)
     } else value = el.value
     setPath(el.dataset.path, value)
     renderSaveBar()
@@ -186,7 +187,7 @@
 
     if (!r) {
       $('tiles').innerHTML = ''
-      $('steps').innerHTML = `<tr><td colspan="4" class="muted center">${esc(live ? live.status || 'Waiting for data…' : 'Waiting for data…')}</td></tr>`
+      $('steps').innerHTML = `<tr><td colspan="5" class="muted center">${esc(live ? live.status || 'Waiting for data…' : 'Waiting for data…')}</td></tr>`
     } else {
       const o = r.out
       const u = uncorrected(r.input)
@@ -199,16 +200,45 @@
         tile('Leeway', fmt(Math.abs(o.leeway)), `° ${side(o.leeway)}`, r.input.heel == null ? 'no heel' : `heel ${fmt(r.input.heel, 0)}°`),
         tile('Current', o.current ? fmt(o.current.drift, 2) : '--', o.current ? `kn · ${fmt(o.current.set, 0)}°` : 'kn', o.current ? '' : 'no SOG/COG or heading')
       ].join('')
-      $('steps').innerHTML = r.steps.map(s => s.enabled
-        ? `<tr><th scope="row">${esc(s.name)}</th><td class="mono">${esc(s.input || '')}</td><td>${esc(s.skipped ? 'skipped — ' + s.skipped : s.detail || '')}</td><td class="mono">${esc(s.output || '')}</td></tr>`
-        : `<tr class="off"><th scope="row">${esc(s.name)}</th><td></td><td>off</td><td></td></tr>`
-      ).join('')
+      // A step's result is published only if no later enabled step replaces it; otherwise
+      // it is a working value that only feeds the steps after it.
+      const last = {}
+      r.steps.forEach((s, i) => { if (s.enabled && !s.skipped) (s.produces || []).forEach(q => { last[q] = i }) })
+      const NAMES = { stw: 'STW', leeway: 'Leeway', twa: 'TWA', tws: 'TWS', current: 'Current' }
+      $('steps').innerHTML = r.steps.map((s, i) => {
+        if (!s.enabled) return `<tr class="off"><th scope="row">${esc(s.name)}</th><td></td><td>off</td><td></td><td></td></tr>`
+        const sent = (s.produces || []).filter(q => last[q] === i)
+        const working = (s.produces || []).filter(q => last[q] !== i)
+        const tag = s.skipped ? '' : [
+          sent.length ? `<span class="chip pub">Published: ${sent.map(q => NAMES[q]).join(', ')}</span>` : '',
+          working.length ? `<span class="chip work">Working: ${working.map(q => NAMES[q]).join(', ')}</span>` : ''
+        ].join(' ')
+        return `<tr class="${sent.length ? '' : 'working'}"><th scope="row">${esc(s.name)}</th><td class="mono">${esc(s.input || '')}</td>` +
+          `<td>${esc(s.skipped ? 'skipped — ' + s.skipped : s.detail || '')}</td><td class="mono result">${esc(s.output || '')}</td><td>${tag}</td></tr>`
+      }).join('')
+      renderPublished(o, live.outputPaths || {})
     }
 
     const inputs = live ? Object.entries(live.inputs) : []
     $('inputs').innerHTML = inputs.length
       ? inputs.sort().map(([path, i]) => `<tr><td>${esc(path)}</td><td>${esc(i.source)}</td><td class="num ${i.ageMs > STALE_MS ? 'warn' : ''}">${fmt(i.ageMs / 1000)} s</td></tr>`).join('')
       : '<tr><td colspan="3" class="muted center">Nothing received yet</td></tr>'
+  }
+
+  // The values the plugin actually sends, one per path, matching what index.js publishes.
+  function renderPublished (o, paths) {
+    const on = id => !!(state.saved && state.saved.corrections[id] && state.saved.corrections[id].enabled)
+    const side = v => v < 0 ? 'port' : 'stbd'
+    const rows = [
+      ['TWA', `${fmt(Math.abs(o.twa))}° ${side(o.twa)}`, paths.twa],
+      ['TWS', `${fmt(o.tws)} kn`, paths.tws]
+    ]
+    if (o.twd != null) rows.push(['TWD', `${fmt(o.twd, 0)}° T`, paths.twd])
+    if (on('stw')) rows.push(['STW', `${fmt(o.stw, 2)} kn`, paths.stw])
+    if (on('leeway')) rows.push(['Leeway', `${fmt(Math.abs(o.leeway))}° ${side(o.leeway)}`, paths.leeway])
+    if (o.current) rows.push(['Current', `${fmt(o.current.drift, 2)} kn → ${fmt(o.current.set, 0)}°`, paths.current])
+    $('published').innerHTML = rows.map(([label, value, p]) =>
+      `<tr><th scope="row">${esc(label)}</th><td class="num">${esc(value)}</td><td class="mono">${esc(p || '')}</td></tr>`).join('')
   }
 
   // -- Calibration
@@ -236,13 +266,16 @@
     const meta = CORRECTIONS[id] || { name: id, what: '' }
     let body = ''
     if (id === 'stw') {
-      body = grid('Linearity (kn added)', 'STW kn', `corrections.stw.linearity`, 'stw', [['Add', 'add']], c.linearity) +
-        grid('Heel correction (kn added)', 'Heel °', `corrections.stw.heel`, 'heel', [['Add', 'add']], c.heel)
+      body = grid2d('Knots added to STW', 'Heel ° ╲ STW kn', 'corrections.stw', c) +
+        `<details class="paste"><summary>Paste a table</summary>` +
+        `<p class="muted sub">Same format as signalk-stw-heel-correction: first row <code>heel\\stw</code> then the speeds; each further row a heel angle then its corrections. Commas, tabs or semicolons; blank cells allowed.</p>` +
+        `<textarea id="pasteStw" rows="8" spellcheck="false" aria-label="Heel by STW table to paste"></textarea>` +
+        `<div><button type="button" class="ghost" id="pasteStwGo">Replace the table</button> <span id="pasteStwMsg" class="warn"></span></div></details>`
     } else if (id === 'leeway') {
       body = `<div class="fields">${field('K', 'corrections.leeway.k', c.k, 0.01)}</div>`
     } else if (id === 'twa' || id === 'tws') {
       const rows = [['Upwind', 'upwind'], ['Reach', 'reach'], ['Downwind', 'downwind']]
-      body = grid(id === 'twa' ? 'Degrees added to |TWA|' : 'Percent applied to TWS', 'TWS kn', `corrections.${id}`, 'tws', rows, c)
+      body = grid(id === 'twa' ? 'Degrees added to |TWA| (blank = not enough data: nearest measured value used)' : 'Knots added to TWS (blank = no correction)', 'TWS kn', `corrections.${id}`, 'tws', rows, c, true)
       if (id === 'twa') {
         const a = c.angles
         body += `<div class="fields">${field('Upwind row to (° TWA)', 'corrections.twa.angles.upwind', a.upwind, 1)}` +
@@ -256,14 +289,45 @@
       `<div><button type="button" class="ghost" data-defaults="${esc(id)}">Reset to defaults</button></div>`
   }
 
-  // A table whose first row is its axis (editable) and whose other rows are values.
-  function grid (title, axisLabel, base, axisKey, rows, obj) {
+  // A table whose header row is its fixed axis (the breakpoints, shown as labels) and
+  // whose other rows are the editable correction values.
+  function grid (title, axisLabel, base, axisKey, rows, obj, nullable) {
     const axis = obj[axisKey]
-    const cell = (path, v, cls) => `<td><input type="number" step="any" class="${cls || ''}" data-path="${esc(path)}" value="${esc(v)}"></td>`
+    const cell = (path, v, name) => `<td><input type="number" step="any"${nullable ? ' data-nullable="1"' : ''} data-path="${esc(path)}" value="${v == null ? '' : esc(v)}" aria-label="${esc(name)}"></td>`
     return `<div><h2>${esc(title)}</h2><div class="table-wrap"><table class="grid">` +
-      `<tr><th scope="row" class="muted">${esc(axisLabel)}</th>${axis.map((v, i) => cell(`${base}.${axisKey}.${i}`, v, 'axis')).join('')}</tr>` +
-      rows.map(([label, key]) => `<tr><th scope="row">${esc(label)}</th>${obj[key].map((v, i) => cell(`${base}.${key}.${i}`, v)).join('')}</tr>`).join('') +
+      `<tr><th scope="row" class="muted">${esc(axisLabel)}</th>${axis.map(v => `<th scope="col" class="axis">${esc(v)}</th>`).join('')}</tr>` +
+      rows.map(([label, key]) => `<tr><th scope="row">${esc(label)}</th>${obj[key].map((v, i) => cell(`${base}.${key}.${i}`, v, `${label} at ${axis[i]}`)).join('')}</tr>`).join('') +
       '</table></div></div>'
+  }
+
+  // A two-dimensional table: fixed row and column headings, editable cells, and blank
+  // cells allowed (null = not measured).
+  function grid2d (title, corner, base, t) {
+    const head = `<tr><th scope="col" class="muted">${esc(corner)}</th>${t.stw.map(v => `<th scope="col" class="axis">${esc(v)}</th>`).join('')}</tr>`
+    const rows = t.heel.map((h, i) => `<tr><th scope="row" class="axis">${esc(h)}</th>` +
+      t.add[i].map((v, j) => `<td><input type="number" step="any" data-nullable="1" data-path="${base}.add.${i}.${j}" value="${v == null ? '' : esc(v)}" aria-label="heel ${esc(h)} at ${esc(t.stw[j])} kn"></td>`).join('') + '</tr>')
+    return `<div><h2>${esc(title)}</h2><div class="table-wrap"><table class="grid">${head}${rows.join('')}</table></div></div>`
+  }
+
+  // Read a pasted heel x STW table: header row of speeds, then a heel angle and its
+  // corrections per row. Tolerates the usual spreadsheet damage.
+  function parseStwTable (text) {
+    const clean = c => c.trim().replace(/^"(.*)"$/, '$1').replace(/\u2212/g, '-').replace(/\u00b0/g, '').trim()
+    const lines = text.replace(/^\ufeff/, '').trim().split(/\r?\n/).filter(l => l.trim())
+    if (lines.length < 2) throw new Error('needs a header row of speeds and at least one heel row')
+    const sep = lines[0].includes(',') ? ',' : lines[0].includes('\t') ? '\t' : ';'
+    const rows = lines.map(l => l.split(sep).map(clean))
+    const num = (c, what) => { const n = Number(c); if (c === '' || !Number.isFinite(n)) throw new Error(`${what} is not a number: "${c}"`); return n }
+    let stw = rows[0].slice(1).map((c, j) => num(c, `speed ${j + 1} in the header`))
+    let heel = []; let add = []
+    rows.slice(1).forEach((r, i) => {
+      if (r.length - 1 !== stw.length) throw new Error(`row ${i + 2} has ${r.length - 1} values, the header has ${stw.length} speeds`)
+      heel.push(num(r[0], `heel in row ${i + 2}`))
+      add.push(r.slice(1).map((c, j) => c === '' ? null : num(c, `value at heel ${r[0]}, ${stw[j]} kn`)))
+    })
+    if (stw.length > 1 && stw[0] > stw[stw.length - 1]) { stw = stw.reverse(); add = add.map(r => r.reverse()) }
+    if (heel.length > 1 && heel[0] > heel[heel.length - 1]) { heel = heel.reverse(); add = add.reverse() }
+    return { heel, stw, add }
   }
 
   function field (label, path, value, step) {
@@ -317,6 +381,15 @@
   document.addEventListener('click', e => {
     const sel = e.target.closest('[data-select]')
     if (sel) { state.selected = sel.dataset.select; renderCalibration() }
+    if (e.target.id === 'pasteStwGo') {
+      try {
+        const t = parseStwTable($('pasteStw').value)
+        Object.assign(state.draft.corrections.stw, t)
+        renderAll()
+      } catch (err) {
+        $('pasteStwMsg').textContent = err.message
+      }
+    }
     const def = e.target.closest('[data-defaults]')
     if (def && state.defaults) {
       const id = def.dataset.defaults

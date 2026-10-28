@@ -35,10 +35,20 @@
       <div id="tiles" class="tiles"></div>
       <div class="panel">
         <div class="panel-head"><h2>Pipeline</h2><span id="liveAge" class="muted sub"></span></div>
+        <p class="muted sub intro">Each step works on the result of the one before. Only results marked <b>Published</b> are sent to Signal K; <b>Working</b> results feed the next step and go nowhere else.</p>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Step</th><th>In</th><th>Correction</th><th>Out</th></tr></thead>
-            <tbody id="steps"><tr><td colspan="4" class="muted center">Waiting for data…</td></tr></tbody>
+            <thead><tr><th>Step</th><th>In</th><th>Correction</th><th>Result</th><th>Sent to Signal K</th></tr></thead>
+            <tbody id="steps"><tr><td colspan="5" class="muted center">Waiting for data…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Published to Signal K</h2><span class="muted sub">only these values are sent; the pipeline above shows the working</span></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Value</th><th class="num">Now</th><th>Path</th></tr></thead>
+            <tbody id="published"><tr><td colspan="3" class="muted center">Nothing published yet</td></tr></tbody>
           </table>
         </div>
       </div>

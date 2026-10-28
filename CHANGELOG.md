@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.0.4 — 2026-10-29
+
+Still a proof of concept: run it in Shadow mode alongside your instruments. Saved configurations are upgraded to schema 2 on first load.
+
+- **STW correction is a heel × speed table** (signed heel rows, STW columns), like the H5000's boat speed / heel table, with bilinear interpolation and blank cells filled from the nearest value. The default is the owner's full measured table. A table in the `signalk-stw-heel-correction` CSV format can be pasted into the webapp.
+- **TWS table is in knots** (H5000 units). Default downwind −0.5 … −3 kn (−10% of each column); upwind and reach blank, meaning no correction.
+- **New TWA table defaults** from the owner's calibration fit. Blank TWA cells mean too little data and use the nearest measured cells in the row.
+- Config file schema 2. Schema 1 files are upgraded on load: the two STW rows become their grid and TWS percentages become knots.
+- Live pipeline: each step's result is tagged **Published** or **Working**, worked out from what later enabled steps replace, so intermediate values are not mistaken for outputs.
+- Calibration tables: the breakpoints (TWS columns, STW speeds, heel angles) are fixed labels, not editable fields; only the correction values are edited.
+- Live page: a "Published to Signal K" table lists exactly what the plugin sends and on which path. The pipeline's true wind step is labelled "before tables", so its working TWA is not mistaken for a second output.
+
 ## 0.0.3 — 2026-10-29
 
 Still a proof of concept: run it in Shadow mode alongside your instruments.

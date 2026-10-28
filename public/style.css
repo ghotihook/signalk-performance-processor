@@ -104,6 +104,11 @@ table { width: 100%; border-collapse: collapse; }
 th, td { padding: 8px; border-bottom: 1px solid var(--line); white-space: nowrap; text-align: left; }
 th { font-size: 0.75em; color: var(--muted); text-transform: uppercase; }
 tr.off td { color: var(--muted); }
+/* Pipeline: published results stand out, working values recede */
+.chip { display: inline-block; font-size: 0.7em; font-weight: 700; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.chip.pub { background: var(--active); color: var(--accent); border: 1px solid var(--accent); }
+.chip.work { color: var(--muted); border: 1px dashed var(--line); }
+tr.working .result { color: var(--muted); font-style: italic; }
 td.mono { font-variant-numeric: tabular-nums; }
 
 /* Calibration */
@@ -153,11 +158,15 @@ td.mono { font-variant-numeric: tabular-nums; }
 .grid th, .grid td { border: 0; padding: 0; }
 .grid th { padding: 0 6px; }
 .grid input { width: 4.6em; text-align: right; font-variant-numeric: tabular-nums; background: var(--cell); }
-.grid input.axis { background: var(--bg); color: var(--muted); }
+.grid th.axis { text-align: right; padding: 0 10px 2px; font-size: 0.8em; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
 .grid input:focus, .field input:focus { outline: 2px solid var(--accent); outline-offset: 0; }
 .fields { display: flex; flex-wrap: wrap; gap: 16px; }
 .field { display: flex; flex-direction: column; gap: 4px; font-size: 0.8em; font-weight: 600; }
 .field input { width: 7em; }
+
+.paste summary { cursor: pointer; font-size: 0.85em; color: var(--accent); min-height: 32px; }
+.paste textarea { width: 100%; font: 0.8em ui-monospace, monospace; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+.paste code { font-size: 0.95em; }
 
 /* Settings */
 .modes { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }

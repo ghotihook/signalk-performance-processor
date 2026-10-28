@@ -8,7 +8,7 @@ If your TWD swings 5–10° every time you tack or gybe, the wind hasn't shifted
 
 This plugin does the calibration job of a B&G H5000-class instrument processor inside Signal K. It corrects boat speed and leeway, then applies H5000-style TWA and TWS correction tables, and publishes corrected true wind and current. You edit everything in a webapp and can watch each correction work live. Run it in **Shadow mode** first: it publishes alongside your existing instruments without changing anything they do.
 
-> **Proof of concept (0.0.3).** Compare it against your instruments in Shadow mode before relying on it. See the [changelog](CHANGELOG.md).
+> **Proof of concept (0.0.4).** Compare it against your instruments in Shadow mode before relying on it. See the [changelog](CHANGELOG.md).
 
 ## Why it exists
 
@@ -22,14 +22,14 @@ Instrument processors fix this with calibration tables, but:
 
 This plugin moves the calibration into Signal K, where you can see it, change it, log it and fit it from your own race data:
 
-- **The same shape as an H5000:** boat speed linearity and heel correction, leeway, and TWA/TWS tables by wind speed with upwind, reach and downwind rows. An existing calibration carries across, and the H5000 tuning rule ("TWD lifts on every tack: take half the error off TWA") works unchanged.
+- **The same shape as an H5000:** a boat speed table by heel and speed, leeway (K × heel ÷ boat speed²), and TWA/TWS tables by wind speed with upwind, reach and downwind rows. An existing calibration carries across, and the H5000 tuning rule ("TWD lifts on every tack: take half the error off TWA") works unchanged.
 - **Every correction has a switch and a live readout,** so you can see what each one does to the numbers right now.
 - **The calibration is a versioned JSON file,** easy to back up, compare and fit from logged races offline.
 - **It is safe to try.** Shadow mode publishes `…Corrected` paths beside your instruments. Replace mode takes over the standard paths only when you choose it.
 
 ### On the boat it was built for
 
-From the offline model the defaults were fitted with: trained on 2025 race logs, tested on Jan–Mar 2026 races it had not seen, and measured by how far true wind direction jumps through each manoeuvre (median). The shipped defaults differ slightly (the owner's leeway K, and the TWA table resampled to H5000 breakpoints).
+From the offline model the defaults were fitted with: trained on 2025 race logs, tested on Jan–Mar 2026 races it had not seen, and measured by how far true wind direction jumps through each manoeuvre (median). The shipped defaults differ (the owner's leeway K, full STW table and TWA table from a later calibration fit), so treat these as an indication, not a guarantee.
 
 | | Uncorrected | Instrument (H2000) | This plugin |
 |---|---|---|---|
@@ -54,11 +54,11 @@ The corrections run in this order, each on the output of the one before:
 
 | Step | What | Default |
 |---|---|---|
-| Boat speed (STW) | Knots added to the paddlewheel: a **linearity** row by speed plus a **heel correction** row by heel, the same split as the H5000 | On |
+| Boat speed (STW) | Knots added to the paddlewheel from a **heel × speed table** (signed heel rows, STW columns), like the H5000's boat speed / heel table | On |
 | Leeway | Leeway = K × heel ÷ STW², turning the boat's velocity to leeward | On, K = 7.9446 |
 | True wind | Apparent wind minus the boat's velocity through the water | Always |
 | TWA table | Degrees added to \|TWA\| by TWS, with upwind, reach and downwind rows blended by TWA (70° / 100° / 130°) | On |
-| TWS table | Percent applied to TWS by TWS, same rows and blending | Off |
+| TWS table | Knots added to TWS by TWS, same rows and blending (H5000 units) | Off |
 | TWD, current | TWD from heading and corrected TWA; current from SOG/COG minus water velocity | Always, when heading and GPS are available |
 
 ### Inputs
@@ -99,28 +99,28 @@ Everything is published under this plugin's own `$source`. Corrected STW goes ou
 
 Open **Webapps → Performance Processor**.
 
-- **Live**: the outputs next to their uncorrected values, what each step is doing right now, and which source and how fresh each input is.
-- **Calibration**: every correction in pipeline order with an on/off switch. Select one to edit its values, then **Save**. **Reset to defaults** puts back this boat's fitted values for that correction.
+- **Live**: the outputs next to their uncorrected values; the pipeline, with each step's result tagged **Published** (sent to Signal K) or **Working** (only feeds the next step); a **Published to Signal K** table listing every value sent and its path; and which source and how fresh each input is.
+- **Calibration**: every correction in pipeline order with an on/off switch. Select one to edit its values, then **Save**. Table headings (the breakpoints) are fixed; only the values are edited, and blank cells are allowed where a table says so. The boat speed table also has **Paste a table**, which reads the `signalk-stw-heel-correction` CSV format. **Reset to defaults** puts back this boat's values for that correction.
 - **Settings**: Shadow or Replace, the fallback magnetic variation, and which source to read for each input.
 
 All configuration lives in the webapp. It is saved to `config.json` in the plugin's data directory (under `~/.signalk/plugin-config-data/`), not in the admin **Plugin Config** form, which only points here; saving that form cannot overwrite the tables. Saving needs write access when Signal K security is on.
 
 ## Defaults for this boat
 
-Fitted to the 2025 race logs and checked on Jan–Mar 2026 races not used in fitting, by how little true wind direction and current jump through tacks, gybes and roundings.
+What a fresh install starts with. Every value can be changed in the webapp.
 
-- **STW:** linearity +0.58 kn at 0.5 kn falling to 0 at 8.5 kn (tapering to 0 below 0.5 kn); heel 0 to −0.29 kn at 30°. This is the owner's measured heel × STW table, reduced to two rows within 0.03 kn of every cell.
+- **STW:** the owner's measured heel × STW table, 15 heel rows (−35° to +35°) by 17 speed columns (0.5 to 8.5 kn), in knots added. Blank cells (corners the boat never sails in) are filled from the nearest value in their row; below 0.5 kn the correction tapers to zero. A table in the same CSV format as `signalk-stw-heel-correction` can be pasted straight into the webapp.
 - **Leeway:** K = 7.9446, one value for every sail.
-- **TWA table (°):**
+- **TWA table (°)**, from the owner's calibration fit (blank = too little data):
 
   | TWS (kn) | 5 | 10 | 15 | 20 | 25 | 30 |
   |---|---|---|---|---|---|---|
-  | Upwind | −12.0 | −13.4 | −5.7 | −4.3 | −4.3 | −4.3 |
-  | Reach | −10.7 | −10.7 | −10.7 | −10.7 | −10.7 | −10.7 |
-  | Downwind | −4.2 | −3.5 | −1.6 | −1.3 | −1.3 | −1.3 |
+  | Upwind | −7.6 | −12.6 | −5.8 | −5.7 | +0.2 | |
+  | Reach | −2.4 | −4.4 | −5.4 | +1.4 | +3.9 | +1.0 |
+  | Downwind | +1.2 | −3.5 | +1.0 | | | |
 
-  The reach row is provisional: it rests on roundings only.
-- **TWS table (%):** off. Downwind −11.1% at 15 kn and −14.4% from 20 kn; light air and upwind left at 0.
+  A blank TWA cell uses the measured cells either side, holding the nearest one at the ends: upwind at 30 kn uses +0.2, downwind from 20 kn uses +1.0.
+- **TWS table (kn):** off. Downwind −0.5, −1, −1.5, −2, −2.5, −3 (−10% of each column); upwind and reach blank, which in this table means no correction.
 - **Fallback variation:** 12.8° E, used only when nothing on the boat sends true heading or magnetic variation. The Live page shows which applies.
 
 ## Configuration file
@@ -129,15 +129,20 @@ Fitted to the 2025 race logs and checked on Jan–Mar 2026 races not used in fit
 
 ```json
 {
-  "schema": 1,
+  "schema": 2,
   "mode": "shadow",
   "variation": 12.8,
   "sources": { "apparentWind": "", "stw": "", "heading": "", "attitude": "", "gps": "", "variation": "" },
-  "corrections": { "stw": { … }, "leeway": { … }, "twa": { … }, "tws": { … } }
+  "corrections": {
+    "stw": { "enabled": true, "heel": [-35, …, 35], "stw": [0.5, …, 8.5], "add": [[…], …] },
+    "leeway": { "enabled": true, "k": 7.9446 },
+    "twa": { "enabled": true, "tws": [5, …, 30], "upwind": […], "reach": […], "downwind": […], "angles": { … } },
+    "tws": { "enabled": false, "tws": [5, …, 30], "upwind": […], "reach": […], "downwind": […] }
+  }
 }
 ```
 
-`schema` is the version of the file's shape. A release that changes the shape bumps `CONFIG_SCHEMA` in `lib/processor.js` and adds a migration from the previous version, so older files are upgraded as they load and nothing is reset. A file without `schema` (saved by 0.0.1) is read as schema 1. A file from a newer release is refused rather than guessed at, and is never overwritten by an older plugin.
+`schema` is the version of the file's shape. A release that changes the shape bumps `CONFIG_SCHEMA` in `lib/processor.js` and adds a migration from the previous version, so older files are upgraded as they load and nothing is reset. A file without `schema` (saved by 0.0.1) is read as schema 1. Schema 1 files (0.0.1–0.0.3) are upgraded to 2: their two STW rows become the grid they describe, and their TWS percentages become knots. Blank table cells are stored as `null`. A file from a newer release is refused rather than guessed at, and is never overwritten by an older plugin.
 
 ## Adding a correction
 

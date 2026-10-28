@@ -83,7 +83,7 @@ test('shadow mode publishes …Corrected paths with units', () => {
   const h = harness()
   h.feed(boat)
   const out = paths(h.feed(wind))
-  assert.ok(Math.abs(Math.abs(out['environment.wind.angleTrueWaterCorrected']) / RAD - 38.0) < 0.3)
+  assert.ok(Math.abs(Math.abs(out['environment.wind.angleTrueWaterCorrected']) / RAD - 38.5) < 0.05)
   assert.ok(Math.abs(out['environment.wind.speedTrueCorrected'] * MS_TO_KN - 13.0) < 0.1)
   assert.ok('environment.wind.directionTrueCorrected' in out)
   assert.ok('navigation.leewayAngleCorrected' in out)
@@ -104,7 +104,7 @@ test('replace mode publishes the standard paths', () => {
 test('corrected STW goes out when the paddlewheel reports', () => {
   const h = harness({ mode: 'replace' })
   const out = paths(h.feed([{ path: 'navigation.attitude', value: { roll: -20 * RAD } }, { path: 'navigation.speedThroughWater', value: 6 / MS_TO_KN }]))
-  assert.ok(Math.abs(out['navigation.speedThroughWater'] * MS_TO_KN - (6 + 0.02 - 0.13)) < 1e-6)
+  assert.ok(Math.abs(out['navigation.speedThroughWater'] * MS_TO_KN - (6 - 0.111)) < 1e-6)
 })
 
 test('ignores its own output, however the source is spelled', () => {
@@ -200,7 +200,7 @@ test('saved config survives a restart, and the plugin options are ignored', asyn
 test('the saved file records its schema version', async () => {
   const h = harness()
   await h.call('PUT', '/calibration', { corrections: { leeway: { k: 6.5 } } })
-  assert.strictEqual(h.saved().schema, 1)
+  assert.strictEqual(h.saved().schema, 2)
 })
 
 test('a config left in the plugin options by 0.0.1 is picked up until the webapp saves', async () => {
@@ -252,4 +252,15 @@ test('registers no route the Signal K server already owns on a plugin router', (
   factory({}).registerWithRouter({ get: p => seen.push('GET ' + p), put: p => seen.push('PUT ' + p), post: p => seen.push('POST ' + p) })
   for (const r of seen) assert.ok(!/^(GET|POST) \/(config)?$/.test(r), `${r} is shadowed by the server`)
   assert.ok(seen.includes('GET /calibration') && seen.includes('PUT /calibration'))
+})
+
+test('publishes one TWA per update: the corrected one, never the working value', () => {
+  const h = harness()
+  h.feed(boat)
+  const values = h.feed(wind).flatMap(o => o.values)
+  const twa = values.filter(v => v.path.startsWith('environment.wind.angleTrue'))
+  assert.strictEqual(twa.length, 1, 'exactly one TWA value')
+  assert.strictEqual(twa[0].path, 'environment.wind.angleTrueWaterCorrected')
+  // Before the table the TWA is ~47°; after it ~38.5°. Only the latter goes out.
+  assert.ok(Math.abs(Math.abs(twa[0].value) / RAD - 38.5) < 0.05)
 })
