@@ -50,14 +50,16 @@
 
   async function loadConfig () {
     try {
-      const body = await getJson('/config')
+      const body = await getJson('/calibration')
+      if (!body || !body.config || !body.config.corrections) throw new Error('the plugin returned no calibration')
       state.saved = body.config
       state.draft = clone(body.config)
       state.defaults = body.defaults
-      $('conn').hidden = true
+      state.configError = null
     } catch (e) {
-      $('conn').textContent = `Cannot reach the plugin (${e.message}). Is Performance Processor enabled?`
-      $('conn').hidden = false
+      // Kept until a load succeeds: the live poll must not clear it.
+      state.configError = `Could not load the calibration (${e.message}). Is Performance Processor enabled and up to date?`
+      setTimeout(loadConfig, 5000)
     }
     renderAll()
   }
@@ -80,7 +82,7 @@
     state.saving = true
     renderSaveBar()
     try {
-      const res = await fetch(API + '/config', {
+      const res = await fetch(API + '/calibration', {
         method: 'PUT',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -138,6 +140,8 @@
   }
 
   function renderHeader () {
+    $('cfgError').textContent = state.configError || ''
+    $('cfgError').hidden = !state.configError
     const mode = state.saved ? state.saved.mode : null
     const badge = $('mode')
     badge.textContent = mode === 'replace' ? 'Replace' : mode === 'shadow' ? 'Shadow' : '--'

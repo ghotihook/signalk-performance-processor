@@ -1,7 +1,7 @@
 {
   "name": "signalk-performance-processor",
-  "version": "0.0.2",
-  "description": "H5000-style calibration for Signal K: corrects boat speed and leeway, applies TWA and TWS correction tables, and publishes true wind and current. Proof of concept.",
+  "version": "0.0.3",
+  "description": "True wind direction that holds steady through tacks and gybes. H5000-style calibration in Signal K: boat speed, leeway, and TWA/TWS tables by wind speed, edited and watched live in a webapp. Try it in shadow mode beside your existing instruments.",
   "main": "index.js",
   "scripts": {
     "test": "node --test",

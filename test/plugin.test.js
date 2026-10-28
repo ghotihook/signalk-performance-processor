@@ -151,20 +151,20 @@ test('reports a bad stored config instead of starting', () => {
   assert.ok(h.errors.some(e => e.includes('TWA table upwind row')))
 })
 
-test('GET /config returns the boat defaults on a fresh install', async () => {
+test('GET /calibration returns the boat defaults on a fresh install', async () => {
   const h = harness()
-  const r = await h.call('GET', '/config')
+  const r = await h.call('GET', '/calibration')
   assert.strictEqual(r.json.config.corrections.leeway.k, 7.9446)
   assert.strictEqual(r.json.config.mode, 'shadow')
 })
 
-test('PUT /config validates, saves and restarts', async () => {
+test('PUT /calibration validates, saves and restarts', async () => {
   const h = harness()
-  const bad = await h.call('PUT', '/config', { mode: 'nope' })
+  const bad = await h.call('PUT', '/calibration', { mode: 'nope' })
   assert.strictEqual(bad.status, 400)
   assert.strictEqual(h.saved(), null)
 
-  const ok = await h.call('PUT', '/config', { mode: 'replace', corrections: { leeway: { k: '9' } } })
+  const ok = await h.call('PUT', '/calibration', { mode: 'replace', corrections: { leeway: { k: '9' } } })
   assert.strictEqual(ok.status, 200)
   assert.strictEqual(h.saved().corrections.leeway.k, 9)
   h.feed(boat)
@@ -190,29 +190,29 @@ test('the admin form holds nothing: tables are configured in the webapp', () => 
 
 test('saved config survives a restart, and the plugin options are ignored', async () => {
   const h = harness()
-  await h.call('PUT', '/config', { corrections: { leeway: { k: 6.5 } } })
+  await h.call('PUT', '/calibration', { corrections: { leeway: { k: 6.5 } } })
   h.plugin.stop()
   h.plugin.start({ corrections: { leeway: { k: 1 } } })
-  const r = await h.call('GET', '/config')
+  const r = await h.call('GET', '/calibration')
   assert.strictEqual(r.json.config.corrections.leeway.k, 6.5)
 })
 
 test('the saved file records its schema version', async () => {
   const h = harness()
-  await h.call('PUT', '/config', { corrections: { leeway: { k: 6.5 } } })
+  await h.call('PUT', '/calibration', { corrections: { leeway: { k: 6.5 } } })
   assert.strictEqual(h.saved().schema, 1)
 })
 
 test('a config left in the plugin options by 0.0.1 is picked up until the webapp saves', async () => {
   const h = harness(null, { corrections: { leeway: { k: 5 } } })
-  const r = await h.call('GET', '/config')
+  const r = await h.call('GET', '/calibration')
   assert.strictEqual(r.json.config.corrections.leeway.k, 5)
 })
 
 test('a broken config file is reported, and the webapp can still load and fix it', async () => {
   const h = harness({ corrections: { twa: { upwind: [1] } } })
   assert.ok(h.errors.some(e => e.includes('fix it in the webapp')))
-  const r = await h.call('GET', '/config')
+  const r = await h.call('GET', '/calibration')
   assert.strictEqual(r.status, 200)
 })
 
@@ -239,8 +239,17 @@ test('stop unsubscribes', () => {
 test('never overwrites a config saved by a newer release', async () => {
   const h = harness({ schema: 99, corrections: {} })
   assert.ok(h.errors.some(e => e.includes('newer version')))
-  const r = await h.call('PUT', '/config', {})
+  const r = await h.call('PUT', '/calibration', {})
   assert.strictEqual(r.status, 500)
   assert.match(r.json.errors[0], /newer version/)
   assert.strictEqual(h.saved().schema, 99, 'file left untouched')
+})
+
+test('registers no route the Signal K server already owns on a plugin router', () => {
+  // The server adds GET / and GET/POST /config to every plugin's router before calling
+  // registerWithRouter, so a plugin route on those paths is silently never reached.
+  const seen = []
+  factory({}).registerWithRouter({ get: p => seen.push('GET ' + p), put: p => seen.push('PUT ' + p), post: p => seen.push('POST ' + p) })
+  for (const r of seen) assert.ok(!/^(GET|POST) \/(config)?$/.test(r), `${r} is shadowed by the server`)
+  assert.ok(seen.includes('GET /calibration') && seen.includes('PUT /calibration'))
 })

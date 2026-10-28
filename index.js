@@ -48,7 +48,7 @@ module.exports = function (app) {
   const plugin = {
     id: 'signalk-performance-processor',
     name: 'gh - Performance Processor',
-    description: 'H5000-style calibration: corrects STW and leeway, then true wind angle and speed, and publishes true wind and current'
+    description: 'Steady true wind through tacks and gybes: H5000-style calibration of boat speed, leeway and TWA/TWS, configured in the Performance Processor webapp'
   }
 
   let config = null
@@ -356,12 +356,14 @@ module.exports = function (app) {
   }
 
   plugin.registerWithRouter = function (router) {
-    router.get('/config', (req, res) => {
+    // Not /config: the server registers GET and POST /config on every plugin's router
+    // for its own options, ahead of the plugin's routes, so ours would never be reached.
+    router.get('/calibration', (req, res) => {
       res.set('Cache-Control', 'no-store')
       res.json({ config: config || normalizeConfig(loadStored()).config, defaults: DEFAULTS })
     })
 
-    router.put('/config', async (req, res) => {
+    router.put('/calibration', async (req, res) => {
       let body
       try { body = await readBody(req) } catch (e) { return res.status(400).json({ errors: ['body is not valid JSON'] }) }
       const { config: cfg, errors } = normalizeConfig(body)

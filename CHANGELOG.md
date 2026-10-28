@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.3 — 2026-10-29
+
+Still a proof of concept: run it in Shadow mode alongside your instruments.
+
+- Fix: the Calibration and Settings pages were empty on a real server. The plugin's `/config` endpoint was shadowed by the server's own route of that name; it is now `/calibration`, and the webapp says so if the calibration cannot be loaded.
+- README and App Store description explain the problem this solves, who it is for, and the results on the boat it was built for.
+
 ## 0.0.2 — 2026-10-29
 
 Still a proof of concept: run it in Shadow mode alongside your instruments.
