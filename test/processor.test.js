@@ -104,6 +104,10 @@ test('TWD and current need heading; current needs SOG and COG', () => {
   assert.strictEqual(noHdg.current, undefined)
   const t = process({ awa: 32, aws: 16.9, stw: 5.6, headingTrue: 200, headingMagnetic: 1 }, config).out
   close(t.heading, 200, 1e-9, 'true heading wins over magnetic')
+  const g = process({ awa: 32, aws: 16.9, stw: 5.6, headingMagnetic: 110, variation: 10 }, config).out
+  close(g.heading, 120, 1e-9, 'variation from Signal K beats the fallback')
+  assert.strictEqual(g.headingFrom, 'magnetic + variation from Signal K')
+  assert.strictEqual(r.headingFrom, 'magnetic + fallback variation')
 })
 
 test('a still current is reported as still', () => {
@@ -142,4 +146,37 @@ test('config: bad tables are reported, not accepted', () => {
   bad({ corrections: { twa: { angles: { upwind: 120, reach: 100, downwind: 130 } } } }, 'angles')
   bad({ corrections: { stw: { linearity: { stw: [0, 1], add: [0, 0] } } } }, 'above 0')
   bad({ corrections: { leeway: { k: 'x' } } }, 'Leeway K')
+})
+
+test('config carries its schema version, starting at 1', () => {
+  const { CONFIG_SCHEMA } = require('../lib/processor')
+  assert.strictEqual(CONFIG_SCHEMA, 1)
+  assert.strictEqual(normalizeConfig({}).config.schema, 1)
+  assert.strictEqual(normalizeConfig({ schema: 1, variation: 11 }).config.variation, 11)
+})
+
+test('a config with no schema field (0.0.1) is read as schema 1', () => {
+  const { config, errors } = normalizeConfig({ corrections: { leeway: { k: 6 } } })
+  assert.deepStrictEqual(errors, [])
+  assert.strictEqual(config.schema, 1)
+  assert.strictEqual(config.corrections.leeway.k, 6)
+})
+
+test('a config from a newer release is refused, not guessed at', () => {
+  const { config, errors } = normalizeConfig({ schema: 2, corrections: { leeway: { k: 6 } } })
+  assert.ok(errors[0].includes('newer version'))
+  assert.strictEqual(config.corrections.leeway.k, DEFAULTS.corrections.leeway.k, 'falls back to defaults')
+  assert.ok(normalizeConfig({ schema: 'x' }).errors[0].includes('not a schema version'))
+})
+
+test('migrations run in order, one step at a time', () => {
+  const { migrate } = _internals
+  const steps = {
+    1: c => ({ ...c, renamed: c.old, old: undefined }),
+    2: c => ({ ...c, renamed: c.renamed * 10 })
+  }
+  const r = migrate({ schema: 1, old: 4 }, steps, 3)
+  assert.strictEqual(r.config.schema, 3)
+  assert.strictEqual(r.config.renamed, 40)
+  assert.ok(migrate({ schema: 1 }, {}, 2).error.includes('no upgrade from 1 to 2'))
 })

@@ -19,7 +19,8 @@
     stw: 'Speed through water',
     heading: 'Heading',
     attitude: 'Heel (attitude)',
-    gps: 'SOG and COG'
+    gps: 'SOG and COG',
+    variation: 'Magnetic variation'
   }
 
   const state = {
@@ -160,6 +161,13 @@
     return { twa: Math.atan2(y, x) * 180 / Math.PI, tws: Math.hypot(x, y) }
   }
 
+  // Where true heading came from, so a fallback variation is visible at a glance.
+  function headingNote (o) {
+    if (o.headingFrom === 'true heading') return 'from true heading'
+    const v = o.variation == null ? '' : ` ${Math.abs(o.variation).toFixed(1)}° ${o.variation < 0 ? 'W' : 'E'}`
+    return o.headingFrom === 'magnetic + fallback variation' ? `fallback variation${v}` : `variation${v} from GPS`
+  }
+
   function tile (label, value, unit, raw) {
     return `<div class="tile"><div class="label">${esc(label)}</div>` +
       `<div class="value">${esc(value)}<span class="unit">${esc(unit)}</span></div>` +
@@ -182,7 +190,7 @@
       $('tiles').innerHTML = [
         tile('TWA', fmt(Math.abs(o.twa)), `° ${side(o.twa)}`, `uncorrected ${fmt(Math.abs(u.twa))}°`),
         tile('TWS', fmt(o.tws), 'kn', `uncorrected ${fmt(u.tws)} kn`),
-        tile('TWD', o.twd == null ? '--' : fmt(o.twd, 0), '° T', o.twd == null ? 'no heading' : ''),
+        tile('TWD', o.twd == null ? '--' : fmt(o.twd, 0), '° T', o.twd == null ? 'no heading' : headingNote(o)),
         tile('STW', fmt(o.stw, 2), 'kn', `paddlewheel ${fmt(r.input.stw, 2)} kn`),
         tile('Leeway', fmt(Math.abs(o.leeway)), `° ${side(o.leeway)}`, r.input.heel == null ? 'no heel' : `heel ${fmt(r.input.heel, 0)}°`),
         tile('Current', o.current ? fmt(o.current.drift, 2) : '--', o.current ? `kn · ${fmt(o.current.set, 0)}°` : 'kn', o.current ? '' : 'no SOG/COG or heading')

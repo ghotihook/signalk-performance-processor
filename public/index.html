@@ -68,8 +68,9 @@
         </fieldset>
       </div>
       <div class="panel">
-        <h2>Magnetic variation</h2>
-        <label class="field">Degrees east, for true heading
+        <h2>Fallback magnetic variation</h2>
+        <p class="muted sub">Used only when nothing on the boat sends true heading or magnetic variation. Normally your GPS supplies variation and this is never used; the Live page shows which applies.</p>
+        <label class="field">Degrees east (west negative)
           <input id="variation" type="number" step="0.1" data-path="variation">
         </label>
       </div>

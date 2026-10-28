@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.2 — 2026-10-29
+
+Still a proof of concept: run it in Shadow mode alongside your instruments.
+
+- Heading for TWD and current comes from `navigation.headingTrue` if present, otherwise magnetic heading plus `navigation.magneticVariation` (normally from the GPS). The variation in Settings is now only a fallback, and the Live page says which is in use.
+- Configuration is edited only in the webapp and saved to `config.json` in the plugin's data directory. The admin Plugin Config form no longer shows the tables, so saving it cannot overwrite them. A configuration saved by 0.0.1 is picked up until the webapp first saves.
+- The configuration file records its format version (`"schema": 1`). Future releases upgrade older files as they load; a file from a newer release is refused and never overwritten.
+
 ## 0.0.1 — 2026-10-29
 
 First release, a proof of concept. Run it in Shadow mode alongside your instruments before relying on it.

@@ -2,7 +2,7 @@
 
 # signalk-performance-processor
 
-> **Proof of concept (0.0.1).** Run it in Shadow mode alongside your instruments and compare before relying on it.
+> **Proof of concept (0.0.2).** Run it in Shadow mode alongside your instruments and compare before relying on it.
 
 Signal K plugin and webapp that does the calibration job of an instrument processor such as a B&G H5000: it corrects boat speed and leeway, works out true wind from apparent wind, applies H5000-style TWA and TWS correction tables, and publishes true wind and current.
 
@@ -29,7 +29,7 @@ The corrections run in this order, each on the output of the one before:
 |---|---|
 | Apparent wind | `environment.wind.angleApparent`, `environment.wind.speedApparent` |
 | Speed through water | `navigation.speedThroughWater` |
-| Heading | `navigation.headingTrue`, or `navigation.headingMagnetic` + the variation in Settings |
+| Heading | `navigation.headingTrue`; otherwise `navigation.headingMagnetic` + `navigation.magneticVariation` (normally from the GPS); otherwise magnetic heading + the fallback variation in Settings |
 | Heel | `navigation.attitude` (roll) |
 | SOG and COG | `navigation.speedOverGround`, `navigation.courseOverGroundTrue` |
 
@@ -63,9 +63,9 @@ Open **Webapps → Performance Processor**.
 
 - **Live**: the outputs next to their uncorrected values, what each step is doing right now, and which source and how fresh each input is.
 - **Calibration**: every correction in pipeline order with an on/off switch. Select one to edit its values, then **Save**. **Reset to defaults** puts back this boat's fitted values for that correction.
-- **Settings**: Shadow or Replace, magnetic variation, and which source to read for each input.
+- **Settings**: Shadow or Replace, the fallback magnetic variation, and which source to read for each input.
 
-Saving needs write access when Signal K security is on. The settings are stored as the plugin's normal configuration, so they are also visible (and editable as a fallback) under **Server → Plugin Config**.
+All configuration lives in the webapp. It is saved to `config.json` in the plugin's data directory (under `~/.signalk/plugin-config-data/`), not in the admin **Plugin Config** form, which only points here; saving that form cannot overwrite the tables. Saving needs write access when Signal K security is on.
 
 ## Defaults for this boat
 
@@ -83,7 +83,23 @@ Fitted to the 2025 race logs and checked on Jan–Mar 2026 races not used in fit
 
   The reach row is provisional: it rests on roundings only.
 - **TWS table (%):** off. Downwind −11.1% at 15 kn and −14.4% from 20 kn; light air and upwind left at 0.
-- **Variation:** 12.8° E.
+- **Fallback variation:** 12.8° E, used only when nothing on the boat sends true heading or magnetic variation. The Live page shows which applies.
+
+## Configuration file
+
+`config.json` in the plugin's data directory, written by the webapp:
+
+```json
+{
+  "schema": 1,
+  "mode": "shadow",
+  "variation": 12.8,
+  "sources": { "apparentWind": "", "stw": "", "heading": "", "attitude": "", "gps": "", "variation": "" },
+  "corrections": { "stw": { … }, "leeway": { … }, "twa": { … }, "tws": { … } }
+}
+```
+
+`schema` is the version of the file's shape. A release that changes the shape bumps `CONFIG_SCHEMA` in `lib/processor.js` and adds a migration from the previous version, so older files are upgraded as they load and nothing is reset. A file without `schema` (saved by 0.0.1) is read as schema 1. A file from a newer release is refused rather than guessed at, and is never overwritten by an older plugin.
 
 ## Adding a correction
 

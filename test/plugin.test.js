@@ -1,23 +1,27 @@
 const test = require('node:test')
 const assert = require('node:assert')
+const fs = require('fs')
+const os = require('os')
+const path = require('path')
 const factory = require('../index.js')
 
 const MS_TO_KN = 1.94384
 const RAD = Math.PI / 180
 
 // A fake Signal K app: collects what the plugin publishes, says and saves.
-function harness (options = {}) {
+// options: what the server would pass to start(); stored: a config.json already on disk.
+function harness (stored = null, options = {}) {
   const published = []; const meta = []; const statuses = []; const errors = []
   let onDelta = null
-  let saved = null
   const routes = {}
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spp-'))
+  if (stored) fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify(stored))
   const app = {
+    getDataDirPath: () => dir,
     debug () {},
     error: m => errors.push(m),
     setPluginError: m => errors.push(m),
     setPluginStatus: m => statuses.push(m),
-    readPluginOptions: () => ({ configuration: saved || options }),
-    savePluginOptions (cfg, cb) { saved = cfg; cb() },
     handleMessage (id, delta) {
       const u = delta.updates[0]
       if (u.meta) meta.push(...u.meta.map(x => x.path))
@@ -46,7 +50,8 @@ function harness (options = {}) {
     await routes[`${method} ${path}`]({ body }, res)
     return { status, json }
   }
-  return { plugin, app, published, meta, statuses, errors, feed, call, saved: () => saved }
+  const saved = () => { try { return JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8')) } catch (e) { return null } }
+  return { plugin, app, dir, published, meta, statuses, errors, feed, call, saved }
 }
 
 const boat = [
@@ -64,13 +69,13 @@ const paths = out => Object.fromEntries(out.flatMap(o => o.values).map(v => [v.p
 
 test('subscribes to every input with sourcePolicy all', () => {
   let sub = null
-  const app = { debug () {}, error () {}, setPluginError () {}, setPluginStatus () {}, handleMessage () {},
+  const app = { debug () {}, error () {}, setPluginError () {}, setPluginStatus () {}, handleMessage () {}, getDataDirPath: () => fs.mkdtempSync(path.join(os.tmpdir(), 'spp-')),
     subscriptionmanager: { subscribe: (s, u) => { sub = s; u.push(() => {}) } } }
   factory(app).start({})
   assert.strictEqual(sub.sourcePolicy, 'all')
   const want = ['environment.wind.angleApparent', 'environment.wind.speedApparent', 'navigation.speedThroughWater',
     'navigation.headingMagnetic', 'navigation.headingTrue', 'navigation.attitude',
-    'navigation.speedOverGround', 'navigation.courseOverGroundTrue']
+    'navigation.speedOverGround', 'navigation.courseOverGroundTrue', 'navigation.magneticVariation']
   assert.deepStrictEqual(sub.subscribe.map(s => s.path).sort(), want.sort())
 })
 
@@ -177,14 +182,65 @@ test('GET /live reports the last result, inputs and sources seen', async () => {
   assert.strictEqual(r.json.outputPaths.tws, 'environment.wind.speedTrueCorrected')
 })
 
-test('the admin schema carries the boat defaults', () => {
+test('the admin form holds nothing: tables are configured in the webapp', () => {
   const s = factory({}).schema
-  assert.strictEqual(s.properties.corrections.properties.leeway.properties.k.default, 7.9446)
-  assert.deepStrictEqual(s.properties.mode.enum, ['shadow', 'replace'])
+  assert.deepStrictEqual(s.properties, {})
+  assert.match(s.description, /Webapps/)
+})
+
+test('saved config survives a restart, and the plugin options are ignored', async () => {
+  const h = harness()
+  await h.call('PUT', '/config', { corrections: { leeway: { k: 6.5 } } })
+  h.plugin.stop()
+  h.plugin.start({ corrections: { leeway: { k: 1 } } })
+  const r = await h.call('GET', '/config')
+  assert.strictEqual(r.json.config.corrections.leeway.k, 6.5)
+})
+
+test('the saved file records its schema version', async () => {
+  const h = harness()
+  await h.call('PUT', '/config', { corrections: { leeway: { k: 6.5 } } })
+  assert.strictEqual(h.saved().schema, 1)
+})
+
+test('a config left in the plugin options by 0.0.1 is picked up until the webapp saves', async () => {
+  const h = harness(null, { corrections: { leeway: { k: 5 } } })
+  const r = await h.call('GET', '/config')
+  assert.strictEqual(r.json.config.corrections.leeway.k, 5)
+})
+
+test('a broken config file is reported, and the webapp can still load and fix it', async () => {
+  const h = harness({ corrections: { twa: { upwind: [1] } } })
+  assert.ok(h.errors.some(e => e.includes('fix it in the webapp')))
+  const r = await h.call('GET', '/config')
+  assert.strictEqual(r.status, 200)
+})
+
+test('variation: true heading first, then GPS variation, then the fallback', async () => {
+  const RAD = Math.PI / 180
+  const twd = (extra) => {
+    const h = harness()
+    h.feed(boat.concat(extra))
+    return paths(h.feed(wind))['environment.wind.directionTrueCorrected'] / RAD
+  }
+  const fallback = twd([])
+  const gps = twd([{ path: 'navigation.magneticVariation', value: 10 * RAD }])
+  const trueHdg = twd([{ path: 'navigation.magneticVariation', value: 10 * RAD }, { path: 'navigation.headingTrue', value: 200 * RAD }])
+  assert.ok(Math.abs(((fallback - gps + 540) % 360) - 180 - 2.8) < 1e-6, 'GPS variation 10° vs fallback 12.8°')
+  assert.ok(Math.abs(trueHdg - gps) > 50, 'true heading wins')
 })
 
 test('stop unsubscribes', () => {
   const h = harness()
   h.plugin.stop()
   assert.deepStrictEqual(h.feed(boat.concat(wind)), [])
+})
+
+test('never overwrites a config saved by a newer release', async () => {
+  const h = harness({ schema: 99, corrections: {} })
+  assert.ok(h.errors.some(e => e.includes('newer version')))
+  const r = await h.call('PUT', '/config', {})
+  assert.strictEqual(r.status, 500)
+  assert.match(r.json.errors[0], /newer version/)
+  assert.strictEqual(h.saved().schema, 99, 'file left untouched')
 })

@@ -1,11 +1,17 @@
 'use strict'
 
+const fs = require('fs')
+const path = require('path')
 const { DEFAULTS } = require('./lib/defaults')
-const { process, correctInputs, normalizeConfig, CORRECTIONS } = require('./lib/processor')
+const { process, correctInputs, normalizeConfig, CORRECTIONS, CONFIG_SCHEMA } = require('./lib/processor')
 
 const MS_TO_KN = 1.94384
 const RAD_TO_DEG = 180 / Math.PI
 const STALE_MS = 3000 // an input older than this is not used
+// Variation changes over days, not seconds; a GPS that drops it briefly should not
+// push heading onto the fallback value.
+const VARIATION_MAX_AGE_MS = 10 * 60 * 1000
+const CONFIG_FILE = 'config.json'
 const STATUS_INTERVAL_MS = 1000
 // Bounds for sanity-checking sensor input. Anything outside these is a fault, not a reading.
 const MAX_PLAUSIBLE_STW_KN = 60
@@ -21,7 +27,8 @@ const INPUTS = {
   stw: ['navigation.speedThroughWater'],
   heading: ['navigation.headingMagnetic', 'navigation.headingTrue'],
   attitude: ['navigation.attitude'],
-  gps: ['navigation.speedOverGround', 'navigation.courseOverGroundTrue']
+  gps: ['navigation.speedOverGround', 'navigation.courseOverGroundTrue'],
+  variation: ['navigation.magneticVariation']
 }
 const INPUT_OF = Object.fromEntries(Object.entries(INPUTS).flatMap(([k, ps]) => ps.map(p => [p, k])))
 
@@ -56,7 +63,14 @@ module.exports = function (app) {
   let lastResultAt = 0
   let lastStatus = ''
 
-  plugin.schema = schemaFor(DEFAULTS)
+  // Everything is configured in the webapp and kept in this plugin's data directory,
+  // not in the plugin options: the admin form would otherwise show the tables, and
+  // saving it could overwrite the webapp's values.
+  plugin.schema = {
+    type: 'object',
+    description: 'Calibration tables and settings are edited in Webapps → Performance Processor.',
+    properties: {}
+  }
 
   function outPath (key) {
     return config.mode === 'shadow' ? OUTPUTS[key].path + SHADOW_SUFFIX : OUTPUTS[key].path
@@ -80,9 +94,9 @@ module.exports = function (app) {
   }
   const isStwEcho = ms => recentStw.some(o => Math.abs(o - ms) < 1e-12)
 
-  function fresh (path, now) {
-    const l = latest[path]
-    return l && now - l.at < STALE_MS ? l.value : undefined
+  function fresh (p, now, maxAge = STALE_MS) {
+    const l = latest[p]
+    return l && now - l.at < maxAge ? l.value : undefined
   }
 
   // Refresh on a change of state, and at most once a second within a state so the
@@ -148,6 +162,7 @@ module.exports = function (app) {
       heel: heelDeg(now),
       headingMagnetic: deg(fresh('navigation.headingMagnetic', now)),
       headingTrue: deg(fresh('navigation.headingTrue', now)),
+      variation: deg(fresh('navigation.magneticVariation', now, VARIATION_MAX_AGE_MS)),
       sog: (v => v == null ? undefined : v * MS_TO_KN)(fresh('navigation.speedOverGround', now)),
       cog: deg(fresh('navigation.courseOverGroundTrue', now))
     }
@@ -265,10 +280,43 @@ module.exports = function (app) {
     unsubscribes = []
   }
 
+  // ---- stored configuration ---------------------------------------------------
+
+  function configFile () {
+    return path.join(app.getDataDirPath(), CONFIG_FILE)
+  }
+
+  // The webapp's saved configuration. Before the file exists, take a configuration left
+  // in the plugin options by 0.0.1, which stored it there; otherwise start from defaults.
+  function loadStored (options) {
+    try {
+      return JSON.parse(fs.readFileSync(configFile(), 'utf8'))
+    } catch (e) {
+      if (e.code !== 'ENOENT') app.error(`could not read ${configFile()}: ${e.message}`)
+    }
+    return options && options.corrections ? options : {}
+  }
+
+  // Write to a temporary file and rename, so a crash mid-write never leaves half a file.
+  // Never overwrite a file from a newer release: this version would drop what it
+  // does not understand.
+  function saveStored (cfg) {
+    const file = configFile()
+    let onDisk = null
+    try { onDisk = JSON.parse(fs.readFileSync(file, 'utf8')).schema } catch (e) {}
+    if (Number.isInteger(onDisk) && onDisk > CONFIG_SCHEMA) {
+      throw new Error(`the saved configuration is schema ${onDisk}, from a newer version of this plugin; update the plugin rather than overwrite it`)
+    }
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(file + '.tmp', JSON.stringify(cfg, null, 2))
+    fs.renameSync(file + '.tmp', file)
+  }
+
   plugin.start = function (options) {
-    const { config: cfg, errors } = normalizeConfig(options || {})
+    const { config: cfg, errors } = normalizeConfig(loadStored(options))
     if (errors.length) {
-      app.setPluginError(`Configuration: ${errors.join('; ')}`)
+      app.setPluginError(`Configuration: ${errors.join('; ')} — fix it in the webapp`)
+      config = normalizeConfig({}).config // so the webapp can still load and repair it
       return
     }
     startWith(cfg)
@@ -310,9 +358,7 @@ module.exports = function (app) {
   plugin.registerWithRouter = function (router) {
     router.get('/config', (req, res) => {
       res.set('Cache-Control', 'no-store')
-      let stored = {}
-      try { stored = app.readPluginOptions().configuration || {} } catch (e) {}
-      res.json({ config: config || normalizeConfig(stored).config, defaults: DEFAULTS })
+      res.json({ config: config || normalizeConfig(loadStored()).config, defaults: DEFAULTS })
     })
 
     router.put('/config', async (req, res) => {
@@ -320,11 +366,13 @@ module.exports = function (app) {
       try { body = await readBody(req) } catch (e) { return res.status(400).json({ errors: ['body is not valid JSON'] }) }
       const { config: cfg, errors } = normalizeConfig(body)
       if (errors.length) return res.status(400).json({ errors })
-      app.savePluginOptions(cfg, err => {
-        if (err) return res.status(500).json({ errors: [`could not save: ${err.message || err}`] })
-        startWith(cfg)
-        res.json({ config: cfg })
-      })
+      try {
+        saveStored(cfg)
+      } catch (e) {
+        return res.status(500).json({ errors: [`could not save: ${e.message}`] })
+      }
+      startWith(cfg)
+      res.json({ config: cfg })
     })
 
     router.get('/live', (req, res) => {
@@ -336,33 +384,5 @@ module.exports = function (app) {
   return plugin
 }
 
-// JSON schema for the admin "Plugin Config" form, built from the defaults so the form
-// is a working fallback editor and a fresh install starts from this boat's values.
-function schemaFor (defaults) {
-  const titles = {
-    mode: 'Output: shadow publishes …Corrected paths alongside the instruments; replace publishes the standard paths (rank this plugin first in Source Priorities)',
-    variation: 'Magnetic variation (degrees, east positive)',
-    sources: 'Input sources ($source to read; blank = any source except this plugin)',
-    corrections: 'Corrections (easier to edit in the Performance Processor webapp)'
-  }
-  function node (value, title) {
-    if (Array.isArray(value)) return { type: 'array', title, items: { type: 'number' }, default: value }
-    if (value && typeof value === 'object') {
-      return {
-        type: 'object',
-        title,
-        properties: Object.fromEntries(Object.entries(value).map(([k, v]) => [k, node(v, k)]))
-      }
-    }
-    if (typeof value === 'boolean') return { type: 'boolean', title, default: value }
-    if (typeof value === 'number') return { type: 'number', title, default: value }
-    return { type: 'string', title, default: value }
-  }
-  const schema = node(defaults)
-  for (const [k, t] of Object.entries(titles)) schema.properties[k].title = t
-  schema.properties.mode.enum = ['shadow', 'replace']
-  return schema
-}
-
 // Exposed for the test suite only; not part of the Signal K plugin API.
-module.exports._internals = { schemaFor, OUTPUTS, INPUTS, SHADOW_SUFFIX }
+module.exports._internals = { OUTPUTS, INPUTS, SHADOW_SUFFIX, CONFIG_FILE }
