@@ -1,0 +1,46 @@
+{
+  "name": "signalk-performance-processor",
+  "version": "0.0.1",
+  "description": "H5000-style calibration for Signal K: corrects boat speed and leeway, applies TWA and TWS correction tables, and publishes true wind and current. Proof of concept.",
+  "main": "index.js",
+  "scripts": {
+    "test": "node --test",
+    "prepublishOnly": "npm test"
+  },
+  "keywords": [
+    "signalk-node-server-plugin",
+    "signalk-webapp",
+    "signalk-category-utility",
+    "signalk",
+    "sailing",
+    "racing",
+    "true-wind",
+    "calibration",
+    "leeway",
+    "speed-through-water"
+  ],
+  "signalk-plugin-enabled-by-default": false,
+  "signalk": {
+    "displayName": "Performance Processor",
+    "appIcon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "lib/",
+    "public/",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ghotihook/signalk-performance-processor.git"
+  },
+  "homepage": "https://github.com/ghotihook/signalk-performance-processor#readme",
+  "bugs": {
+    "url": "https://github.com/ghotihook/signalk-performance-processor/issues"
+  },
+  "author": "ghotihook",
+  "license": "MIT"
+}

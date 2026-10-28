@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Performance Processor</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="title">
+      <h1>Performance Processor</h1>
+      <span id="mode" class="badge">--</span>
+    </div>
+    <nav aria-label="Sections">
+      <a href="#live" data-view="live">Live</a>
+      <a href="#calibration" data-view="calibration">Calibration</a>
+      <a href="#settings" data-view="settings">Settings</a>
+    </nav>
+    <div id="status" class="muted status"></div>
+    <div id="conn" class="warn" hidden></div>
+  </header>
+
+  <div id="saveBar" class="save-bar" hidden>
+    <span>Unsaved changes</span>
+    <div id="saveErrors" class="errors"></div>
+    <button id="revert" type="button" class="ghost">Revert</button>
+    <button id="save" type="button" class="primary">Save</button>
+  </div>
+
+  <main>
+    <section id="view-live" class="view" hidden>
+      <div id="tiles" class="tiles"></div>
+      <div class="panel">
+        <div class="panel-head"><h2>Pipeline</h2><span id="liveAge" class="muted sub"></span></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Step</th><th>In</th><th>Correction</th><th>Out</th></tr></thead>
+            <tbody id="steps"><tr><td colspan="4" class="muted center">Waiting for data…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Inputs</h2></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Path</th><th>Source</th><th class="num">Age</th></tr></thead>
+            <tbody id="inputs"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-calibration" class="view" hidden>
+      <p class="muted sub intro">Corrections run top to bottom. Tick to enable; select one to edit its values.</p>
+      <div class="cal">
+        <ul id="corrList" class="corr-list" aria-label="Corrections"></ul>
+        <div id="corrEditor" class="panel corr-editor"></div>
+      </div>
+    </section>
+
+    <section id="view-settings" class="view" hidden>
+      <div class="panel">
+        <h2>Output</h2>
+        <fieldset id="modes" class="modes">
+          <legend class="sr-only">Publish mode</legend>
+        </fieldset>
+      </div>
+      <div class="panel">
+        <h2>Magnetic variation</h2>
+        <label class="field">Degrees east, for true heading
+          <input id="variation" type="number" step="0.1" data-path="variation">
+        </label>
+      </div>
+      <div class="panel">
+        <h2>Input sources</h2>
+        <p class="muted sub">Choose the instrument to read for each input. "Any" takes every source except this plugin. Pick your instruments, not another correcting plugin, so nothing is corrected twice.</p>
+        <div id="sources" class="sources"></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
