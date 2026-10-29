@@ -111,18 +111,20 @@ tr.off td { color: var(--muted); }
 tr.working .result { color: var(--muted); font-style: italic; }
 td.mono { font-variant-numeric: tabular-nums; }
 /* Pipeline: one chain per value sent, read left to right, the sent value on the far right */
-.flow { display: grid; grid-template-columns: max-content max-content 1fr 13em; column-gap: 10px; font-size: 0.8em; line-height: 1.25; }
+.flow { display: grid; grid-template-columns: max-content 1fr 13em; column-gap: 10px; font-size: 0.8em; line-height: 1.25; }
 .flow > p { grid-column: 1 / -1; margin: 8px 0; }
 .chain { display: contents; }
 .chain > * { display: flex; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
-.cname { font-weight: 600; color: var(--muted); text-transform: uppercase; font-size: 0.85em; padding-right: 6px; }
+/* The chain's name heads its row, so the steps get the full width */
+.chain > .cname { grid-column: 1 / -1; padding: 10px 0 2px; font-weight: 600; color: var(--muted); text-transform: uppercase; font-size: 0.85em; }
+.chain > .cin, .chain > .csteps, .chain > .cout { border-top: 0; padding-top: 4px; }
 .cin { flex-direction: column; align-items: stretch !important; justify-content: center; gap: 4px; }
 .csteps { gap: 6px; flex-wrap: wrap; }
 .arrow { color: var(--muted); }
 .tail { flex: 1 1 20px; min-width: 20px; height: 0; border-top: 1.5px solid var(--muted); position: relative; }
 .tail::after { content: ''; position: absolute; right: -1px; top: -5.5px; border: 5px solid transparent; border-left: 8px solid var(--muted); border-right: 0; }
 /* One size for every box, so the layout never moves as the values change */
-.fchip { flex: none; box-sizing: border-box; width: 10.5em; height: 5.2em; overflow: hidden; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); font-variant-numeric: tabular-nums; }
+.fchip { flex: none; box-sizing: border-box; width: 10em; height: 5.2em; overflow: hidden; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); font-variant-numeric: tabular-nums; }
 .fchip .l { font-size: 0.8em; font-weight: 600; color: var(--muted); text-transform: uppercase; }
 .fchip .l, .fchip .v { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fchip .v { font-weight: 600; }

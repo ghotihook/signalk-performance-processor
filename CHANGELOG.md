@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.5 — 2026-10-30
+
+- **The README, rewritten for someone new to it**: what it is for, features, requirements (including raw apparent wind and which paths are needed for what), installation, getting started, how it works, the webapp, outputs, configuration, limitations and a troubleshooting table of the status messages. The one-boat evidence (results tables, the STW table comparison, the full default tables) is gone; the defaults are described as the author's boat, to be refitted.
+- **Heading damping is explained without assuming damped apparent wind** (Settings and the defaults' comment): heading and apparent wind need the same lag, so with raw apparent wind keep heading damping low.
+- **True wind is one row on the Live page**: TWA, TWS and TWD are one calculation (apparent wind, STW and heading through the tables to TWD, then damping), so they share a row that sends all three. Each row's name heads it, so the steps get the full width.
+
 ## 0.2.4 — 2026-10-30
 
 - **The pipeline's boxes are all one size and stay put.** Each box is fixed in size, so nothing moves as the values change: a long value is cut with "…" and a long note stops after two lines, with the whole note on hover. Damping is a box like the others ("Damping, 3 s"), and the sent values sit in boxes of one size on the right.

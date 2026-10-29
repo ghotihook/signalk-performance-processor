@@ -251,27 +251,27 @@
         out: on('leeway') ? { lines: [`Leeway ${angle(o.leeway)}`], note: 'undamped' } : notSent('leeway off: 0°')
       },
       {
+        // TWA, TWS and TWD are one calculation: true wind from apparent wind and boat speed,
+        // the tables, then heading for TWD. The published TWA is the damped TWD less the
+        // heading, so it answers the helm at once while the wind is steady.
         name: 'True wind',
-        inputs: [sensor('Apparent wind', angle(i.awa), `${fmt(i.aws)} kn`), stw],
+        inputs: [sensor('Apparent wind', angle(i.awa), `${fmt(i.aws)} kn`), stw, heading],
         steps: [
           { label: 'Apparent − boat', value: `${fmt(Math.abs(before.twa))}° · ${fmt(before.tws)} kn`, note: 'STW along the heading, no leeway' },
           // The tables' own account, including how much of the row applies where they
           // blend in or fade out.
           corr('twa', 'TWA table', `${fmt(Math.abs(o.twa))}°`, step('twa').detail),
           corr('tws', 'TWS table', `${fmt(o.tws)} kn`, step('tws').detail),
+          o.twd == null
+            ? { label: 'Heading + TWA', value: '--', note: 'no heading: no TWD', cls: 'off' }
+            : { label: 'Heading + TWA', value: `TWD ${fmt(o.twd, 0)}° T`, note: `sent TWA = ${twdNote}` },
           damping(dm.trueWindS)
         ],
-        out: { lines: [`TWS ${fmt(p.tws)} kn`], note: o.twd == null ? null : 'TWA goes on to direction' }
-      },
-      {
-        name: 'Direction',
-        inputs: [from('TWA', `${fmt(Math.abs(o.twa))}°`, 'true wind'), heading],
-        steps: o.twd == null
-          ? [{ label: 'No TWD', value: '--', note: 'TWA damped on its own', cls: 'off' }, damping(dm.trueWindS)]
-          : [{ label: 'Heading + TWA', value: `${fmt(o.twd, 0)}° T` }, damping(dm.trueWindS), { label: 'TWD − heading', value: 'TWA', note: 'answers the helm at once' }],
         out: held
-          ? { lines: ['TWA and TWD held'], note: 'light air', cls: 'off' }
-          : { lines: [o.twd == null ? `TWA ${angle(p.twa)}` : `TWD ${fmt(p.twd, 0)}° T`, ...(o.twd == null ? [] : [`TWA ${angle(p.twa)}`])], note: o.twd == null ? null : `TWA = ${twdNote}` }
+          ? { lines: [`TWS ${fmt(p.tws)} kn`], note: 'TWA and TWD held: light air' }
+          : o.twd == null
+            ? { lines: [`TWA ${angle(p.twa)}`, `TWS ${fmt(p.tws)} kn`], note: 'no heading: no TWD' }
+            : { lines: [`TWD ${fmt(p.twd, 0)}° T`, `TWA ${angle(p.twa)}`, `TWS ${fmt(p.tws)} kn`] }
       },
       {
         name: 'Current',
@@ -284,7 +284,7 @@
       {
         name: 'Ground wind',
         inputs: o.groundWind
-          ? [from('TWD', `${fmt(o.twd, 0)}°`, 'direction'), from('TWS', `${fmt(o.tws)} kn`, 'true wind'), from('Current', `${fmt(o.current.drift, 2)} kn`, 'current')]
+          ? [from('TWD', `${fmt(o.twd, 0)}°`, 'true wind'), from('TWS', `${fmt(o.tws)} kn`, 'true wind'), from('Current', `${fmt(o.current.drift, 2)} kn`, 'current')]
           : [missing('Current', 'needs heading, SOG and COG')],
         steps: o.groundWind
           ? [{ label: 'True wind + current', value: `${fmt(o.groundWind.direction, 0)}° · ${fmt(o.groundWind.speed)} kn` }, damping(dm.trueWindS)]
