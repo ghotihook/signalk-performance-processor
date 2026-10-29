@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.2.0 — 2026-10-29
+
+**Upgrading:** a saved configuration from 0.1.x loads, but its TWA table was fitted with leeway in true wind and now over-corrects. Reset the TWA table to defaults, or better, refit with boatcal `plugincal` 1.3.0 and paste or load the result.
+
+### Changed
+
+- **Leeway is out of true wind**, as on the H5000 by default ("Leeway corrected wind" off). True wind is apparent wind minus the boat's velocity along the heading, and the TWA table takes up leeway's effect. Leeway is still published and still used for current. There is no switch: one way, one table to fit, and a table from an H5000 or `plugincal` means the same thing here.
+- **Defaults refitted** by `plugincal` 1.3.0 on the same data as 0.1.1 (every labelled race leg, January 2025 to March 2026): the TWA table for leeway-free true wind, and leeway K from the GPS (8.568, was 7.9446). Held out by day: tacks 6.8°, gybes 4.4° (the H2000 8.2°, 9.6°).
+
+### Added
+
+- **Damping**, in seconds as on the H5000, in Settings (0 = none): heading 2 s and heel 2 s on the way in; true wind 3 s (TWD and TWS; TWA is the damped TWD less the heading, so it answers the helm at once), STW 1 s and current 10 s on the way out. Replayed through every tack and gybe from January 2025 to September 2026, one-second TWD jumps over 5° on straight legs fall from about 480 an hour to 40 (the H2000's own TWD: 31), and the largest swing during a tack from 23° to 11° (the H2000: 14°), with the TWD step across manoeuvres no worse.
+- The Live page shows the published, damped values, with the undamped and uncorrected ones under them.
+
+### Removed
+
+- Upgrading configurations from before 0.1.0 (schemas 1 and 2, and 0.0.1's plugin options). Their tables do not apply now; such a file is refused with that reason, and the webapp opens on the defaults to fix it.
+- Pasting a `signalk-stw-heel-correction` CSV into the boat speed table: paste the H5000 layout, which `plugincal` prints.
+- The STW echo detector, a second backstop against a loop with another STW plugin: reading STW from sensors only, and the 20 Hz circuit breaker, already stop one.
+
 ## 0.1.1 — 2026-10-29
 
 - **Defaults fitted for the H5000 layout.** The STW and TWA tables are now boatcal `plugincal` 1.2.0's fit on every labelled race leg from January 2025 to March 2026 (158 tacks, 27 gybes). Held out by day it beats the H2000 on tacks (6.7° against 8.2°) and gybes (4.7° against 9.6°). 0.1.0's defaults were the older values carried onto the new rows, never fitted for them. This is the boat before its 2026 rig tune and H2000 reset: on the three clean days since, which it never saw, it over-corrects TWA by about 3.5° and the H2000 is ahead, so refit for the boat as it is now. Defaults apply on a fresh install or Reset to defaults; a saved configuration is not changed.

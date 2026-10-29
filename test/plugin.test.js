@@ -4,6 +4,7 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 const factory = require('../index.js')
+const { DEFAULTS } = require('../lib/defaults')
 
 const MS_TO_KN = 1.94384
 const RAD = Math.PI / 180
@@ -75,6 +76,7 @@ const wind = [
   { path: 'environment.wind.angleApparent', value: 32 * RAD },
   { path: 'environment.wind.speedApparent', value: 16.9 / MS_TO_KN }
 ]
+const close = (a, b, tol, msg) => assert.ok(Math.abs(a - b) <= tol, `${msg || ''} expected ${b} ± ${tol}, got ${a}`)
 const paths = out => Object.fromEntries(out.flatMap(o => o.values).map(v => [v.path, v.value]))
 
 test('subscribes to every input with sourcePolicy all', () => {
@@ -93,8 +95,8 @@ test('shadow mode publishes …Corrected paths with units', () => {
   const h = harness()
   h.feed(boat)
   const out = paths(h.feed(wind))
-  assert.ok(Math.abs(Math.abs(out['environment.wind.angleTrueWaterCorrected']) / RAD - 37.2) < 0.05)
-  assert.ok(Math.abs(out['environment.wind.speedTrueCorrected'] * MS_TO_KN - 13.0) < 0.1)
+  assert.ok(Math.abs(Math.abs(out['environment.wind.angleTrueWaterCorrected']) / RAD - 36.73) < 0.05)
+  assert.ok(Math.abs(out['environment.wind.speedTrueCorrected'] * MS_TO_KN - 12.64) < 0.1)
   assert.ok('environment.wind.directionTrueCorrected' in out)
   assert.ok('navigation.leewayAngleCorrected' in out)
   assert.ok(out['environment.currentCorrected'].drift >= 0)
@@ -125,22 +127,12 @@ test('ignores its own output, however the source is spelled', () => {
   }
 })
 
-test('catches its own STW returning under a foreign source, and says so once', () => {
-  const h = harness({ mode: 'replace' })
-  h.feed([{ path: 'navigation.attitude', value: { roll: -20 * RAD } }])
-  const out = paths(h.feed([{ path: 'navigation.speedThroughWater', value: 6 / MS_TO_KN }]))
-  const echo = out['navigation.speedThroughWater']
-  h.feed([{ path: 'navigation.speedThroughWater', value: echo }], 'mystery')
-  h.feed([{ path: 'navigation.speedThroughWater', value: echo }], 'mystery')
-  assert.strictEqual(h.errors.filter(e => e.includes('Loop guard')).length, 1)
-})
-
 test('reads only the chosen source when one is set', () => {
   const h = harness({ sources: { stw: 'h2000.II' } })
   h.feed(boat)
   h.feed([{ path: 'navigation.speedThroughWater', value: 1 / MS_TO_KN }], 'signalk-stw-heel-correction')
   const out = paths(h.feed(wind))
-  assert.ok(Math.abs(out['environment.wind.speedTrueCorrected'] * MS_TO_KN - 13.0) < 0.1)
+  assert.ok(Math.abs(out['environment.wind.speedTrueCorrected'] * MS_TO_KN - 12.64) < 0.1)
 })
 
 test('without a chosen STW source, ignores STW from other plugins', () => {
@@ -149,7 +141,7 @@ test('without a chosen STW source, ignores STW from other plugins', () => {
   const out = h.feed([{ path: 'navigation.speedThroughWater', value: 1 / MS_TO_KN }], 'signalk-stw-heel-correction')
   assert.deepStrictEqual(out, [])
   const tw = paths(h.feed(wind))
-  assert.ok(Math.abs(tw['environment.wind.speedTrueCorrected'] * MS_TO_KN - 13.0) < 0.1)
+  assert.ok(Math.abs(tw['environment.wind.speedTrueCorrected'] * MS_TO_KN - 12.64) < 0.1)
 })
 
 test('reads STW from a plugin when it is chosen in Settings', () => {
@@ -237,7 +229,8 @@ test('a burst is thinned to 20 Hz, not stopped, and the flag clears', () => {
 })
 
 test('light air: TWA and TWD stop below 1.5 kn of TWS and come back from 2 kn', () => {
-  const h = harness({ mode: 'replace' })
+  // undamped, so each step in TWS is the TWS the thresholds see
+  const h = harness({ mode: 'replace', damping: { heelS: 0, headingS: 0, trueWindS: 0, stwS: 0, currentS: 0 } })
   // Drifting at 0 kn with apparent wind dead ahead: TWS = AWS.
   const still = [{ path: 'navigation.speedThroughWater', value: 0 }, { path: 'navigation.headingTrue', value: 0 },
     { path: 'navigation.attitude', value: { roll: 0 } }]
@@ -256,6 +249,70 @@ test('stale sensor STW is reported as waiting, not blamed on the sensor', () => 
   h.feed([{ path: 'navigation.speedThroughWater', value: 6 / MS_TO_KN }])
   h.feed(wind, 'h2000.II', 4000)
   assert.match(h.statuses[h.statuses.length - 1], /^Waiting for speed through water/)
+})
+
+// A steady boat on heading 0, apparent wind at the given angle and speed, every 0.5 s.
+function sail (h, seconds, awa, { hdg = 0, aws = 15 } = {}) {
+  let out = []
+  for (let i = 0; i < seconds * 2; i++) {
+    out = h.feed([{ path: 'navigation.speedThroughWater', value: 6 / MS_TO_KN }, { path: 'navigation.headingTrue', value: hdg * RAD },
+      { path: 'navigation.attitude', value: { roll: 0 } },
+      { path: 'environment.wind.angleApparent', value: awa * RAD }, { path: 'environment.wind.speedApparent', value: aws / MS_TO_KN }], 'h2000.II', 500)
+  }
+  return paths(out)
+}
+const plain = { mode: 'replace', corrections: { stw: { enabled: false }, leeway: { enabled: false }, twa: { enabled: false } } }
+const deg = v => v / RAD
+
+test('damping: TWD follows a wind shift with the true wind time constant', () => {
+  // the undamped answer first: the test clock is shared, so no other plugin may run between
+  // the damped one's updates
+  const k = harness({ ...plain, damping: { heelS: 0, headingS: 0, trueWindS: 0, stwS: 0, currentS: 0 } })
+  const target = deg(sail(k, 2, 50)['environment.wind.directionTrue'])
+  const h = harness({ ...plain, damping: { heelS: 0, headingS: 0, trueWindS: 3, stwS: 0, currentS: 0 } })
+  const before = deg(sail(h, 20, 40)['environment.wind.directionTrue'])
+  const after3 = deg(sail(h, 3, 50)['environment.wind.directionTrue'])
+  const share = (after3 - before) / (target - before)
+  assert.ok(share > 0.55 && share < 0.72, `about 63% of the shift after one time constant, got ${(share * 100).toFixed(0)}%`)
+  const after20 = deg(sail(h, 17, 50)['environment.wind.directionTrue'])
+  assert.ok(Math.abs(after20 - target) < 0.05, 'and all of it in the end')
+})
+
+test('damping: TWA answers the helm at once, from the steady TWD and the heading now', () => {
+  const h = harness({ ...plain, damping: { heelS: 0, headingS: 0, trueWindS: 3, stwS: 0, currentS: 0 } })
+  sail(h, 20, 40)
+  // bear away 10 deg: TWD is damped, but TWA is that TWD less the new heading, at once
+  const b = paths(h.feed([{ path: 'navigation.headingTrue', value: 10 * RAD }, { path: 'environment.wind.angleApparent', value: 50 * RAD }, { path: 'environment.wind.speedApparent', value: 15 / MS_TO_KN }], 'h2000.II', 500))
+  const twd = deg(b['environment.wind.directionTrue']); const twa = deg(b['environment.wind.angleTrueWater'])
+  close(((twd - 10 - twa) % 360 + 540) % 360 - 180, 0, 1e-9, 'TWA = damped TWD - current heading')
+})
+
+test('damping: heading is smoothed before true wind', () => {
+  const h = harness({ ...plain, damping: { heelS: 0, headingS: 2, trueWindS: 0, stwS: 0, currentS: 0 } })
+  const twd = hdg => deg(sail(h, 1, 40, { hdg })['environment.wind.directionTrue'])
+  const before = twd(0)
+  // heading jumps 10 deg; TWD follows it with a 2 s time constant
+  const soon = twd(10)
+  close(soon - before, 10 * (1 - Math.exp(-1 / 2)), 0.01, 'one second in: 39% of the change')
+  for (let i = 0; i < 15; i++) twd(10)
+  close(twd(10) - before, 10, 0.01, 'all of it after many time constants')
+})
+
+test('damping: published STW is smoothed; 0 means none', () => {
+  const run = stwS => {
+    const h = harness({ mode: 'replace', damping: { heelS: 0, headingS: 0, trueWindS: 0, stwS, currentS: 0 } })
+    h.feed([{ path: 'navigation.attitude', value: { roll: 0 } }, { path: 'navigation.speedThroughWater', value: 5 / MS_TO_KN }])
+    return paths(h.feed([{ path: 'navigation.speedThroughWater', value: 7 / MS_TO_KN }], 'h2000.II', 500))['navigation.speedThroughWater'] * MS_TO_KN
+  }
+  assert.ok(run(0) > 6.9, 'undamped')
+  const damped = run(1)
+  assert.ok(damped > 5.6 && damped < 6.2, `a 2 kn step, half a second into a 1 s time constant: ${damped.toFixed(2)}`)
+})
+
+test('config: damping times must be sensible', () => {
+  const { normalizeConfig } = require('../lib/processor')
+  assert.ok(normalizeConfig({ schema: 3, damping: { trueWindS: -1 } }).errors.some(e => /True wind damping/.test(e)))
+  assert.ok(normalizeConfig({ schema: 3, damping: { headingS: -1 } }).errors.some(e => /Heading damping/.test(e)))
 })
 
 test('no true wind without STW, and the status says why', () => {
@@ -279,7 +336,7 @@ test('reports a bad stored config instead of starting', () => {
 test('GET /calibration returns the boat defaults on a fresh install', async () => {
   const h = harness()
   const r = await h.call('GET', '/calibration')
-  assert.strictEqual(r.json.config.corrections.leeway.k, 7.9446)
+  assert.strictEqual(r.json.config.corrections.leeway.k, DEFAULTS.corrections.leeway.k)
   assert.strictEqual(r.json.config.mode, 'shadow')
 })
 
@@ -338,12 +395,6 @@ test('the saved file records its schema version', async () => {
   assert.strictEqual(h.saved().schema, 3)
 })
 
-test('a config left in the plugin options by 0.0.1 is picked up until the webapp saves', async () => {
-  const h = harness(null, { corrections: { leeway: { k: 5 } } })
-  const r = await h.call('GET', '/calibration')
-  assert.strictEqual(r.json.config.corrections.leeway.k, 5)
-})
-
 test('a broken config file is reported, and the webapp can still load and fix it', async () => {
   const h = harness({ corrections: { twa: { upwind: [1] } } })
   assert.ok(h.errors.some(e => e.includes('fix it in the webapp')))
@@ -396,6 +447,6 @@ test('publishes one TWA per update: the corrected one, never the working value',
   const twa = values.filter(v => v.path.startsWith('environment.wind.angleTrue'))
   assert.strictEqual(twa.length, 1, 'exactly one TWA value')
   assert.strictEqual(twa[0].path, 'environment.wind.angleTrueWaterCorrected')
-  // Before the table the TWA is ~47°; after it ~37.2°. Only the latter goes out.
-  assert.ok(Math.abs(Math.abs(twa[0].value) / RAD - 37.2) < 0.05)
+  // Before the table the TWA is ~45°; after it ~36.7°. Only the latter goes out.
+  assert.ok(Math.abs(Math.abs(twa[0].value) / RAD - 36.73) < 0.05)
 })

@@ -41,11 +41,3 @@ test('TWS: the down angle row defaults to 165 when left out', () => {
   assert.deepStrictEqual(T.parseTws('TWS,0,5,10,15,20,25,30\ncorrection,0,-0.5,-1,-1.5,-2,-2.5,-3').downAngle, [165, 165, 165, 165, 165, 165, 165])
 })
 
-test('an old signed heel x STW grid (signalk-stw-heel-correction CSV) is resampled, port and starboard averaged', () => {
-  const old = 'heel\\stw,2,6\n-20,-0.2,-0.1\n0,0.1,0\n20,0,-0.3'
-  const r = T.parseStw(old)
-  assert.strictEqual(r.resampled, true)
-  assert.deepStrictEqual(r.heel, [0, 10, 20])
-  assert.strictEqual(r.add[2][2], -0.2, '(-0.1 + -0.3) / 2 at 20 deg, held beyond 6 kn')
-  assert.strictEqual(r.add[0][0], 0, 'tapers to 0 at 0 kn')
-})

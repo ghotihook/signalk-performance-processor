@@ -94,23 +94,20 @@
     return out
   }
 
-  // STW table, H5000 layout: rows heel 0, 10, 20; columns boat speed 0 to 30. Any other
-  // layout (such as signalk-stw-heel-correction's signed heel x STW grid) is resampled.
+  // STW table: rows heel 0, 10, 20 (either side), columns boat speed 0 to 30.
   function parseStw (text) {
     const rows = cells(text)
     const h = header(rows, AXES.stwSpeed, 'boat speed columns')
-    const heel = rows.slice(1).map((r, i) => number(r[0], `heel in row ${i + 2}`))
-    const n = h.cols.length
-    const add = rows.slice(1).map((r, i) => values(r, n, `heel ${heel[i]}`, true))
-    const isH5000 = h.same && heel.length === AXES.stwHeel.length && AXES.stwHeel.every(x => heel.includes(x))
-    if (isH5000) return { heel: AXES.stwHeel.slice(), stw: AXES.stwSpeed.slice(), add: AXES.stwHeel.map(x => add[heel.indexOf(x)]) }
-    let cols = h.cols; let hs = heel; let g = add
-    if (cols.length > 1 && cols[0] > cols[cols.length - 1]) { cols = cols.slice().reverse(); g = g.map(r => r.slice().reverse()) }
-    const order = hs.map((x, i) => i).sort((a, b) => hs[a] - hs[b])
-    hs = order.map(i => hs[i]); g = order.map(i => g[i])
-    for (let i = 1; i < cols.length; i++) if (!(cols[i] > cols[i - 1])) throw new Error('boat speed columns must all differ')
-    for (let i = 1; i < hs.length; i++) if (!(hs[i] > hs[i - 1])) throw new Error('heel rows must all differ')
-    return { ...resampleStw({ heel: hs, stw: cols, add: g }), resampled: true }
+    if (!h.same) throw new Error(`the header must be ${h.expected}`)
+    const add = {}
+    for (const r of rows.slice(1)) {
+      const heel = number(r[0].replace(/heel/i, ''), `row "${r[0]}"`)
+      if (!AXES.stwHeel.includes(heel)) throw new Error(`row "${r[0]}": expected heel ${AXES.stwHeel.join(', ')}`)
+      add[heel] = values(r, AXES.stwSpeed.length, `heel ${heel}`, true)
+    }
+    const missing = AXES.stwHeel.filter(x => !add[x])
+    if (missing.length) throw new Error(`missing heel row${missing.length > 1 ? 's' : ''} ${missing.join(', ')}`)
+    return { heel: AXES.stwHeel.slice(), stw: AXES.stwSpeed.slice(), add: AXES.stwHeel.map(x => add[x]) }
   }
 
   // A blank cell is "not measured": extend the nearest value in its row into it, then fill
@@ -134,38 +131,6 @@
     return table
   }
 
-  function bracket (bins, v) {
-    if (v <= bins[0]) return [0, 0, 0]
-    const n = bins.length - 1
-    if (v >= bins[n]) return [n, n, 0]
-    let i = 0
-    while (bins[i + 1] < v) i++
-    return [i, i + 1, (v - bins[i]) / (bins[i + 1] - bins[i])]
-  }
-
-  // Any heel x STW grid, in signed heel (+ = starboard down) or heel either side, onto the
-  // H5000 layout: bilinear, edges held, blanks filled first; below its first speed column
-  // the old grid tapers to 0 at 0 kn, as the plugin applied it before 0.1.0. Port and
-  // starboard are averaged, as the H5000 has one table for both.
-  function resampleStw (t) {
-    const f = fillGaps(t.add)
-    const at = (heel, s) => {
-      const lookup = v => {
-        const [h0, h1, ht] = bracket(t.heel, heel)
-        const [j0, j1, st] = bracket(t.stw, v)
-        return f[h0][j0] * (1 - ht) * (1 - st) + f[h0][j1] * (1 - ht) * st + f[h1][j0] * ht * (1 - st) + f[h1][j1] * ht * st
-      }
-      const s0 = t.stw[0]
-      return s < s0 ? lookup(s0) * Math.max(0, s) / s0 : lookup(s)
-    }
-    const signed = t.heel.some(x => x < 0)
-    const add = AXES.stwHeel.map(hh => AXES.stwSpeed.map(s => {
-      const v = signed ? (at(hh, s) + at(-hh, s)) / 2 : at(hh, s)
-      return Math.round(v * 100) / 100 // 0.01 kn: finer is noise
-    }))
-    return { heel: AXES.stwHeel.slice(), stw: AXES.stwSpeed.slice(), add }
-  }
-
   // A table as text in the format above, ready to paste back in.
   function format (kind, t) {
     const v = x => x == null ? '' : String(x)
@@ -176,7 +141,7 @@
     throw new Error(`no table "${kind}"`)
   }
 
-  const api = { AXES, TWA_ROW_KEYS, parseTwa, parseTws, parseStw, resampleStw, fillGaps, format }
+  const api = { AXES, TWA_ROW_KEYS, parseTwa, parseTws, parseStw, fillGaps, format }
   if (typeof module !== 'undefined' && module.exports) module.exports = api
   else root.PPTables = api
 })(typeof self !== 'undefined' ? self : this)

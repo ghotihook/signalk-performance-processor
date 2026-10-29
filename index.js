@@ -3,6 +3,7 @@
 const fs = require('fs')
 const path = require('path')
 const { DEFAULTS } = require('./lib/defaults')
+const { Smooth, SmoothAngle, SmoothVector } = require('./lib/damping')
 const { process, correctInputs, normalizeConfig, CORRECTIONS, CONFIG_SCHEMA, AXES, MAX_LEEWAY_DEG, LEEWAY_FADE_KN, TWA_TAPER_UP_DEG, TWA_TAPER_DOWN_DEG, STW_FADE_KN, TWS_NONE_BELOW_DEG } = require('./lib/processor')
 
 const MS_TO_KN = 1.94384
@@ -17,9 +18,6 @@ const STATUS_INTERVAL_MS = 1000
 const MAX_PLAUSIBLE_STW_KN = 60
 const MAX_PLAUSIBLE_AWS_KN = 120
 const MAX_PLAUSIBLE_HEEL_DEG = 90
-// See signalk-stw-heel-correction: below this a correction is float noise, and recording
-// it as an output would make the next identical raw sample look like an echo.
-const ECHO_MIN_DELTA_MS = 1e-6
 // Circuit breaker: no path is published more often than this (20 Hz). A feedback loop
 // through another plugin delivers its next update within the same millisecond, so the
 // chain ends at the first repeat rather than running away, and the server stays
@@ -72,6 +70,19 @@ module.exports = function (app) {
   let sourcesSeen = {}
   let pluginStwSources = new Set() // other plugins seen publishing STW, which auto ignores
   let lightAir = false
+  // Damping (config.damping): heel and heading on the way in, the published values on
+  // the way out.
+  const damp = {
+    heel: new Smooth(),
+    headingTrue: new SmoothAngle(),
+    headingMagnetic: new SmoothAngle(),
+    twd: new SmoothAngle(),
+    tws: new Smooth(),
+    twa: new SmoothAngle(), // only when there is no heading, so no TWD to derive it from
+    stw: new Smooth(),
+    current: new SmoothVector()
+  }
+  const resetDamping = () => Object.values(damp).forEach(d => d.reset())
   let lastResult = null
   let lastResultAt = 0
   let lastStatus = ''
@@ -101,11 +112,6 @@ module.exports = function (app) {
   // $source. Data from a connection (NMEA 0183, NMEA 2000) always carries one.
   const fromSensor = update => update.source != null && typeof update.source === 'object'
 
-  // Backstop echo detector for the one path that is both input and output (STW in
-  // replace mode): remember published values that differ from their input.
-  const recentStw = []
-  let loopWarned = false
-
   // Rate limit (see MIN_PUBLISH_INTERVAL_MS): when each path was last published, and
   // when updates were dropped recently, for the status.
   let publishedAt = {}
@@ -129,11 +135,6 @@ module.exports = function (app) {
     return n ? ` · Rate limited: ${n} update${n === 1 ? '' : 's'} over ${1000 / MIN_PUBLISH_INTERVAL_MS} Hz not published in the last ${RATE_NOTE_MS / 1000} s, ` +
       `driven by "${dropFrom}". Usually a feedback loop with another STW plugin: check the STW source in Settings` : ''
   }
-  function noteStw (ms) {
-    recentStw.push(ms)
-    if (recentStw.length > 32) recentStw.shift()
-  }
-  const isStwEcho = ms => recentStw.some(o => Math.abs(o - ms) < 1e-12)
 
   function fresh (p, now, maxAge = STALE_MS) {
     const l = latest[p]
@@ -161,7 +162,15 @@ module.exports = function (app) {
     const roll = att && typeof att === 'object' ? att.roll : null
     if (roll == null || !Number.isFinite(roll)) return null
     const h = roll * RAD_TO_DEG
-    return Math.abs(h) > MAX_PLAUSIBLE_HEEL_DEG ? null : h
+    if (Math.abs(h) > MAX_PLAUSIBLE_HEEL_DEG) return null
+    return damp.heel.update(h, latest['navigation.attitude'].at, config.damping.heelS)
+  }
+
+  // Damped heading in degrees, when it is fresh at all.
+  function dampedHeading (path, now) {
+    if (fresh(path, now) == null) return undefined
+    const v = damp[path.split('.')[1]].value()
+    return v == null ? undefined : v
   }
 
   function publish (values, timestamp, from) {
@@ -188,8 +197,7 @@ module.exports = function (app) {
     // would put the source the user ranked first behind a bad number.
     if (stwKn < 0 || stwKn > MAX_PLAUSIBLE_STW_KN) return
     const { c } = correctInputs({ stw: stwKn, heel: heelDeg(now) }, config)
-    const ms = c.stw / MS_TO_KN
-    if (config.mode === 'replace' && Math.abs(ms - rawMs) > ECHO_MIN_DELTA_MS) noteStw(ms)
+    const ms = damp.stw.update(c.stw, now, config.damping.stwS) / MS_TO_KN
     publish([{ path: outPath('stw'), value: ms }], timestamp, from)
   }
 
@@ -217,8 +225,8 @@ module.exports = function (app) {
       aws: awsKn,
       stw: stwKn,
       heel: heelDeg(now),
-      headingMagnetic: deg(fresh('navigation.headingMagnetic', now)),
-      headingTrue: deg(fresh('navigation.headingTrue', now)),
+      headingMagnetic: dampedHeading('navigation.headingMagnetic', now),
+      headingTrue: dampedHeading('navigation.headingTrue', now),
       variation: deg(fresh('navigation.magneticVariation', now, VARIATION_MAX_AGE_MS)),
       sog: (v => v == null ? undefined : v * MS_TO_KN)(fresh('navigation.speedOverGround', now)),
       cog: deg(fresh('navigation.courseOverGroundTrue', now))
@@ -227,16 +235,30 @@ module.exports = function (app) {
     lastResult = { input, ...result }
     lastResultAt = now
 
+    // Damped for publishing. TWD and TWS are smoothed; TWA follows from the smoothed TWD
+    // and the heading now, so it answers the helm at once while the wind itself is steady.
     const o = result.out
-    lightAir = o.tws < (lightAir ? LIGHT_AIR_ON_KN : LIGHT_AIR_OFF_KN)
+    const dm = config.damping
+    const tws = damp.tws.update(o.tws, now, dm.trueWindS)
+    let twd = null; let twa
+    if (o.twd != null) {
+      twd = damp.twd.update(o.twd, now, dm.trueWindS)
+      twa = ((twd - o.heading) % 360 + 540) % 360 - 180
+    } else {
+      twa = ((damp.twa.update(o.twa, now, dm.trueWindS) + 180) % 360) - 180
+    }
+    const cur = o.current ? damp.current.update(o.current.drift, o.current.set, now, dm.currentS) : null
+    lastResult.published = { twa, tws, twd, stw: config.corrections.stw.enabled ? damp.stw.v : null, current: cur && { drift: cur.speed, set: cur.deg } }
+
+    lightAir = tws < (lightAir ? LIGHT_AIR_ON_KN : LIGHT_AIR_OFF_KN)
     lastResult.lightAir = lightAir
-    const values = [{ path: outPath('tws'), value: o.tws / MS_TO_KN }]
+    const values = [{ path: outPath('tws'), value: tws / MS_TO_KN }]
     if (!lightAir) {
-      values.push({ path: outPath('twa'), value: o.twa / RAD_TO_DEG })
-      if (o.twd != null) values.push({ path: outPath('twd'), value: o.twd / RAD_TO_DEG })
+      values.push({ path: outPath('twa'), value: twa / RAD_TO_DEG })
+      if (twd != null) values.push({ path: outPath('twd'), value: twd / RAD_TO_DEG })
     }
     if (config.corrections.leeway.enabled) values.push({ path: outPath('leeway'), value: o.leeway / RAD_TO_DEG })
-    if (o.current) values.push({ path: outPath('current'), value: { drift: o.current.drift / MS_TO_KN, setTrue: o.current.set / RAD_TO_DEG } })
+    if (cur) values.push({ path: outPath('current'), value: { drift: cur.speed / MS_TO_KN, setTrue: cur.deg / RAD_TO_DEG } })
     publish(values, timestamp, from)
 
     const missing = []
@@ -244,10 +266,10 @@ module.exports = function (app) {
     if (o.twd == null) missing.push('heading')
     const mode = config.mode === 'shadow' ? 'Shadow' : 'Live'
     if (lightAir) {
-      status('lightair', `${mode} — light air, TWS ${o.tws.toFixed(1)} kn: TWA and TWD not published until TWS reaches ${LIGHT_AIR_ON_KN} kn`)
+      status('lightair', `${mode} — light air, TWS ${tws.toFixed(1)} kn: TWA and TWD not published until TWS reaches ${LIGHT_AIR_ON_KN} kn`)
       return
     }
-    status('running', `${mode} — TWA ${Math.abs(o.twa).toFixed(1)}°, TWS ${o.tws.toFixed(1)} kn, STW ${o.stw.toFixed(2)} kn` +
+    status('running', `${mode} — TWA ${Math.abs(twa).toFixed(1)}°, TWS ${tws.toFixed(1)} kn, STW ${o.stw.toFixed(2)} kn` +
       (missing.length ? ` · no ${missing.join(' or ')}` : ''))
   }
 
@@ -274,15 +296,8 @@ module.exports = function (app) {
         // output, two correctors feed each other without end.
         if (!wanted && group === 'stw' && !sensor) continue
 
-        if (v.path === 'navigation.speedThroughWater' && config.mode === 'replace' && isStwEcho(v.value)) {
-          if (!loopWarned) {
-            loopWarned = true
-            app.error(`Loop guard mismatch: received STW this plugin published, but its $source was "${src}" rather than "${plugin.id}". Skipping it — set the STW source in Settings.`)
-          }
-          continue
-        }
-
         latest[v.path] = { value: v.value, source: src, at: now }
+        if (v.path === 'navigation.headingTrue' || v.path === 'navigation.headingMagnetic') damp[v.path.split('.')[1]].update(v.value * RAD_TO_DEG, now, config.damping.headingS)
         if (group === 'apparentWind') { windChanged = true; windTimestamp = update.timestamp; windFrom = src }
         if (group === 'stw') onStw(v.value, update.timestamp, now, src)
       }
@@ -299,6 +314,7 @@ module.exports = function (app) {
     sourcesSeen = {}
     pluginStwSources = new Set()
     lightAir = false
+    resetDamping()
     lastResult = null
     running = true
 
@@ -361,15 +377,14 @@ module.exports = function (app) {
     return path.join(app.getDataDirPath(), CONFIG_FILE)
   }
 
-  // The webapp's saved configuration. Before the file exists, take a configuration left
-  // in the plugin options by 0.0.1, which stored it there; otherwise start from defaults.
-  function loadStored (options) {
+  // The webapp's saved configuration, or {} (the defaults) before the first save.
+  function loadStored () {
     try {
       return JSON.parse(fs.readFileSync(configFile(), 'utf8'))
     } catch (e) {
       if (e.code !== 'ENOENT') app.error(`could not read ${configFile()}: ${e.message}`)
     }
-    return options && options.corrections ? options : {}
+    return {}
   }
 
   // Write to a temporary file and rename, so a crash mid-write never leaves half a file.
@@ -387,8 +402,8 @@ module.exports = function (app) {
     fs.renameSync(file + '.tmp', file)
   }
 
-  plugin.start = function (options) {
-    const { config: cfg, errors } = normalizeConfig(loadStored(options))
+  plugin.start = function () {
+    const { config: cfg, errors } = normalizeConfig(loadStored())
     if (errors.length) {
       app.setPluginError(`Configuration: ${errors.join('; ')} — fix it in the webapp`)
       config = normalizeConfig({}).config // so the webapp can still load and repair it

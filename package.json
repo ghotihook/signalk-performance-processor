@@ -1,7 +1,7 @@
 {
   "name": "signalk-performance-processor",
-  "version": "0.1.1",
-  "description": "True wind direction that holds steady through tacks and gybes. H5000-style calibration in Signal K: boat speed, leeway, and TWA/TWS tables by wind speed, edited and watched live in a webapp. Try it in shadow mode beside your existing instruments.",
+  "version": "0.2.0",
+  "description": "True wind direction that holds steady through tacks and gybes. The B&G H5000's calibration tables and damping in Signal K: boat speed, TWA and TWS tables, fitted from your logs by boatcal plugincal, edited and watched live in a webapp. Try it in shadow mode beside your instruments.",
   "main": "index.js",
   "scripts": {
     "test": "node --test",

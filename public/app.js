@@ -5,10 +5,8 @@
   const LIVE_MS = 1000
   const STALE_MS = 5000
 
-  // Display names and help for each correction, in pipeline order. A correction the
-  // plugin knows but this list does not still shows, under its id.
   // Fixed behaviour of each correction, written from the numbers the plugin sends (b), so
-  // the description always matches the code. c is the correction's current settings.
+  // the description always matches the code.
   const LIMITS = {
     stw: b => [
       `Below ${b.stwFadeKn} kn the correction fades to nothing at 0 kn, so a stopped boat is not given speed by the 0 kn column.`,
@@ -31,16 +29,17 @@
     ]
   }
 
+  // Display names and help for each correction, in pipeline order.
   const CORRECTIONS = {
     stw: { name: 'Boat speed (STW)', what: 'Knots added to the paddlewheel by heel (rows, either side) and boat speed (columns): the H5000 boat speed / heel table. Blank cells are filled from the nearest value in their row. Applied before anything else uses STW.' },
-    leeway: { name: 'Leeway', what: 'Sideways slip: leeway = K × heel ÷ STW². Turns the boat’s velocity to leeward for true wind and current.' },
+    leeway: { name: 'Leeway', what: 'Sideways slip: leeway = K × heel ÷ STW². Published, and used for current. Not used in true wind: the TWA table takes up its effect.' },
     twa: { name: 'TWA table', what: 'Degrees added to |TWA| by TWS, in rows at TWA 40°, 90° and 165°: the H5000 TWA correction table. Negative = TWA was reading too wide.' },
     tws: { name: 'TWS table', what: 'Knots added to TWS by TWS, downwind: the H5000 TWS correction and its down angle. Blank = no correction. The default is −10% of each column.' }
   }
 
   // The tables' text format (tables.js): what Paste a table reads and Copy writes.
   const PASTE = {
-    stw: { parse: t => PPTables.parseStw(t), hint: 'First row <code>heel\\stw</code> then the boat speeds 0, 5 … 30; then a row for heel 0, 10 and 20, each its label then its values. A signed heel × STW table (signalk-stw-heel-correction CSV) is resampled onto this layout.' },
+    stw: { parse: t => PPTables.parseStw(t), hint: 'First row <code>heel\\stw</code> then the boat speeds 0, 5 … 30; then a row for heel 0, 10 and 20, each its label then its values. This is what boatcal <code>plugincal</code> prints.' },
     twa: { parse: t => PPTables.parseTwa(t), hint: 'First row <code>TWA\\TWS</code> then the TWS columns 0, 5 … 30; then a row for TWA 40, 90 and 165, each its label then its values. This is what boatcal <code>plugincal</code> prints.' },
     tws: { parse: t => PPTables.parseTws(t), hint: 'First row <code>TWS</code> then the TWS columns 0, 5 … 30; then a <code>correction</code> row and a <code>down angle</code> row.' }
   }
@@ -222,15 +221,16 @@
       $('steps').innerHTML = `<tr><td colspan="5" class="muted center">${esc(live ? live.status || 'Waiting for data…' : 'Waiting for data…')}</td></tr>`
     } else {
       const o = r.out
+      const p = r.published || o // what is sent: damped
       const u = uncorrected(r.input)
       const side = v => v < 0 ? 'port' : 'stbd'
       $('tiles').innerHTML = [
-        tile('TWA', fmt(Math.abs(o.twa)), `° ${side(o.twa)}`, `uncorrected ${fmt(Math.abs(u.twa))}°`),
-        tile('TWS', fmt(o.tws), 'kn', `uncorrected ${fmt(u.tws)} kn`),
-        tile('TWD', o.twd == null ? '--' : fmt(o.twd, 0), '° T', r.lightAir ? 'light air: not published' : o.twd == null ? 'no heading' : headingNote(o)),
-        tile('STW', fmt(o.stw, 2), 'kn', `paddlewheel ${fmt(r.input.stw, 2)} kn`),
+        tile('TWA', fmt(Math.abs(p.twa)), `° ${side(p.twa)}`, `undamped ${fmt(Math.abs(o.twa))}° · uncorrected ${fmt(Math.abs(u.twa))}°`),
+        tile('TWS', fmt(p.tws), 'kn', `undamped ${fmt(o.tws)} · uncorrected ${fmt(u.tws)} kn`),
+        tile('TWD', p.twd == null ? '--' : fmt(p.twd, 0), '° T', r.lightAir ? 'light air: not published' : p.twd == null ? 'no heading' : `undamped ${fmt(o.twd, 0)}° · ${headingNote(o)}`),
+        tile('STW', fmt(p.stw == null ? o.stw : p.stw, 2), 'kn', `paddlewheel ${fmt(r.input.stw, 2)} kn`),
         tile('Leeway', fmt(Math.abs(o.leeway)), `° ${side(o.leeway)}`, r.input.heel == null ? 'no heel' : `heel ${fmt(r.input.heel, 0)}°`),
-        tile('Current', o.current ? fmt(o.current.drift, 2) : '--', o.current ? `kn · ${fmt(o.current.set, 0)}°` : 'kn', o.current ? '' : 'no SOG/COG or heading')
+        tile('Current', p.current ? fmt(p.current.drift, 2) : '--', p.current ? `kn · ${fmt(p.current.set, 0)}°` : 'kn', p.current ? '' : 'no SOG/COG or heading')
       ].join('')
       // A step's result is published only if no later enabled step replaces it; otherwise
       // it is a working value that only feeds the steps after it.
@@ -248,7 +248,7 @@
         return `<tr class="${sent.length ? '' : 'working'}"><th scope="row">${esc(s.name)}</th><td class="mono">${esc(s.input || '')}</td>` +
           `<td>${esc(s.skipped ? 'skipped — ' + s.skipped : s.detail || '')}</td><td class="mono result">${esc(s.output || '')}</td><td>${tag}</td></tr>`
       }).join('')
-      renderPublished(o, live.outputPaths || {}, r.lightAir)
+      renderPublished({ ...o, ...p, stw: p.stw == null ? o.stw : p.stw }, live.outputPaths || {}, r.lightAir)
     }
 
     const inputs = live ? Object.entries(live.inputs) : []
@@ -276,19 +276,12 @@
 
   // -- Calibration
 
-  function correctionIds () {
-    const known = Object.keys(CORRECTIONS)
-    const all = Object.keys(state.draft.corrections)
-    return known.filter(id => all.includes(id)).concat(all.filter(id => !known.includes(id)))
-  }
-
   function renderCalibration () {
     if (!state.draft) return
-    const ids = correctionIds()
-    if (!ids.includes(state.selected)) state.selected = ids[0]
+    const ids = Object.keys(CORRECTIONS)
     $('corrList').innerHTML = ids.map(id => {
       const c = state.draft.corrections[id]
-      const name = (CORRECTIONS[id] || {}).name || id
+      const name = CORRECTIONS[id].name
       return `<li class="${id === state.selected ? 'selected' : ''}">` +
         `<button type="button" data-select="${esc(id)}" aria-pressed="${id === state.selected}">${esc(name)}</button>` +
         `<label><input type="checkbox" data-path="corrections.${esc(id)}.enabled" ${c.enabled ? 'checked' : ''} aria-label="Enable ${esc(name)}"></label></li>`
@@ -296,7 +289,7 @@
 
     const id = state.selected
     const c = state.draft.corrections[id]
-    const meta = CORRECTIONS[id] || { name: id, what: '' }
+    const meta = CORRECTIONS[id]
     let body = ''
     if (id === 'stw') {
       body = grid2d('Knots added to STW', 'Heel ╲ STW kn', 'corrections.stw', c)
@@ -310,7 +303,7 @@
       body = grid('Knots added to TWS, and the TWA it applies in full from (blank correction = none)', 'TWS kn', 'corrections.tws', 'tws', rows, c)
     }
     if (PASTE[id]) body += pasteBox(id)
-    const limits = state.behaviour && LIMITS[id] ? LIMITS[id](state.behaviour, c) : []
+    const limits = state.behaviour && LIMITS[id] ? LIMITS[id](state.behaviour) : []
     $('corrEditor').innerHTML =
       `<div class="panel-head"><h2>${esc(meta.name)}</h2><span class="state ${c.enabled ? 'on' : ''}">${c.enabled ? 'Enabled' : 'Disabled'}</span></div>` +
       `<p class="what muted">${esc(meta.what)}</p>${body}` +
@@ -365,6 +358,10 @@
       `<div><b>${esc(name)}</b><span>${esc(desc)}</span></div></label>`).join('')
     const v = $('variation')
     if (document.activeElement !== v) v.value = state.draft.variation
+    for (const k of ['trueWindS', 'headingS', 'heelS', 'stwS', 'currentS']) {
+      const el = $('damp-' + k)
+      if (el && document.activeElement !== el && state.draft.damping) el.value = state.draft.damping[k]
+    }
     const b = state.behaviour
     $('behaviour').innerHTML = b ? [
       `<b>Light air:</b> below ${b.lightAirOffKn} kn of TWS, wind direction is noise, so TWA and TWD are not published (TWS still is). They come back once TWS reaches ${b.lightAirOnKn} kn; the gap stops them flickering on and off.`,
@@ -409,12 +406,9 @@
     if (paste) {
       const id = paste.dataset.paste
       try {
-        const t = PASTE[id].parse($('paste-' + id).value)
-        const note = t.resampled ? 'Resampled onto heel 0 / 10 / 20 × 0–30 kn. ' : ''
-        delete t.resampled
-        Object.assign(state.draft.corrections[id], t)
+        Object.assign(state.draft.corrections[id], PASTE[id].parse($('paste-' + id).value))
         renderAll()
-        $('paste-msg-' + id).textContent = note + 'Pasted: Save to keep it.'
+        $('paste-msg-' + id).textContent = 'Pasted: Save to keep it.'
       } catch (err) {
         $('paste-msg-' + id).textContent = err.message
       }

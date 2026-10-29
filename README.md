@@ -6,124 +6,122 @@
 
 If your TWD swings 5–10° every time you tack or gybe, the wind hasn't shifted: your true wind calibration is off. It makes real shifts hard to call, puts laylines in the wrong place, and feeds bad numbers into your polars and targets.
 
-This plugin does the calibration job of a B&G H5000-class instrument processor inside Signal K. It corrects boat speed and leeway, then applies H5000-style TWA and TWS correction tables, and publishes corrected true wind and current. You edit everything in a webapp and can watch each correction work live. Run it in **Shadow mode** first: it publishes alongside your existing instruments without changing anything they do.
+This plugin does the calibration job of a B&G H5000 inside Signal K, with the H5000's tables in the H5000's layout. It corrects boat speed, works out true wind, applies the TWA and TWS tables, damps the result and publishes it, with leeway and current. You edit everything in a webapp and can watch each correction work live. The tables are fitted from your own logs by boatcal's [`plugincal`](https://github.com/ghotihook/boatcal/tree/main/plugincal).
 
-> **Proof of concept (0.1.1).** Compare it against your instruments in Shadow mode before relying on it. See the [changelog](CHANGELOG.md).
+> **Proof of concept (0.2.0).** Run it in **Shadow mode** beside your instruments and compare before relying on it. See the [changelog](CHANGELOG.md).
 
-## Why it exists
+## Why
 
-True wind is worked out from apparent wind, boat speed and heading, so it inherits every error in them. The masthead sensor reads a bent airflow upwind, the paddlewheel misreads when heeled, and the boat slides sideways. None of these is the same on every point of sail, and some flip from one tack to the other. That is why an uncalibrated TWD jumps through every tack.
+True wind is worked out from apparent wind, boat speed and heading, so it inherits every error in them: the masthead reads a bent airflow upwind, the paddlewheel misreads when heeled, and none of it is the same on both tacks. That is why an uncalibrated TWD jumps through every tack.
 
-Instrument processors fix this with calibration tables, but:
+Instrument processors fix this with tables, but the tables are locked in the box: edited through display menus, invisible while sailing, with no history. Older systems have less (an H2000's TWS correction is downwind only), and a single upwash formula cannot follow a boat whose correction is twice as big in light air as in a breeze. This plugin puts the H5000's tables in Signal K, where you can see them, log them and fit them from race data:
 
-- **The tables are locked in the box.** You edit them through display menus, cannot see what each one is doing at any moment, and keep no history of what you changed or why.
-- **Older and simpler systems have less to work with.** An H2000, for example, has a TWS correction that only applies downwind, and many systems have no tables at all.
-- **Formula-based corrections don't fit every boat.** A single upwash formula cannot follow a boat whose correction is twice as big in light air as in a breeze at the same apparent wind angle. That was the case on the boat this was built for; a table can follow it.
+- **An H5000 calibration carries across cell for cell**, and the H5000 rule ("TWD lifts on every tack: take half the error off TWA") works unchanged.
+- **Every correction has a switch and a live readout.**
+- **The calibration is a JSON file**, easy to back up, compare and fit offline.
+- **It is safe to try:** Shadow mode publishes `…Corrected` paths and changes nothing else.
 
-This plugin moves the calibration into Signal K, where you can see it, change it, log it and fit it from your own race data:
+## On the boat it was built for
 
-- **The H5000's tables, in the H5000's layout:** a boat speed / heel table (heel 0, 10, 20° × boat speed 0–30 kn), leeway (K × heel ÷ boat speed²), a TWA table with rows at TWA 40°, 90° and 165° by TWS 0–30 kn, and a TWS table with its down angle. An H5000 calibration carries across cell for cell, and the H5000 tuning rule ("TWD lifts on every tack: take half the error off TWA") works unchanged. Every table can be pasted in as text, which is what boatcal's `plugincal` fitting tool prints.
-- **Every correction has a switch and a live readout,** so you can see what each one does to the numbers right now.
-- **The calibration is a versioned JSON file,** easy to back up, compare and fit from logged races offline.
-- **It is safe to try.** Shadow mode publishes `…Corrected` paths beside your instruments. Replace mode takes over the standard paths only when you choose it.
+The defaults were fitted by `plugincal` on every labelled race leg from January 2025 to March 2026 (`python -m plugincal --since 2025-01-01 --until 2026-03-31 --labelled`). Each day held out in turn (scored with tables fitted without it), the TWD step across each manoeuvre, median:
 
-### On the boat it was built for
-
-The defaults were fitted with boatcal's `plugincal` on every labelled race leg from January 2025 to March 2026, and checked by holding out each day in turn: each day is scored with tables fitted without it. The score is how far true wind direction jumps across each manoeuvre (median), against the H2000's own TWA and heading on the same manoeuvres:
-
-| | Uncorrected | Instrument (H2000) | This plugin, held out |
+| | Uncorrected | H2000 (its own tables) | **This plugin, held out** |
 |---|---|---|---|
-| Tacks (158) | 19.9° | 8.2° | **6.7°** |
-| Gybes (27) | 7.7° | 9.6° | **4.7°** |
-| Correction still needed on tacks | −10.4° | −2.2° | **−0.4°** |
+| Tacks (158) | 17.5° | 8.2° | **6.8°** |
+| Gybes (28) | 7.8° | 9.6° | **4.4°** |
+| Correction still needed, tacks / gybes | −9.0° / −4.2° | −2.2° / −4.8° | **−0.4° / +0.2°** |
 
-After the boat's rig tune in September 2026 and the H2000's reset in October, the boat needs a different calibration (roughly half the upwind TWA correction). On the three clean days since (13, 20 and 25 October, which the defaults never saw), these defaults over-correct TWA by about 3.5° and the H2000's new table is ahead: tacks 5.8° against 3.2°, gybes 9.4° against 4.2°. Three days are not yet enough to fit the boat as it is now. These figures are one boat's, and the defaults are that boat's as it was. On any boat, start in Shadow mode and refit with `plugincal`.
+What it publishes, tables and damping together, replayed second by second through every tack and gybe from January 2025 to September 2026, against the TWD the H2000 displayed:
 
-## Who it's for
+| | Uncorrected | H2000 | **This plugin** |
+|---|---|---|---|
+| TWD step, tacks (197) / gybes (70), median | 17.9° / 7.8° | 8.4° / 8.0° | **6.2° / 4.7°** |
+| … on the 65 manoeuvres outside race legs, never fitted on | 16.0° / 8.6° | 7.4° / 8.0° | **6.9° / 5.5°** |
+| Largest TWD swing during the turn, tacks / gybes | 27.5° / 16.3° | 13.7° / **10.6°** | **11.4°** / 13.5° |
+| One-second TWD jumps over 5° on straight legs, per hour | 439 | **31** | 40 |
 
-- **Racing sailors running Signal K** who want TWD they can call shifts on, and polars built on corrected wind.
-- **Boats with an older or limited instrument processor,** or none, that still have apparent wind, a paddlewheel, heading and heel on the network.
-- **Anyone who wants to see and log** what their wind calibration is doing, rather than trust a box.
+These are one boat's figures, and the defaults are that boat as it was: after its September 2026 rig tune it needs much less correction, and these defaults over-correct it. A table belongs to one setup of one boat: fit your own.
 
-You need apparent wind, boat speed through the water and heading in Signal K. Heel (`navigation.attitude`) enables the heel and leeway corrections; SOG and COG enable current.
+## Calibrating your boat
+
+1. **Install and leave it in Shadow mode.** It needs apparent wind, boat speed through water and heading in Signal K; heel (`navigation.attitude`) adds the heel corrections and leeway, SOG and COG add current. Feed it **measured** apparent wind and the **raw** paddlewheel.
+2. **Get boat speed right in the instrument first**, then log some sailing: a session with 10 or more tacks and gybes in steady wind, some reaching and a few roundings, covers the wind speeds sailed.
+3. **Fit** with boatcal: `python -m plugincal --since <the day your setup last changed>`. Paste each printed table into the Calibration page (or load the config it writes), and **Save**.
+4. **Compare** the `…Corrected` paths with your instruments on the next races. Refit after a rig tune, new sails or a boat speed calibration change.
+5. **Replace mode**, once you trust it: rank this plugin first for each output path in **Server → Source Priorities**, and zero the instrument's own TWA / TWS tables so nothing is corrected twice. Keep the masthead alignment and boat speed calibration in the instrument.
+
+An H5000 calibration can be typed or pasted in directly: the tables have the same rows, columns and meaning.
 
 ## What it does
 
-The corrections run in this order, each on the output of the one before:
+Each step works on the output of the one before:
 
 | Step | What | Default |
 |---|---|---|
-| Boat speed (STW) | Knots added to the paddlewheel from the H5000 **boat speed / heel table**: heel 0, 10, 20° (either side) × boat speed 0, 5 … 30 kn, bilinear. Fades out below 1 kn, so a stopped boat is not given speed | On |
-| Leeway | Leeway = K × heel ÷ STW², turning the boat's velocity to leeward. Capped at 15°, and faded in with speed: none below 1.5 kn, in full from 3 kn, so it does not snap on as the boat gets going | On, K = 7.9446 |
-| True wind | Apparent wind minus the boat's velocity through the water | Always |
-| TWA table | Degrees added to \|TWA\| by TWS, the H5000 TWA correction table: rows at TWA 40°, 90° and 165° by TWS 0, 5 … 30 kn, linear between rows and columns. In full from 30° off the wind to 10° short of dead downwind, fading to none at 0° and 180°, so TWA passes smoothly through head to wind and dead downwind | On |
-| TWS table | Knots added to TWS by TWS, the H5000 TWS correction with its down angle: none below 90° TWA, in full from the down angle (165° by default), linear between | Off |
-| TWD, current | TWD from heading and corrected TWA; current from SOG/COG minus water velocity | Always, when heading and GPS are available |
+| Boat speed (STW) | Knots added to the paddlewheel from the **boat speed / heel table**: heel 0, 10, 20° (either side) × boat speed 0, 5 … 30 kn, bilinear. Fades out below 1 kn, so a stopped boat is not given speed | On |
+| Leeway | K × heel ÷ STW², capped at 15°, faded in from 1.5 to 3 kn. Published and used for current; **not** used in true wind, as on the H5000 by default (the TWA table takes up its effect) | On, K = 8.568 |
+| True wind | Apparent wind minus the boat's velocity through the water, along the heading | Always |
+| TWA table | Degrees added to \|TWA\| by TWS: rows at TWA 40°, 90° and 165° × TWS 0, 5 … 30 kn, linear between rows and columns. In full from 30° off the wind to 10° short of dead downwind, fading to none at 0° and 180° | On |
+| TWS table | Knots added to TWS by TWS, with the H5000's down angle: none below 90° TWA, in full from the down angle (165° by default) | Off |
+| TWD, current | TWD = heading + TWA; current = ground velocity − water velocity | With heading and GPS |
 
-### Inputs
+**Damping**, in seconds as on the H5000 (0 = none), set in Settings:
 
-| Input | Signal K path |
-|---|---|
-| Apparent wind | `environment.wind.angleApparent`, `environment.wind.speedApparent` |
-| Speed through water | `navigation.speedThroughWater` |
-| Heading | `navigation.headingTrue`; otherwise `navigation.headingMagnetic` + `navigation.magneticVariation` (normally from the GPS); otherwise magnetic heading + the fallback variation in Settings |
-| Heel | `navigation.attitude` (roll) |
-| SOG and COG | `navigation.speedOverGround`, `navigation.courseOverGroundTrue` |
-
-True wind is worked out on every apparent wind update. Inputs older than 3 seconds are not used. Without STW there is no true wind. Without heel, the heel correction and leeway are skipped. Without heading, there is no TWD or current.
-
-**Light air.** Below 1.5 kn of TWS, wind direction is noise, so TWA and TWD are not published (TWS still is) and the status says so. They come back once TWS reaches 2 kn; the gap stops them flickering on and off.
-
-**Smooth through tacks and gybes.** A table correction applied in full right up to head to wind would hold TWA at 0° for as many degrees as the correction (12.6° at 10 kn), so TWD would follow the bow through every tack; at dead downwind a negative correction would make TWA jump as it crossed 180°. The correction therefore fades out over the last 30° to head to wind and the last 10° to dead downwind. Upwind the boat is inside the fade only while tacking; downwind, sailing deeper than 170° gets part of the correction (in the 2026 race logs, about 3% of racing time was inside 30° and 2% beyond 170°). To keep corrected TWA moving with uncorrected TWA, the 40° row's values must be within ±30° and the 165° row's within ±10°; both rows sit outside the fades, so the fades only ever scale a single row.
-
-Feed it **measured** apparent wind and **raw** paddlewheel speed. Unless you choose an STW source in Settings, STW is read **from sensors only**: updates that came in through a data connection (NMEA 0183, NMEA 2000), which carry a `source` object, and not STW published by another plugin, which does not. See [Running alongside other STW plugins](#running-alongside-other-stw-plugins).
-
-### Running alongside other STW plugins
-
-This plugin publishes STW too, so it must never correct another plugin's STW and hand the result back. Two correctors on `navigation.speedThroughWater` that each take any source but their own correct each other's output without end: STW, and true wind with it, run away. Signal K's own pattern for correction plugins (subscribe with `sourcePolicy: 'all'`, skip your own `$source`, publish on the same path) does not cover this case, because neither plugin ever sees its own source come back.
-
-- **By default it reads STW from sensors only**, so another corrector's output is ignored and no loop can form.
-- **Choosing a source in Settings overrides this**, including choosing another plugin, for a deliberate chain such as `signalk-stw-heel-correction` → this plugin with the STW correction here turned off. That plugin must then read only the paddlewheel (its own default from 0.3.0).
-- **Circuit breaker:** whatever the sources, the plugin never publishes a path more often than 20 Hz: an update less than 50 ms after the last one on that path is not published. A loop's next hop arrives within the same millisecond, so the chain ends at the first repeat instead of running away, and the server stays responsive. A backlog flushed after a dropout is thinned, not stopped. Nothing latches. While updates are being dropped the status and the Live page end with `Rate limited: N updates over 20 Hz not published in the last 10 s, driven by "…"`, naming the source. If it stays up, look for a loop with another STW plugin; a loop that is cut still leaves STW corrected twice.
-
-Only one plugin should correct STW. Otherwise the correction is applied twice even without a loop. In Shadow mode, note that `signalk-stw-heel-correction` also uses `navigation.speedThroughWaterCorrected` for its separate-path output, so the two would overwrite each other there.
-
-### Outputs
-
-| Output | Replace mode | Shadow mode |
+| Setting | Default | |
 |---|---|---|
-| True wind angle | `environment.wind.angleTrueWater` | `environment.wind.angleTrueWaterCorrected` |
-| True wind speed | `environment.wind.speedTrue` | `environment.wind.speedTrueCorrected` |
-| True wind direction | `environment.wind.directionTrue` | `environment.wind.directionTrueCorrected` |
-| Speed through water (when on) | `navigation.speedThroughWater` | `navigation.speedThroughWaterCorrected` |
-| Leeway (when on) | `navigation.leewayAngle` | `navigation.leewayAngleCorrected` |
-| Current | `environment.current` (`drift`, `setTrue`) | `environment.currentCorrected` |
+| Heading | 2 s | Heading before true wind, to line up with an apparent wind the instrument has already damped: a yaw then cancels instead of swinging TWD |
+| Heel | 2 s | Heel before the STW table and leeway: takes most of the roll out |
+| True wind | 3 s | TWD and TWS. TWA is the damped TWD less the heading, so it still answers the helm at once |
+| STW | 1 s | The published STW |
+| Current | 10 s | Current, as a vector |
 
-Everything is published under this plugin's own `$source`. Corrected STW goes out each time the paddlewheel reports, while the STW correction is on; the rest goes out with each apparent wind update (TWA and TWD not in light air, see above). No path goes out more often than 20 Hz (see **Circuit breaker** under [Running alongside other STW plugins](#running-alongside-other-stw-plugins)). Shadow paths carry `meta` with units, since they are not in the Signal K schema.
+Undamped, TWD jumps by more than 5° about 480 times an hour on a straight leg; these defaults bring that to 40. More true wind damping smooths further but shows a real shift later.
 
-## Modes
+### Built-in behaviour
 
-- **Shadow** (default) publishes to separate `…Corrected` paths. Your instruments and displays carry on unchanged, and you can log both side by side.
-- **Replace** publishes on the standard paths. Then:
-  1. In **Server → Source Priorities**, rank `signalk-performance-processor` above the instrument for each output path.
-  2. Zero the instrument's own TWA/TWS correction tables and leeway, so nothing is corrected twice. Keep the masthead unit alignment and the boat speed calibration factor in the instrument.
+The webapp lists these with the plugin's own numbers.
+
+- **Through tacks and gybes.** A TWA correction applied in full up to head to wind would hold TWA at 0° for as many degrees as the correction, so TWD would follow the bow through every tack. So the correction fades out over the last 30° to head to wind and the last 10° to dead downwind, and the 40° row must be within ±30° and the 165° row within ±10°: corrected TWA then always moves with uncorrected TWA.
+- **Light air.** Below 1.5 kn of TWS, wind direction is noise: TWA and TWD are not published (TWS still is) until TWS is back to 2 kn.
+- **Stale or implausible input.** Inputs older than 3 s are not used. Without STW there is no true wind; without heel, no heel correction or leeway; without heading, no TWD or current. Apparent wind over 120 kn, STW over 60 kn or heel beyond ±90° is ignored, and the status says why.
+- **Heading.** `navigation.headingTrue` if present; otherwise magnetic heading plus `navigation.magneticVariation` (normally from the GPS); otherwise the fallback variation in Settings.
+
+### Other STW plugins
+
+This plugin publishes STW too, so two STW correctors that each read the other would correct each other's output without end.
+
+- **STW is read from sensors only** (updates from an NMEA connection, which carry a `source` object) unless you choose a source in Settings. Another plugin's STW is ignored, so no loop can form.
+- **Choosing a source overrides this**, for a deliberate chain such as `signalk-stw-heel-correction` → this plugin with its STW table off. Only one plugin should correct STW.
+- **Circuit breaker:** no path is published more often than 20 Hz. A loop's next hop arrives within the same millisecond, so it ends at the first repeat; the status names the source driving it.
+
+## Outputs
+
+| Output | Shadow mode (default) | Replace mode |
+|---|---|---|
+| True wind angle | `environment.wind.angleTrueWaterCorrected` | `environment.wind.angleTrueWater` |
+| True wind speed | `environment.wind.speedTrueCorrected` | `environment.wind.speedTrue` |
+| True wind direction | `environment.wind.directionTrueCorrected` | `environment.wind.directionTrue` |
+| Speed through water (when on) | `navigation.speedThroughWaterCorrected` | `navigation.speedThroughWater` |
+| Leeway (when on) | `navigation.leewayAngleCorrected` | `navigation.leewayAngle` |
+| Current | `environment.currentCorrected` | `environment.current` (`drift`, `setTrue`) |
+
+Everything is published under this plugin's own `$source`: STW each time the paddlewheel reports, the rest with each apparent wind update. Shadow paths carry `meta` with units. The plugin publishes into Signal K only; your instrument displays show the instrument's own numbers unless something forwards these to NMEA 2000.
 
 ## The webapp
 
 Open **Webapps → Performance Processor**.
 
-- **Live**: the outputs next to their uncorrected values; the pipeline, with each step's result tagged **Published** (sent to Signal K) or **Working** (only feeds the next step); a **Published to Signal K** table listing every value sent and its path; and which source and how fresh each input is.
-- **Calibration**: every correction in pipeline order with an on/off switch. Select one to edit its values, then **Save**. Every table has the H5000's layout: its headings (the breakpoints) are fixed and only the values are edited, with blank cells allowed where a table says so. Every table also has **Paste a table**, which reads the text the `plugincal` tool prints (and the same text from a spreadsheet), and **Copy this table**, which writes it. The boat speed table also accepts the `signalk-stw-heel-correction` CSV, and resamples it onto the H5000 layout. **Reset to defaults** puts back this boat's values for that correction.
-- **Built-in limits** are listed where they apply: under each correction on the Calibration page (fades, caps, held edge values) and on the Settings page (light air, stale inputs, rate limit, implausible input). The numbers come from the plugin itself, so they always match the code.
-- **Settings**: Shadow or Replace, the fallback magnetic variation, and which source to read for each input. **Any** takes every source; for STW the blank choice is **Auto (sensors only)**.
+- **Live**: the published values, with the undamped and uncorrected ones under them; each step of the pipeline, tagged **Published** or **Working** (feeds the next step only); every path sent; each input's source and age.
+- **Calibration**: the corrections in pipeline order, each with an on/off switch and its editor. Table headings are fixed (the H5000 layout); blank cells are allowed where a table says so. **Paste a table** reads the text `plugincal` prints (or the same from a spreadsheet); **Copy this table** writes it. **Reset to defaults** puts back the defaults for that correction. **Save** to apply.
+- **Settings**: Shadow or Replace, damping, the fallback variation, and the source for each input.
 
-All configuration lives in the webapp. It is saved to `config.json` in the plugin's data directory (under `~/.signalk/plugin-config-data/`), not in the admin **Plugin Config** form, which only points here; saving that form cannot overwrite the tables. Saving needs write access when Signal K security is on.
+Configuration is saved to `config.json` in the plugin's data directory (`~/.signalk/plugin-config-data/signalk-performance-processor/`), not in the admin **Plugin Config** form. Saving needs write access when Signal K security is on.
 
 ## Defaults for this boat
 
-What a fresh install starts with. Every value can be changed in the webapp.
+What a fresh install starts with (see [On the boat it was built for](#on-the-boat-it-was-built-for)).
 
-- **STW (kn added)**, from the GPS (blank = too little data, filled from the nearest value in its row; relative to the H2000's boat speed setting then in force, 4.24):
+- **Boat speed / heel table (kn added)**, relative to the H2000 boat speed setting then in force (4.24). Blank = too little data, filled from the nearest value in its row:
 
   | Heel \ STW (kn) | 0 | 5 | 10 | 15 | 20 | 25 | 30 |
   |---|---|---|---|---|---|---|---|
@@ -132,64 +130,54 @@ What a fresh install starts with. Every value can be changed in the webapp.
   | 20° | | −0.20 | −0.15 | | | | |
 
   The 0 kn column is the paddlewheel reading low when slow; it fades out below 1 kn.
-- **Leeway:** K = 7.9446, one value for every sail.
-- **TWA table (°)** (blank = too little data):
+- **Leeway:** K = 8.568, from the GPS.
+- **TWA table (°)**. Blank = too little data: the nearest measured cell in the row is used. The 90° row is the least certain (few reaching manoeuvres):
 
   | TWA \ TWS (kn) | 0 | 5 | 10 | 15 | 20 | 25 | 30 |
   |---|---|---|---|---|---|---|---|
-  | 40° | 0 | −9.1 | −13.3 | −7.0 | −5.0 | −0.6 | |
-  | 90° | 0 | −9.8 | −15.4 | −8.5 | −3.8 | | |
-  | 165° | 0 | +2.8 | +0.7 | −4.5 | −0.2 | | |
+  | 40° | 0 | −8.6 | −11.5 | −5.1 | −3.7 | +0.6 | |
+  | 90° | 0 | −10.0 | −14.2 | −7.3 | −2.5 | | |
+  | 165° | 0 | +1.3 | −0.2 | −5.0 | +0.2 | | |
 
-  A blank TWA cell uses the measured cells either side, holding the nearest one at the ends. The 0 kn column fades the correction out in no wind, as on the H5000. The 90° row is the least certain: few reaching manoeuvres, so tacks at 45–55° and its tie to the 40° row set most of it.
-- **TWS table (kn):** off. Correction 0, −0.5, −1, −1.5, −2, −2.5, −3 (−10% of each column), down angle 165° throughout.
-- **Fallback variation:** 12.8° E, used only when nothing on the boat sends true heading or magnetic variation. The Live page shows which applies.
+- **TWS table:** off. Correction 0, −0.5, −1 … −3 kn (−10% of each column), down angle 165°.
+- **Fallback variation:** 12.8° E (Sydney).
 
 ## Configuration file
-
-`config.json` in the plugin's data directory, written by the webapp:
 
 ```json
 {
   "schema": 3,
   "mode": "shadow",
   "variation": 12.8,
+  "damping": { "heelS": 2, "headingS": 2, "trueWindS": 3, "stwS": 1, "currentS": 10 },
   "sources": { "apparentWind": "", "stw": "", "heading": "", "attitude": "", "gps": "", "variation": "" },
   "corrections": {
     "stw": { "enabled": true, "heel": [0, 10, 20], "stw": [0, 5, …, 30], "add": [[…], […], […]] },
-    "leeway": { "enabled": true, "k": 7.9446 },
+    "leeway": { "enabled": true, "k": 8.568 },
     "twa": { "enabled": true, "tws": [0, 5, …, 30], "upwind": […], "reach": […], "downwind": […] },
     "tws": { "enabled": false, "tws": [0, 5, …, 30], "correction": […], "downAngle": […] }
   }
 }
 ```
 
-`schema` is the version of the file's shape. A release that changes the shape bumps `CONFIG_SCHEMA` in `lib/processor.js` and adds a migration from the previous version, so older files are upgraded as they load and nothing is reset. A file without `schema` (saved by 0.0.1) is read as schema 1. Schema 1 files (0.0.1–0.0.3) are upgraded to 2: their two STW rows become the grid they describe, and their TWS percentages become knots. Schema 2 files (0.0.4–0.0.6) are upgraded to 3, the H5000 layout: the signed heel × STW grid is resampled onto heel 0/10/20 × 0–30 kn (port and starboard averaged); the TWA rows keep their values with a 0 kn column added, but are now anchored at TWA 40°, 90° and 165°, so a TWA table fitted for the old row angles should be refitted; the TWS table keeps its downwind row as the correction, with a 165° down angle. The axes are fixed: a file with any other table layout is refused with the reason. Blank table cells are stored as `null`. A file from a newer release is refused rather than guessed at, and is never overwritten by an older plugin.
-
-## Adding a correction
-
-Corrections live in `lib/processor.js` as entries in `CORRECTIONS`, each with a stage (`input` before true wind, `trueWind` after) and an `apply` function. Their defaults go in `lib/defaults.js`. The pipeline, the Live view and the enable switch pick a new entry up from there; the Calibration page needs an editor for its values in `public/app.js`.
+Blank cells are `null`. The table axes are fixed: a file with any other layout is refused with the reason. A file from before 0.1.0 is refused (its tables do not apply: **Reset to defaults** and refit), and a file from a newer release is refused and never overwritten.
 
 ## API
 
 Under `/plugins/signalk-performance-processor`:
 
-- `GET /calibration` returns the configuration in use, the defaults, and `behaviour`: the built-in limits (leeway cap and fade, TWA fades, light-air thresholds, stale age, rate limit).
-- `PUT /calibration` validates, saves and restarts with a new configuration. It returns 400 with the reasons if the configuration is invalid.
-- `GET /live` returns the latest result, each step, input ages and the sources seen.
+- `GET /calibration`: the configuration in use, the defaults, and `behaviour`, the built-in limits the webapp describes.
+- `PUT /calibration`: validate, save and restart with a new configuration; 400 with the reasons if it is invalid.
+- `GET /live`: the latest result, each step, input ages and the sources seen.
 
 ## Development
 
 ```bash
 npm test          # node --test
+cd ~/.signalk && npm install /path/to/signalk-performance-processor && sudo systemctl restart signalk
 ```
 
-To run it from a working copy on a Signal K server:
-
-```bash
-cd ~/.signalk && npm install /path/to/signalk-performance-processor
-sudo systemctl restart signalk
-```
+`lib/processor.js` is the pipeline, free of Signal K so it can be tested and replayed (`plugincal` runs it directly). Each correction is an entry in its `CORRECTIONS`, with its defaults in `lib/defaults.js` and its editor in `public/app.js`. `public/tables.js` is the table layout and text format, shared by the plugin, the webapp and `plugincal`. `lib/damping.js` is the damping; `index.js` the Signal K side.
 
 ## Licence
 
