@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.0 — 2026-10-29
+
+Still a proof of concept: run it in Shadow mode alongside your instruments. **Saved configurations are upgraded to schema 3, the H5000 layout; refit the TWA table** (boatcal `plugincal`), because its rows now sit at different angles.
+
+- **The H5000's table layout.**
+  - Boat speed / heel: heel 0, 10, 20° either side × boat speed 0, 5 … 30 kn, bilinear, edges held. The correction fades out below 1 kn, so a stopped boat is not given speed by the 0 kn column. Fitted to two years of race logs, this 9-cell table predicts held-out days almost as well as the old 255-cell signed table (leftover error 0.290 against 0.282 kn RMS); port and starboard rows added nothing.
+  - TWA: rows at TWA 40°, 90° and 165° (were configurable, 70° / 100° / 130°), linear between, by TWS 0, 5 … 30 kn. The 0 kn column fades the correction out in no wind. Fitted the same way, these rows predict held-out tacks and gybes better than the old ones, because the upwind correction changes between 40° and 55° of TWA.
+  - TWS: one correction row and a down angle row by TWS 0 … 30 kn (were three rows): none below 90° TWA, in full from the down angle (165° by default).
+- **Paste a table** for every table, and **Copy this table**, in the text format boatcal `plugincal` prints. The boat speed table still accepts the `signalk-stw-heel-correction` CSV, resampled onto the new layout. The format and its parser are one file, `public/tables.js`, used by the plugin and the webapp alike.
+- Defaults: the existing values carried onto the new layout (the STW table resampled, port and starboard averaged, to 0.01 kn), not refitted.
+- Built-in limits on the Calibration page describe the new rules.
+
 ## 0.0.6 — 2026-10-29
 
 Still a proof of concept: run it in Shadow mode alongside your instruments. Validated against 19 races of 2026 logs; the tables are unchanged.

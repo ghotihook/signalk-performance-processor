@@ -10,9 +10,9 @@
   // Fixed behaviour of each correction, written from the numbers the plugin sends (b), so
   // the description always matches the code. c is the correction's current settings.
   const LIMITS = {
-    stw: (b, c) => [
-      `Below ${c.stw[0]} kn (the first speed column) the correction tapers to zero at 0 kn, so a stopped boat is not given speed.`,
-      'Beyond the first and last heel rows and the last speed column, the edge values are held.'
+    stw: b => [
+      `Below ${b.stwFadeKn} kn the correction fades to nothing at 0 kn, so a stopped boat is not given speed by the 0 kn column.`,
+      'Heel either side uses the same row, as on the H5000. More heel than the last row uses the last row; beyond the last speed column, that column is held.'
     ],
     leeway: b => [
       `Capped at ±${b.maxLeewayDeg}°.`,
@@ -20,20 +20,29 @@
       'Needs heel; without it leeway is 0.'
     ],
     twa: b => [
+      `Rows at TWA ${b.twaRows.upwind}°, ${b.twaRows.reach}° and ${b.twaRows.downwind}°, as on the H5000: the ${b.twaRows.upwind}° row applies in full below ${b.twaRows.upwind}°, the ${b.twaRows.downwind}° row beyond ${b.twaRows.downwind}°, linear between rows and between TWS columns.`,
       `Fades out towards head to wind and dead downwind: in full from ${b.twaTaperUpDeg}° to ${180 - b.twaTaperDownDeg}° TWA, none at 0° and 180°. TWA and TWD then pass smoothly through tacks and gybes instead of TWD following the bow. Upwind the boat is inside the fade only while tacking; downwind, sailing deeper than ${180 - b.twaTaperDownDeg}° gets part of the correction.`,
-      `To keep that smooth, upwind values must be within ±${b.twaTaperUpDeg}° and downwind values within ±${b.twaTaperDownDeg}°, and the row angles between ${b.twaTaperUpDeg}° and ${180 - b.twaTaperDownDeg}°.`,
+      `To keep that smooth, the ${b.twaRows.upwind}° row must be within ±${b.twaTaperUpDeg}° and the ${b.twaRows.downwind}° row within ±${b.twaTaperDownDeg}°.`,
       'Beyond the first and last TWS columns, the end values are held.'
     ],
-    tws: () => [
+    tws: b => [
+      `Downwind only: no correction below ${b.twsNoneBelowDeg}° TWA, in full from the down angle for that TWS, linear between.`,
       'Never takes TWS below 0. Beyond the first and last TWS columns, the end values are held.'
     ]
   }
 
   const CORRECTIONS = {
-    stw: { name: 'Boat speed (STW)', what: 'Knots added to the paddlewheel by heel (rows, + = starboard side down) and speed (columns), like the H5000 boat speed / heel table. Blank cells are filled from the nearest value in their row. Applied before anything else uses STW.' },
+    stw: { name: 'Boat speed (STW)', what: 'Knots added to the paddlewheel by heel (rows, either side) and boat speed (columns): the H5000 boat speed / heel table. Blank cells are filled from the nearest value in their row. Applied before anything else uses STW.' },
     leeway: { name: 'Leeway', what: 'Sideways slip: leeway = K × heel ÷ STW². Turns the boat’s velocity to leeward for true wind and current.' },
-    twa: { name: 'TWA table', what: 'Degrees added to |TWA| by TWS, upwind, reaching and downwind, H5000 style. Negative = TWA was reading too wide. Rows blend by TWA at the angles below.' },
-    tws: { name: 'TWS table', what: 'Knots added to TWS by TWS, upwind, reaching and downwind, H5000 style. Blended at the TWA table’s angles. Blank = no correction. The default downwind row is −10% of each column.' }
+    twa: { name: 'TWA table', what: 'Degrees added to |TWA| by TWS, in rows at TWA 40°, 90° and 165°: the H5000 TWA correction table. Negative = TWA was reading too wide.' },
+    tws: { name: 'TWS table', what: 'Knots added to TWS by TWS, downwind: the H5000 TWS correction and its down angle. Blank = no correction. The default is −10% of each column.' }
+  }
+
+  // The tables' text format (tables.js): what Paste a table reads and Copy writes.
+  const PASTE = {
+    stw: { parse: t => PPTables.parseStw(t), hint: 'First row <code>heel\\stw</code> then the boat speeds 0, 5 … 30; then a row for heel 0, 10 and 20, each its label then its values. A signed heel × STW table (signalk-stw-heel-correction CSV) is resampled onto this layout.' },
+    twa: { parse: t => PPTables.parseTwa(t), hint: 'First row <code>TWA\\TWS</code> then the TWS columns 0, 5 … 30; then a row for TWA 40, 90 and 165, each its label then its values. This is what boatcal <code>plugincal</code> prints.' },
+    tws: { parse: t => PPTables.parseTws(t), hint: 'First row <code>TWS</code> then the TWS columns 0, 5 … 30; then a <code>correction</code> row and a <code>down angle</code> row.' }
   }
 
   const SOURCE_LABELS = {
@@ -290,23 +299,17 @@
     const meta = CORRECTIONS[id] || { name: id, what: '' }
     let body = ''
     if (id === 'stw') {
-      body = grid2d('Knots added to STW', 'Heel ° ╲ STW kn', 'corrections.stw', c) +
-        `<details class="paste"><summary>Paste a table</summary>` +
-        `<p class="muted sub">Same format as signalk-stw-heel-correction: first row <code>heel\\stw</code> then the speeds; each further row a heel angle then its corrections. Commas, tabs or semicolons; blank cells allowed.</p>` +
-        `<textarea id="pasteStw" rows="8" spellcheck="false" aria-label="Heel by STW table to paste"></textarea>` +
-        `<div><button type="button" class="ghost" id="pasteStwGo">Replace the table</button> <span id="pasteStwMsg" class="warn"></span></div></details>`
+      body = grid2d('Knots added to STW', 'Heel ╲ STW kn', 'corrections.stw', c)
     } else if (id === 'leeway') {
       body = `<div class="fields">${field('K', 'corrections.leeway.k', c.k, 0.01)}</div>`
-    } else if (id === 'twa' || id === 'tws') {
-      const rows = [['Upwind', 'upwind'], ['Reach', 'reach'], ['Downwind', 'downwind']]
-      body = grid(id === 'twa' ? 'Degrees added to |TWA| (blank = not enough data: nearest measured value used)' : 'Knots added to TWS (blank = no correction)', 'TWS kn', `corrections.${id}`, 'tws', rows, c, true)
-      if (id === 'twa') {
-        const a = c.angles
-        body += `<div class="fields">${field('Upwind row to (° TWA)', 'corrections.twa.angles.upwind', a.upwind, 1)}` +
-          `${field('Reach row at (° TWA)', 'corrections.twa.angles.reach', a.reach, 1)}` +
-          `${field('Downwind row from (° TWA)', 'corrections.twa.angles.downwind', a.downwind, 1)}</div>`
-      }
+    } else if (id === 'twa') {
+      const rows = [['40° TWA', 'upwind', true], ['90° TWA', 'reach', true], ['165° TWA', 'downwind', true]]
+      body = grid('Degrees added to |TWA| (blank = not enough data: nearest measured value used)', 'TWS kn', 'corrections.twa', 'tws', rows, c)
+    } else if (id === 'tws') {
+      const rows = [['Correction kn', 'correction', true], ['Down angle °', 'downAngle', false]]
+      body = grid('Knots added to TWS, and the TWA it applies in full from (blank correction = none)', 'TWS kn', 'corrections.tws', 'tws', rows, c)
     }
+    if (PASTE[id]) body += pasteBox(id)
     const limits = state.behaviour && LIMITS[id] ? LIMITS[id](state.behaviour, c) : []
     $('corrEditor').innerHTML =
       `<div class="panel-head"><h2>${esc(meta.name)}</h2><span class="state ${c.enabled ? 'on' : ''}">${c.enabled ? 'Enabled' : 'Disabled'}</span></div>` +
@@ -316,44 +319,32 @@
   }
 
   // A table whose header row is its fixed axis (the breakpoints, shown as labels) and
-  // whose other rows are the editable correction values.
-  function grid (title, axisLabel, base, axisKey, rows, obj, nullable) {
+  // whose other rows are the editable correction values. rows: [label, key, blanks allowed].
+  function grid (title, axisLabel, base, axisKey, rows, obj) {
     const axis = obj[axisKey]
-    const cell = (path, v, name) => `<td><input type="number" step="any"${nullable ? ' data-nullable="1"' : ''} data-path="${esc(path)}" value="${v == null ? '' : esc(v)}" aria-label="${esc(name)}"></td>`
+    const cell = (path, v, name, nullable) => `<td><input type="number" step="any"${nullable ? ' data-nullable="1"' : ''} data-path="${esc(path)}" value="${v == null ? '' : esc(v)}" aria-label="${esc(name)}"></td>`
     return `<div><h2>${esc(title)}</h2><div class="table-wrap"><table class="grid">` +
       `<tr><th scope="row" class="muted">${esc(axisLabel)}</th>${axis.map(v => `<th scope="col" class="axis">${esc(v)}</th>`).join('')}</tr>` +
-      rows.map(([label, key]) => `<tr><th scope="row">${esc(label)}</th>${obj[key].map((v, i) => cell(`${base}.${key}.${i}`, v, `${label} at ${axis[i]}`)).join('')}</tr>`).join('') +
+      rows.map(([label, key, nullable]) => `<tr><th scope="row">${esc(label)}</th>${obj[key].map((v, i) => cell(`${base}.${key}.${i}`, v, `${label} at ${axis[i]}`, nullable)).join('')}</tr>`).join('') +
       '</table></div></div>'
   }
 
-  // A two-dimensional table: fixed row and column headings, editable cells, and blank
-  // cells allowed (null = not measured).
-  function grid2d (title, corner, base, t) {
-    const head = `<tr><th scope="col" class="muted">${esc(corner)}</th>${t.stw.map(v => `<th scope="col" class="axis">${esc(v)}</th>`).join('')}</tr>`
-    const rows = t.heel.map((h, i) => `<tr><th scope="row" class="axis">${esc(h)}</th>` +
-      t.add[i].map((v, j) => `<td><input type="number" step="any" data-nullable="1" data-path="${base}.add.${i}.${j}" value="${v == null ? '' : esc(v)}" aria-label="heel ${esc(h)} at ${esc(t.stw[j])} kn"></td>`).join('') + '</tr>')
-    return `<div><h2>${esc(title)}</h2><div class="table-wrap"><table class="grid">${head}${rows.join('')}</table></div></div>`
+  // Paste a whole table as text, or copy it out in the same format (tables.js).
+  function pasteBox (id) {
+    return `<details class="paste"><summary>Paste a table</summary>` +
+      `<p class="muted sub">${PASTE[id].hint} Commas, tabs, semicolons or spaces between cells; blank cells allowed where the table allows them.</p>` +
+      `<textarea id="paste-${esc(id)}" rows="6" spellcheck="false" aria-label="${esc(CORRECTIONS[id].name)} to paste"></textarea>` +
+      `<div><button type="button" class="ghost" data-paste="${esc(id)}">Replace the table</button> ` +
+      `<button type="button" class="ghost" data-copy="${esc(id)}">Copy this table</button> <span id="paste-msg-${esc(id)}" class="warn"></span></div></details>`
   }
 
-  // Read a pasted heel x STW table: header row of speeds, then a heel angle and its
-  // corrections per row. Tolerates the usual spreadsheet damage.
-  function parseStwTable (text) {
-    const clean = c => c.trim().replace(/^"(.*)"$/, '$1').replace(/\u2212/g, '-').replace(/\u00b0/g, '').trim()
-    const lines = text.replace(/^\ufeff/, '').trim().split(/\r?\n/).filter(l => l.trim())
-    if (lines.length < 2) throw new Error('needs a header row of speeds and at least one heel row')
-    const sep = lines[0].includes(',') ? ',' : lines[0].includes('\t') ? '\t' : ';'
-    const rows = lines.map(l => l.split(sep).map(clean))
-    const num = (c, what) => { const n = Number(c); if (c === '' || !Number.isFinite(n)) throw new Error(`${what} is not a number: "${c}"`); return n }
-    let stw = rows[0].slice(1).map((c, j) => num(c, `speed ${j + 1} in the header`))
-    let heel = []; let add = []
-    rows.slice(1).forEach((r, i) => {
-      if (r.length - 1 !== stw.length) throw new Error(`row ${i + 2} has ${r.length - 1} values, the header has ${stw.length} speeds`)
-      heel.push(num(r[0], `heel in row ${i + 2}`))
-      add.push(r.slice(1).map((c, j) => c === '' ? null : num(c, `value at heel ${r[0]}, ${stw[j]} kn`)))
-    })
-    if (stw.length > 1 && stw[0] > stw[stw.length - 1]) { stw = stw.reverse(); add = add.map(r => r.reverse()) }
-    if (heel.length > 1 && heel[0] > heel[heel.length - 1]) { heel = heel.reverse(); add = add.reverse() }
-    return { heel, stw, add }
+  // A two-dimensional table: fixed row and column headings, editable cells, and blank
+  // cells allowed (null = not measured). Heel rows are either side, as on the H5000.
+  function grid2d (title, corner, base, t) {
+    const head = `<tr><th scope="col" class="muted">${esc(corner)}</th>${t.stw.map(v => `<th scope="col" class="axis">${esc(v)}</th>`).join('')}</tr>`
+    const rows = t.heel.map((h, i) => `<tr><th scope="row" class="axis">${esc(h)}°</th>` +
+      t.add[i].map((v, j) => `<td><input type="number" step="any" data-nullable="1" data-path="${base}.add.${i}.${j}" value="${v == null ? '' : esc(v)}" aria-label="heel ${esc(h)} at ${esc(t.stw[j])} kn"></td>`).join('') + '</tr>')
+    return `<div><h2>${esc(title)}</h2><div class="table-wrap"><table class="grid">${head}${rows.join('')}</table></div></div>`
   }
 
   function field (label, path, value, step) {
@@ -414,14 +405,26 @@
   document.addEventListener('click', e => {
     const sel = e.target.closest('[data-select]')
     if (sel) { state.selected = sel.dataset.select; renderCalibration() }
-    if (e.target.id === 'pasteStwGo') {
+    const paste = e.target.closest('[data-paste]')
+    if (paste) {
+      const id = paste.dataset.paste
       try {
-        const t = parseStwTable($('pasteStw').value)
-        Object.assign(state.draft.corrections.stw, t)
+        const t = PASTE[id].parse($('paste-' + id).value)
+        const note = t.resampled ? 'Resampled onto heel 0 / 10 / 20 × 0–30 kn. ' : ''
+        delete t.resampled
+        Object.assign(state.draft.corrections[id], t)
         renderAll()
+        $('paste-msg-' + id).textContent = note + 'Pasted: Save to keep it.'
       } catch (err) {
-        $('pasteStwMsg').textContent = err.message
+        $('paste-msg-' + id).textContent = err.message
       }
+    }
+    const copy = e.target.closest('[data-copy]')
+    if (copy) {
+      const id = copy.dataset.copy
+      const text = PPTables.format(id, state.draft.corrections[id])
+      const done = m => { $('paste-msg-' + id).textContent = m }
+      navigator.clipboard.writeText(text).then(() => done('Copied.'), () => { $('paste-' + id).value = text; done('Copy blocked by the browser: the table is in the box above.') })
     }
     const def = e.target.closest('[data-defaults]')
     if (def && state.defaults) {

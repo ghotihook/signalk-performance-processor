@@ -3,7 +3,7 @@
 const fs = require('fs')
 const path = require('path')
 const { DEFAULTS } = require('./lib/defaults')
-const { process, correctInputs, normalizeConfig, CORRECTIONS, CONFIG_SCHEMA, MAX_LEEWAY_DEG, LEEWAY_FADE_KN, TWA_TAPER_UP_DEG, TWA_TAPER_DOWN_DEG } = require('./lib/processor')
+const { process, correctInputs, normalizeConfig, CORRECTIONS, CONFIG_SCHEMA, AXES, MAX_LEEWAY_DEG, LEEWAY_FADE_KN, TWA_TAPER_UP_DEG, TWA_TAPER_DOWN_DEG, STW_FADE_KN, TWS_NONE_BELOW_DEG } = require('./lib/processor')
 
 const MS_TO_KN = 1.94384
 const RAD_TO_DEG = 180 / Math.PI
@@ -463,6 +463,9 @@ module.exports = function (app) {
 
 // Fixed behaviour the webapp describes, sent from here so its text always matches the code.
 const BEHAVIOUR = {
+  stwFadeKn: STW_FADE_KN,
+  twaRows: AXES.twaRows,
+  twsNoneBelowDeg: TWS_NONE_BELOW_DEG,
   maxLeewayDeg: MAX_LEEWAY_DEG,
   leewayFadeKn: LEEWAY_FADE_KN,
   twaTaperUpDeg: TWA_TAPER_UP_DEG,

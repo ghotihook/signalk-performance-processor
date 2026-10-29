@@ -24,12 +24,12 @@ test('interp holds the end values and is linear between', () => {
   assert.strictEqual(interp([5, 10], [1, 3], 7.5), 2)
 })
 
-test('rows blend by TWA at the configured angles', () => {
-  const a = { upwind: 70, reach: 100, downwind: 130 }
-  assert.strictEqual(blendRows(40, a, -10, 0, 4), -10)
-  assert.strictEqual(blendRows(85, a, -10, 0, 4), -5)
-  assert.strictEqual(blendRows(100, a, -10, 0, 4), 0)
-  assert.strictEqual(blendRows(115, a, -10, 0, 4), 2)
+test('rows blend by TWA between the H5000 rows at 40, 90 and 165', () => {
+  const a = { upwind: 40, reach: 90, downwind: 165 }
+  assert.strictEqual(blendRows(30, a, -10, 0, 4), -10)
+  assert.strictEqual(blendRows(65, a, -10, 0, 4), -5)
+  assert.strictEqual(blendRows(90, a, -10, 0, 4), 0)
+  close(blendRows(127.5, a, -10, 0, 4), 2, 1e-9)
   assert.strictEqual(blendRows(170, a, -10, 0, 4), 4)
 })
 
@@ -54,22 +54,28 @@ test('port and starboard are mirror images', () => {
   close(p.leeway, -s.leeway, 0.01)
 })
 
-test('STW: the heel x STW grid, exact at its cells, bilinear between, blanks filled', () => {
+test('STW: H5000 layout, heel either side x boat speed, exact at its cells, bilinear between', () => {
   const { config } = normalizeConfig({})
   const t = config.corrections.stw
-  close(stwGridLookup(t, 0, 6), 0.021, 1e-9, 'cell heel 0, 6 kn')
-  close(stwGridLookup(t, -20, 6), -0.111, 1e-9, 'cell heel -20, 6 kn')
-  close(stwGridLookup(t, -20, 6.25), (-0.111 + -0.118) / 2, 1e-9, 'between columns')
-  close(stwGridLookup(t, -35, 3), -0.276, 1e-9, 'blank cell takes the nearest value in its row')
-  close(stwGridLookup(t, 0, 0.25), 0.565 / 2, 1e-9, 'tapers to 0 below the first column')
-  close(stwGridLookup(t, 0, 20), 0.003, 1e-9, 'holds the last column')
-  close(correctInputs({ stw: 6, heel: -20 }, config).c.stw, 5.889, 1e-9)
+  close(stwGridLookup(t, 0, 5), 0.05, 1e-9, 'cell heel 0, 5 kn')
+  close(stwGridLookup(t, -20, 10), -0.13, 1e-9, 'port heel uses the same row as starboard')
+  close(stwGridLookup(t, 20, 10), -0.13, 1e-9)
+  close(stwGridLookup(t, 15, 7.5), ((0.01 + -0.03) / 2 + (-0.08 + -0.13) / 2) / 2, 1e-9, 'bilinear between')
+  close(stwGridLookup(t, 30, 10), -0.13, 1e-9, 'more heel than the last row holds the last row')
+  close(stwGridLookup(t, 0, 40), 0, 1e-9, 'holds the last column')
+  close(correctInputs({ stw: 6, heel: -20 }, config).c.stw, 6 - 0.08 - 0.2 * 0.05, 1e-9)
 })
 
-test('STW: signed heel, so a one-sided paddlewheel can be represented', () => {
-  const t = { heel: [-10, 0, 10], stw: [5], add: [[-0.2], [0], [0.1]] }
-  close(stwGridLookup(t, -10, 5), -0.2, 1e-9)
-  close(stwGridLookup(t, 10, 5), 0.1, 1e-9)
+test('STW: the correction fades out below 1 kn, so a stopped boat is not given speed', () => {
+  const t = { heel: [0, 10, 20], stw: [0, 5, 10, 15, 20, 25, 30], add: [[0.5, 0.5, 0, 0, 0, 0, 0], [0.5, 0.5, 0, 0, 0, 0, 0], [0.5, 0.5, 0, 0, 0, 0, 0]] }
+  close(stwGridLookup(t, 0, 0), 0, 1e-9)
+  close(stwGridLookup(t, 0, 0.5), 0.25, 1e-9)
+  close(stwGridLookup(t, 0, 1), 0.5, 1e-9)
+})
+
+test('STW: blank cells take the nearest value in their row', () => {
+  const t = { heel: [0, 10, 20], stw: [0, 5, 10, 15, 20, 25, 30], add: [[0, 0.1, 0.2, null, null, null, null], [0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0]] }
+  close(stwGridLookup(t, 0, 20), 0.2, 1e-9)
 })
 
 test('fillGaps extends rows, then fills an empty row from its neighbour', () => {
@@ -92,8 +98,12 @@ test('TWA table narrows TWA by the table value', () => {
   config.corrections.twa.enabled = true
   const plain = process({ awa: 30, aws: 16, stw: 6 }, allOff()).out
   const r = process({ awa: 30, aws: 16, stw: 6 }, config).out
-  const expected = interpRow(DEFAULTS.corrections.twa.tws, DEFAULTS.corrections.twa.upwind, plain.tws)
-  close(Math.abs(r.twa), Math.abs(plain.twa) + expected, 1e-9)
+  // Below 40 the upwind row applies alone; beyond, it blends towards the 90 row.
+  const up = interpRow(DEFAULTS.corrections.twa.tws, DEFAULTS.corrections.twa.upwind, plain.tws)
+  const reach = interpRow(DEFAULTS.corrections.twa.tws, DEFAULTS.corrections.twa.reach, plain.tws)
+  const a = Math.abs(plain.twa)
+  const expected = a <= 40 ? up : up + (reach - up) * (a - 40) / 50
+  close(Math.abs(r.twa), a + expected, 1e-9)
   close(r.tws, plain.tws, 1e-9, 'TWS untouched by the TWA table')
 })
 
@@ -140,12 +150,10 @@ test('TWA correction is in full from 30 degrees off the wind to 10 short of dead
   assert.strictEqual(twaTaper(180), 0)
 })
 
-test('config: TWA table values must stay inside the taper, and its angles outside it', () => {
-  const bad = (twa, msg) => assert.ok(normalizeConfig({ corrections: { twa } }).errors.some(e => msg.test(e)), msg)
-  bad({ upwind: [-30, -12, -5, -5, 0, null] }, /upwind row: values must be within/)
-  bad({ downwind: [1, -10, 1, null, null, null] }, /downwind row: values must be within/)
-  bad({ angles: { upwind: 20, reach: 100, downwind: 130 } }, /TWA table angles/)
-  bad({ angles: { upwind: 70, reach: 100, downwind: 175 } }, /TWA table angles/)
+test('config: TWA table values must stay inside the taper', () => {
+  const bad = (twa, msg) => assert.ok(normalizeConfig({ schema: 3, corrections: { twa } }).errors.some(e => msg.test(e)), msg)
+  bad({ upwind: [0, -30, -12, -5, -5, 0, null] }, /40° row: values must be within/)
+  bad({ downwind: [0, 1, -10, 1, null, null, null] }, /165° row: values must be within/)
 })
 
 test('leeway fades in between 1.5 and 3 kn, with no step', () => {
@@ -164,15 +172,20 @@ test('leeway fades in between 1.5 and 3 kn, with no step', () => {
   }
 })
 
-test('TWS table adds knots, downwind only with the defaults (blank = no correction)', () => {
+test('TWS table: H5000 single row, none below 90 deg TWA, in full from the down angle', () => {
   const config = allOff()
   config.corrections.tws.enabled = true
-  const up = process({ awa: 30, aws: 22, stw: 6 }, config).out
-  const upPlain = process({ awa: 30, aws: 22, stw: 6 }, allOff()).out
-  close(up.tws, upPlain.tws, 1e-9)
-  const dn = process({ awa: 150, aws: 12, stw: 8 }, config).out
-  const dnPlain = process({ awa: 150, aws: 12, stw: 8 }, allOff()).out
-  close(dn.tws, dnPlain.tws + interp([5, 10, 15, 20, 25, 30], [-0.5, -1, -1.5, -2, -2.5, -3], dnPlain.tws), 1e-9)
+  const at = awa => [process({ awa, aws: 12, stw: 0 }, config).out.tws, process({ awa, aws: 12, stw: 0 }, allOff()).out.tws]
+  const kn = interp([0, 5, 10, 15, 20, 25, 30], [0, -0.5, -1, -1.5, -2, -2.5, -3], 12)
+  let [c, p] = at(80); close(c, p, 1e-9, 'none upwind of 90')
+  ;[c, p] = at(170); close(c, p + kn, 1e-9, 'all beyond the down angle')
+  ;[c, p] = at(127.5); close(c, p + kn / 2, 1e-9, 'half way from 90 to 165')
+  const blank = { ...config, corrections: { ...config.corrections, tws: { ...config.corrections.tws, correction: [0, null, null, null, null, null, null] } } }
+  close(process({ awa: 170, aws: 12, stw: 0 }, blank).out.tws, 12, 1e-9, 'blank = no correction')
+})
+
+test('config: TWS down angles must be past 90 deg', () => {
+  assert.ok(normalizeConfig({ schema: 3, corrections: { tws: { downAngle: [165, 165, 80, 165, 165, 165, 165] } } }).errors.some(e => /down angle/.test(e)))
 })
 
 test('TWD and current need heading; current needs SOG and COG', () => {
@@ -202,10 +215,10 @@ test('a still current is reported as still', () => {
 test('the worked example from the model', () => {
   const { config } = normalizeConfig({})
   const r = process({ awa: 32, aws: 16.9, stw: 5.6, heel: -23, headingMagnetic: 110, sog: 5.4, cog: 119 }, config).out
-  close(r.stw, 5.4526, 0.001)
-  close(r.leeway, -7.9446 * 23 / (5.4526 * 5.4526), 0.001)
-  close(Math.abs(r.twa), 38.5, 0.05)
-  close(r.tws, 13.05, 0.05)
+  close(r.stw, 5.514, 0.001)
+  close(r.leeway, -7.9446 * 23 / (5.514 * 5.514), 0.001)
+  close(Math.abs(r.twa), 39.1, 0.05)
+  close(r.tws, 13.01, 0.05)
 })
 
 test('config: strings from forms become numbers, sources stay text', () => {
@@ -223,21 +236,21 @@ test('config: bad tables are reported, not accepted', () => {
     assert.ok(errors.some(e => e.includes(match)), `expected an error mentioning "${match}", got ${JSON.stringify(errors)}`)
   }
   bad({ mode: 'loud' }, 'mode')
-  bad({ corrections: { twa: { tws: [5, 10, 10, 20, 25, 30] } } }, 'must increase')
-  bad({ corrections: { twa: { upwind: [1, 2] } } }, 'needs 6 values')
-  bad({ corrections: { twa: { angles: { upwind: 120, reach: 100, downwind: 130 } } } }, 'angles')
-  bad({ schema: 2, corrections: { stw: { heel: [0], stw: [0, 1], add: [[0, 0]] } } }, 'above 0')
-  bad({ schema: 2, corrections: { stw: { heel: [0, 10], stw: [1, 2], add: [[0, 0]] } } }, 'one row per heel')
-  bad({ schema: 2, corrections: { stw: { heel: [0], stw: [1, 2], add: [[null, null]] } } }, 'no values')
-  bad({ corrections: { twa: { upwind: [0, 'x', 0, 0, 0, 0] } } }, 'number or blank')
+  // schema 3: a file without it is read as schema 1 and its tables migrated, not rejected
+  bad({ schema: 3, corrections: { twa: { tws: [5, 10, 15, 20, 25, 30] } } }, 'H5000 layout')
+  bad({ schema: 3, corrections: { twa: { upwind: [1, 2] } } }, 'needs 7 values')
+  bad({ schema: 3, corrections: { stw: { heel: [-10, 0, 10] } } }, 'H5000 layout')
+  bad({ schema: 3, corrections: { stw: { add: [[0, 0, 0, 0, 0, 0, 0]] } } }, 'one row per heel')
+  bad({ schema: 3, corrections: { stw: { add: [[null, null, null, null, null, null, null], [null, null, null, null, null, null, null], [null, null, null, null, null, null, null]] } } }, 'no values')
+  bad({ schema: 3, corrections: { twa: { upwind: [0, 'x', 0, 0, 0, 0, 0] } } }, 'number or blank')
   bad({ corrections: { leeway: { k: 'x' } } }, 'Leeway K')
 })
 
-test('config carries its schema version, now 2', () => {
+test('config carries its schema version, now 3', () => {
   const { CONFIG_SCHEMA } = require('../lib/processor')
-  assert.strictEqual(CONFIG_SCHEMA, 2)
-  assert.strictEqual(normalizeConfig({}).config.schema, 2)
-  assert.strictEqual(normalizeConfig({ schema: 2, variation: 11 }).config.variation, 11)
+  assert.strictEqual(CONFIG_SCHEMA, 3)
+  assert.strictEqual(normalizeConfig({}).config.schema, 3)
+  assert.strictEqual(normalizeConfig({ schema: 3, variation: 11 }).config.variation, 11)
 })
 
 test('schema 1 -> 2: two STW rows become their grid, and TWS percent becomes knots', () => {
@@ -248,23 +261,53 @@ test('schema 1 -> 2: two STW rows become their grid, and TWS percent becomes kno
       tws: { enabled: true, tws: [5, 10, 15, 20, 25, 30], upwind: [0, 0, 0, 0, 0, 0], reach: [0, 0, 0, 0, 0, 0], downwind: [0, 0, -10, -10, -10, -10] }
     }
   }
+  const { migrate } = _internals
+  const two = migrate(old, undefined, 2).config
+  assert.strictEqual(two.schema, 2)
+  assert.deepStrictEqual(two.corrections.stw.heel, [-20, 0, 20])
+  close(stwGridLookup({ ...two.corrections.stw, heel: [0, 20], add: two.corrections.stw.add.slice(1) }, 20, 6), 0.02 - 0.13, 1e-9)
+  assert.deepStrictEqual(two.corrections.tws.downwind, [0, 0, -1.5, -2, -2.5, -3])
+  const { errors } = normalizeConfig(old)
+  assert.deepStrictEqual(errors, [], 'and on through 2 -> 3')
+})
+
+test('schema 2 -> 3: the H5000 layout, values kept', () => {
+  const old = {
+    schema: 2,
+    corrections: {
+      stw: { enabled: true, heel: [-20, 0, 20], stw: [2, 6], add: [[-0.2, -0.1], [0.1, 0], [0, -0.3]] },
+      twa: { enabled: true, tws: [5, 10, 15, 20, 25, 30], upwind: [-7, -12, -6, -5, null, null], reach: [0, 0, 0, 0, 0, 0], downwind: [1, -3, 1, null, null, null], angles: { upwind: 70, reach: 100, downwind: 130 } },
+      tws: { enabled: true, tws: [5, 10, 15, 20, 25, 30], upwind: [null, null, null, null, null, null], reach: [null, null, null, null, null, null], downwind: [-0.5, -1, -1.5, -2, -2.5, -3] }
+    }
+  }
   const { config, errors } = normalizeConfig(old)
   assert.deepStrictEqual(errors, [])
-  assert.strictEqual(config.schema, 2)
-  assert.deepStrictEqual(config.corrections.stw.heel, [-20, 0, 20])
-  close(stwGridLookup(config.corrections.stw, -20, 6), 0.02 - 0.13, 1e-9)
-  assert.deepStrictEqual(config.corrections.tws.downwind, [0, 0, -1.5, -2, -2.5, -3])
+  assert.strictEqual(config.schema, 3)
+  const s = config.corrections.stw
+  assert.deepStrictEqual(s.heel, [0, 10, 20])
+  assert.deepStrictEqual(s.stw, [0, 5, 10, 15, 20, 25, 30])
+  close(s.add[2][2], (-0.1 + -0.3) / 2, 1e-9, 'port and starboard averaged at 20 deg, held beyond 6 kn')
+  close(s.add[0][1], 0.03, 1e-9, 'interpolated at 5 kn (0.025), to 0.01 kn')
+  assert.strictEqual(s.add[0][0], 0, 'tapered to 0 at 0 kn, as before')
+  const t = config.corrections.twa
+  assert.deepStrictEqual(t.upwind, [0, -7, -12, -6, -5, null, null])
+  assert.deepStrictEqual(t.downwind, [0, 1, -3, 1, null, null, null])
+  assert.strictEqual(t.angles, undefined, 'rows are fixed at 40 / 90 / 165 now')
+  const w = config.corrections.tws
+  assert.deepStrictEqual(w.correction, [0, -0.5, -1, -1.5, -2, -2.5, -3])
+  assert.deepStrictEqual(w.downAngle, [165, 165, 165, 165, 165, 165, 165])
+  assert.strictEqual(w.downwind, undefined)
 })
 
 test('a config with no schema field (0.0.1) is read as schema 1 and upgraded', () => {
   const { config, errors } = normalizeConfig({ corrections: { leeway: { k: 6 } } })
   assert.deepStrictEqual(errors, [])
-  assert.strictEqual(config.schema, 2)
+  assert.strictEqual(config.schema, 3)
   assert.strictEqual(config.corrections.leeway.k, 6)
 })
 
 test('a config from a newer release is refused, not guessed at', () => {
-  const { config, errors } = normalizeConfig({ schema: 3, corrections: { leeway: { k: 6 } } })
+  const { config, errors } = normalizeConfig({ schema: 4, corrections: { leeway: { k: 6 } } })
   assert.ok(errors[0].includes('newer version'))
   assert.strictEqual(config.corrections.leeway.k, DEFAULTS.corrections.leeway.k, 'falls back to defaults')
   assert.ok(normalizeConfig({ schema: 'x' }).errors[0].includes('not a schema version'))
