@@ -35,13 +35,18 @@
       <div id="tiles" class="tiles"></div>
       <div class="panel">
         <div class="panel-head"><h2>Pipeline</h2><span id="liveAge" class="muted sub"></span></div>
-        <p class="muted sub intro">Each step works on the result of the one before. Only results marked <b>Published</b> are sent to Signal K; <b>Working</b> results feed the next step and go nowhere else.</p>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Step</th><th>In</th><th>Correction</th><th>Result</th><th>Sent to Signal K</th></tr></thead>
-            <tbody id="steps"><tr><td colspan="5" class="muted center">Waiting for data…</td></tr></tbody>
-          </table>
-        </div>
+        <p class="muted sub intro">Inputs first, then each step with its value now; the <b>Published</b> boxes at the end are what is sent to Signal K. A dashed box is switched off or has no data, and the value passes through it unchanged. Heel and heading are damped on the way in, published values on the way out.</p>
+        <div id="flow" class="flow"><p class="muted center">Waiting for data…</p></div>
+        <details class="steps">
+          <summary>Step by step</summary>
+          <p class="muted sub intro">Each step works on the result of the one before. Only results marked <b>Published</b> are sent to Signal K; <b>Working</b> results feed the next step and go nowhere else.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Step</th><th>In</th><th>Correction</th><th>Result</th><th>Sent to Signal K</th></tr></thead>
+              <tbody id="steps"><tr><td colspan="5" class="muted center">Waiting for data…</td></tr></tbody>
+            </table>
+          </div>
+        </details>
       </div>
       <div class="panel">
         <div class="panel-head"><h2>Published to Signal K</h2><span class="muted sub">only these values are sent; the pipeline above shows the working</span></div>

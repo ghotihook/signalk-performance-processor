@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1 — 2026-10-30
+
+### Added
+
+- **The pipeline as a diagram** on the Live page: one lane each for boat speed, true wind and direction, from the inputs to what is published, with each step's value now and what it changed. Switched-off steps are dashed. On a narrow screen it turns on its side. The step table is kept under **Step by step**, and the README has the same diagram.
+- **README:** how good the boat speed / heel table is (held out, within 0.005 kn RMS of a fine table with each side separate; it cannot follow a difference between sides), so `signalk-stw-heel-correction` is not needed alongside; and why current is a trend rather than a live number (on this boat 0.36 kn of change across a tack, mostly the paddlewheel's day-to-day speed scale, which damping does not remove). The Live page's Current tile says the same in brief.
+
 ## 0.2.0 — 2026-10-29
 
 **Upgrading:** a saved configuration from 0.1.x loads, but its TWA table was fitted with leeway in true wind and now over-corrects. Reset the TWA table to defaults, or better, refit with boatcal `plugincal` 1.3.0 and paste or load the result.

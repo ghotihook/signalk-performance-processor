@@ -110,6 +110,22 @@ tr.off td { color: var(--muted); }
 .chip.work { color: var(--muted); border: 1px dashed var(--line); }
 tr.working .result { color: var(--muted); font-style: italic; }
 td.mono { font-variant-numeric: tabular-nums; }
+/* Pipeline diagram: boxes on a grid, connectors drawn behind them */
+.flow { position: relative; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 28px 32px; font-size: 0.8em; }
+.flow.narrow { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px 12px; }
+.flow > p { grid-column: 1 / -1; margin: 8px 0; }
+.fnode { position: relative; z-index: 1; min-width: 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+.fnode .t { font-size: 0.8em; font-weight: 600; color: var(--muted); text-transform: uppercase; }
+.fnode .v { font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.fnode .s { font-size: 0.8em; color: var(--muted); font-variant-numeric: tabular-nums; }
+.fnode.input { background: var(--panel); }
+.fnode.off { border-style: dashed; background: transparent; color: var(--muted); }
+.fnode.pub { border-color: var(--accent); background: var(--active); }
+.edges { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+.edges .e { fill: none; stroke: var(--muted); stroke-width: 1.5; }
+.edges marker path { fill: var(--muted); }
+details.steps { margin-top: 12px; }
+details.steps summary { cursor: pointer; font-size: 0.85em; color: var(--accent); min-height: 32px; }
 
 /* Calibration */
 .cal { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }

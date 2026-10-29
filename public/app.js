@@ -189,12 +189,118 @@
 
   // -- Live
 
-  // True wind straight from the inputs, with no corrections, for comparison.
-  function uncorrected (input) {
+  // True wind from apparent wind and a boat speed, with no tables: on the paddlewheel's
+  // STW it is the uncorrected true wind; on the corrected STW, true wind before the tables.
+  function trueWind (input, stw) {
     const a = input.awa * Math.PI / 180
-    const x = input.aws * Math.cos(a) - input.stw
+    const x = input.aws * Math.cos(a) - stw
     const y = input.aws * Math.sin(a)
     return { twa: Math.atan2(y, x) * 180 / Math.PI, tws: Math.hypot(x, y) }
+  }
+
+  // The pipeline as a diagram: one lane each for boat speed, true wind and direction,
+  // inputs on the left, published values on the right. Each box is [id, step, lane]; on
+  // a narrow screen the diagram turns on its side, lanes becoming columns.
+  const FLOW_NODES = [
+    ['paddle', 0, 0], ['wind', 0, 1], ['heading', 0, 2],
+    ['stw', 1, 0], ['leeway', 2, 0], ['current', 3, 0],
+    ['truewind', 2, 1], ['twa', 3, 1], ['tws', 4, 1],
+    ['twd', 3, 2],
+    ['outSpeed', 5, 0], ['outWind', 5, 1], ['outDir', 5, 2]
+  ]
+  const FLOW_EDGES = [
+    ['paddle', 'stw'], ['stw', 'leeway'], ['leeway', 'current'], ['current', 'outSpeed'],
+    ['wind', 'truewind'], ['stw', 'truewind'], ['truewind', 'twa'], ['twa', 'tws'], ['tws', 'outWind'],
+    ['heading', 'twd'], ['twa', 'twd'], ['twd', 'outDir']
+  ]
+  const FLOW_NARROW_PX = 900
+
+  // What each box says: { title, value or lines, sub, cls }.
+  function flowContent (live) {
+    const r = live.result
+    const o = r.out
+    const p = r.published || o
+    const i = r.input
+    const dm = (state.saved && state.saved.damping) || {}
+    const on = id => !!(state.saved && state.saved.corrections[id] && state.saved.corrections[id].enabled)
+    const step = id => r.steps.find(s => s.id === id) || {}
+    const side = v => v < 0 ? 'port' : 'stbd'
+    const change = (v, d) => (v > 0 ? '+' : v < 0 ? '−' : '±') + Math.abs(v).toFixed(d)
+    const damped = s => s ? `damped ${s} s` : 'undamped'
+    const before = trueWind(i, o.stw)
+    // A correction's box: off, skipped (and why), or its result and what it changed.
+    const corr = (id, title, value, sub) => {
+      const s = step(id)
+      if (!s.enabled) return { title, value: 'off', cls: 'off' }
+      if (s.skipped) return { title, value: '--', sub: s.skipped, cls: 'off' }
+      return { title, value, sub }
+    }
+    const held = 'not sent: light air'
+    const speed = [
+      on('stw') && p.stw != null ? `STW ${fmt(p.stw, 2)} kn` : null,
+      on('leeway') ? `Leeway ${fmt(Math.abs(o.leeway))}° ${side(o.leeway)}` : null,
+      p.current ? `Current ${fmt(p.current.drift, 2)} kn → ${fmt(p.current.set, 0)}°` : null
+    ].filter(Boolean)
+    return {
+      paddle: { title: 'Paddlewheel', value: `${fmt(i.stw, 2)} kn`, sub: i.heel == null ? 'no heel' : `heel ${fmt(Math.abs(i.heel), 0)}° ${side(i.heel)}, ${damped(dm.heelS)}`, cls: 'input' },
+      wind: { title: 'Apparent wind', value: `${fmt(Math.abs(i.awa))}° ${side(i.awa)}`, sub: `${fmt(i.aws)} kn`, cls: 'input' },
+      heading: o.heading == null
+        ? { title: 'Heading', value: '--', sub: 'none: no TWD or current', cls: 'input off' }
+        : { title: 'Heading', value: `${fmt(o.heading, 0)}° T`, sub: `${headingNote(o)}, ${damped(dm.headingS)}`, cls: 'input' },
+      stw: corr('stw', 'STW table', `${fmt(o.stw, 2)} kn`, `${change(o.stw - i.stw, 2)} kn`),
+      leeway: corr('leeway', 'Leeway', `${fmt(Math.abs(o.leeway))}° ${side(o.leeway)}`, 'K × heel ÷ STW²'),
+      current: o.current
+        ? { title: 'Current', value: `${fmt(o.current.drift, 2)} kn → ${fmt(o.current.set, 0)}°`, sub: 'SOG, COG − water' }
+        : { title: 'Current', value: '--', sub: 'needs heading, SOG and COG', cls: 'off' },
+      truewind: { title: 'True wind', value: `${fmt(Math.abs(before.twa))}° · ${fmt(before.tws)} kn`, sub: 'before the tables' },
+      twa: corr('twa', 'TWA table', `${fmt(Math.abs(o.twa))}°`, `${change(Math.abs(o.twa) - Math.abs(before.twa), 1)}°`),
+      tws: corr('tws', 'TWS table', `${fmt(o.tws)} kn`, `${change(o.tws - before.tws, 1)} kn`),
+      twd: o.twd == null
+        ? { title: 'TWD', value: '--', sub: 'no heading', cls: 'off' }
+        : { title: 'TWD', value: `${fmt(o.twd, 0)}° T`, sub: 'heading + TWA' },
+      outSpeed: { title: 'Published', lines: speed.length ? speed : ['nothing'], sub: `STW ${damped(dm.stwS)}, current ${damped(dm.currentS)}`, cls: 'pub' },
+      outWind: { title: 'Published', lines: [r.lightAir ? `TWA ${held}` : `TWA ${fmt(Math.abs(p.twa))}° ${side(p.twa)}`, `TWS ${fmt(p.tws)} kn`], sub: damped(dm.trueWindS), cls: 'pub' },
+      outDir: { title: 'Published', lines: [p.twd == null ? 'TWD: no heading' : r.lightAir ? `TWD ${held}` : `TWD ${fmt(p.twd, 0)}° T`], sub: damped(dm.trueWindS), cls: 'pub' }
+    }
+  }
+
+  function renderFlow (live) {
+    const el = $('flow')
+    const n = flowContent(live)
+    const narrow = el.clientWidth < FLOW_NARROW_PX
+    el.classList.toggle('narrow', narrow)
+    el.innerHTML = '<svg class="edges" aria-hidden="true"><defs><marker id="flowArrow" viewBox="0 0 8 8" refX="7" refY="4" ' +
+      'markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z"/></marker></defs></svg>' +
+      FLOW_NODES.map(([id, s, lane]) => {
+        const b = n[id]
+        const [col, row] = narrow ? [lane, s] : [s, lane]
+        return `<div class="fnode ${b.cls || ''}" data-node="${id}" style="grid-column:${col + 1};grid-row:${row + 1}">` +
+          `<div class="t">${esc(b.title)}</div><div class="v">${(b.lines || [b.value]).map(esc).join('<br>')}</div>` +
+          (b.sub ? `<div class="s">${esc(b.sub)}</div>` : '') + '</div>'
+      }).join('')
+    drawEdges(el)
+  }
+
+  // Connectors from where the grid put the boxes: straight along a row or down a column,
+  // otherwise down out of one box, across, and down into the top of the next.
+  function drawEdges (el) {
+    const svg = el.querySelector('svg.edges')
+    const box = el.getBoundingClientRect()
+    const at = id => {
+      const b = el.querySelector(`[data-node="${id}"]`).getBoundingClientRect()
+      const l = b.left - box.left; const t = b.top - box.top
+      return { l, t, r: l + b.width, b: t + b.height, x: l + b.width / 2, y: t + b.height / 2 }
+    }
+    svg.setAttribute('width', box.width)
+    svg.setAttribute('height', box.height)
+    svg.insertAdjacentHTML('beforeend', FLOW_EDGES.map(([from, to]) => {
+      const a = at(from); const b = at(to)
+      let d
+      if (b.l >= a.r && Math.abs(a.y - b.y) < 2) d = `M${a.r},${a.y} H${b.l}`
+      else if (b.t >= a.b && Math.abs(a.x - b.x) < 2) d = `M${a.x},${a.b} V${b.t}`
+      else d = `M${a.x},${a.b} V${(a.b + b.t) / 2} H${b.x} V${b.t}`
+      return `<path class="e" d="${d}" marker-end="url(#flowArrow)"/>`
+    }).join(''))
   }
 
   // Where true heading came from, so a fallback variation is visible at a glance.
@@ -218,11 +324,12 @@
 
     if (!r) {
       $('tiles').innerHTML = ''
+      $('flow').innerHTML = `<p class="muted center">${esc(live ? live.status || 'Waiting for data…' : 'Waiting for data…')}</p>`
       $('steps').innerHTML = `<tr><td colspan="5" class="muted center">${esc(live ? live.status || 'Waiting for data…' : 'Waiting for data…')}</td></tr>`
     } else {
       const o = r.out
       const p = r.published || o // what is sent: damped
-      const u = uncorrected(r.input)
+      const u = trueWind(r.input, r.input.stw)
       const side = v => v < 0 ? 'port' : 'stbd'
       $('tiles').innerHTML = [
         tile('TWA', fmt(Math.abs(p.twa)), `° ${side(p.twa)}`, `undamped ${fmt(Math.abs(o.twa))}° · uncorrected ${fmt(Math.abs(u.twa))}°`),
@@ -230,8 +337,9 @@
         tile('TWD', p.twd == null ? '--' : fmt(p.twd, 0), '° T', r.lightAir ? 'light air: not published' : p.twd == null ? 'no heading' : `undamped ${fmt(o.twd, 0)}° · ${headingNote(o)}`),
         tile('STW', fmt(p.stw == null ? o.stw : p.stw, 2), 'kn', `paddlewheel ${fmt(r.input.stw, 2)} kn`),
         tile('Leeway', fmt(Math.abs(o.leeway)), `° ${side(o.leeway)}`, r.input.heel == null ? 'no heel' : `heel ${fmt(r.input.heel, 0)}°`),
-        tile('Current', p.current ? fmt(p.current.drift, 2) : '--', p.current ? `kn · ${fmt(p.current.set, 0)}°` : 'kn', p.current ? '' : 'no SOG/COG or heading')
+        tile('Current', p.current ? fmt(p.current.drift, 2) : '--', p.current ? `kn · ${fmt(p.current.set, 0)}°` : 'kn', p.current ? 'a trend: average it over a beat' : 'no SOG/COG or heading')
       ].join('')
+      renderFlow(live)
       // A step's result is published only if no later enabled step replaces it; otherwise
       // it is a working value that only feeds the steps after it.
       const last = {}
@@ -434,6 +542,8 @@
     renderAll()
   })
   window.addEventListener('hashchange', route)
+  // The diagram's layout and connectors depend on its width.
+  window.addEventListener('resize', () => { if (state.view === 'live' && state.live && state.live.result) renderFlow(state.live) })
   window.addEventListener('beforeunload', e => { if (state.draft && dirty()) { e.preventDefault(); e.returnValue = '' } })
 
   route()

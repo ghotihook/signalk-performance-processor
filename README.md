@@ -8,7 +8,7 @@ If your TWD swings 5–10° every time you tack or gybe, the wind hasn't shifted
 
 This plugin does the calibration job of a B&G H5000 inside Signal K, with the H5000's tables in the H5000's layout. It corrects boat speed, works out true wind, applies the TWA and TWS tables, damps the result and publishes it, with leeway and current. You edit everything in a webapp and can watch each correction work live. The tables are fitted from your own logs by boatcal's [`plugincal`](https://github.com/ghotihook/boatcal/tree/main/plugincal).
 
-> **Proof of concept (0.2.0).** Run it in **Shadow mode** beside your instruments and compare before relying on it. See the [changelog](CHANGELOG.md).
+> **Proof of concept (0.2.1).** Run it in **Shadow mode** beside your instruments and compare before relying on it. See the [changelog](CHANGELOG.md).
 
 ## Why
 
@@ -40,6 +40,8 @@ What it publishes, tables and damping together, replayed second by second throug
 | Largest TWD swing during the turn, tacks / gybes | 27.5° / 16.3° | 13.7° / **10.6°** | **11.4°** / 13.5° |
 | One-second TWD jumps over 5° on straight legs, per hour | 439 | **31** | 40 |
 
+The boat speed / heel table looks coarse, three heel rows shared by both sides, but held out by day it is as good as a fine one: 0.380 kn RMS against the GPS, against 0.375 kn for a 15 × 17 table with each side separate (0.421 kn uncorrected). The one thing a shared row cannot follow is a difference between sides: on this boat the paddlewheel reads about 0.1 kn low heeled 15–25° to port, and the table leaves that in.
+
 These are one boat's figures, and the defaults are that boat as it was: after its September 2026 rig tune it needs much less correction, and these defaults over-correct it. A table belongs to one setup of one boat: fit your own.
 
 ## Calibrating your boat
@@ -54,7 +56,18 @@ An H5000 calibration can be typed or pasted in directly: the tables have the sam
 
 ## What it does
 
-Each step works on the output of the one before:
+```
+ Inputs                                                                       Published
+ Paddlewheel ──► STW table ──► Leeway ──────► Current ─────────────────────► STW, leeway, current
+ (heel)              │         (heel)         (heading, SOG, COG)
+                     ▼
+ Apparent wind ──────────────► True wind ───► TWA table ──► TWS table ─────► TWA, TWS
+                                                  │
+                                                  ▼
+ Heading ────────────────────────────────────► TWD ────────────────────────► TWD
+```
+
+The Live page draws the same diagram with each step's value now. Each step works on the output of the one before:
 
 | Step | What | Default |
 |---|---|---|
@@ -77,6 +90,8 @@ Each step works on the output of the one before:
 
 Undamped, TWD jumps by more than 5° about 480 times an hour on a straight leg; these defaults bring that to 40. More true wind damping smooths further but shows a real shift later.
 
+**Current is a trend, not a live number.** It is ground velocity less water velocity, two vectors of about boat speed, so 1% of boat speed or 1° of heading is 0.1 kn of current. On this boat current changes by 0.36 kn (median) across a tack, the same water a minute apart, so most of what is shown on a single heading is instrument error: largely the paddlewheel's speed scale, which moves by a few percent from one day to the next. It does not average out within a leg, so more damping barely helps (10 s to 120 s takes the median shown from 0.38 to 0.35 kn). Read current averaged over both tacks of a beat.
+
 ### Built-in behaviour
 
 The webapp lists these with the plugin's own numbers.
@@ -91,7 +106,7 @@ The webapp lists these with the plugin's own numbers.
 This plugin publishes STW too, so two STW correctors that each read the other would correct each other's output without end.
 
 - **STW is read from sensors only** (updates from an NMEA connection, which carry a `source` object) unless you choose a source in Settings. Another plugin's STW is ignored, so no loop can form.
-- **Choosing a source overrides this**, for a deliberate chain such as `signalk-stw-heel-correction` → this plugin with its STW table off. Only one plugin should correct STW.
+- **`signalk-stw-heel-correction` is not needed with this plugin**: the boat speed / heel table does its job as well (see above). Only one plugin should correct STW. To chain another corrector in front deliberately, choose it as the STW source in Settings and switch this plugin's STW table off.
 - **Circuit breaker:** no path is published more often than 20 Hz. A loop's next hop arrives within the same millisecond, so it ends at the first repeat; the status names the source driving it.
 
 ## Outputs
@@ -111,7 +126,7 @@ Everything is published under this plugin's own `$source`: STW each time the pad
 
 Open **Webapps → Performance Processor**.
 
-- **Live**: the published values, with the undamped and uncorrected ones under them; each step of the pipeline, tagged **Published** or **Working** (feeds the next step only); every path sent; each input's source and age.
+- **Live**: the published values, with the undamped and uncorrected ones under them; the pipeline as a diagram, inputs to published values, with each step's value now and what it changed (switched-off steps dashed), and under **Step by step** the same as a table; every path sent; each input's source and age.
 - **Calibration**: the corrections in pipeline order, each with an on/off switch and its editor. Table headings are fixed (the H5000 layout); blank cells are allowed where a table says so. **Paste a table** reads the text `plugincal` prints (or the same from a spreadsheet); **Copy this table** writes it. **Reset to defaults** puts back the defaults for that correction. **Save** to apply.
 - **Settings**: Shadow or Replace, damping, the fallback variation, and the source for each input.
 
