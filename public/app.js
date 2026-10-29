@@ -7,6 +7,28 @@
 
   // Display names and help for each correction, in pipeline order. A correction the
   // plugin knows but this list does not still shows, under its id.
+  // Fixed behaviour of each correction, written from the numbers the plugin sends (b), so
+  // the description always matches the code. c is the correction's current settings.
+  const LIMITS = {
+    stw: (b, c) => [
+      `Below ${c.stw[0]} kn (the first speed column) the correction tapers to zero at 0 kn, so a stopped boat is not given speed.`,
+      'Beyond the first and last heel rows and the last speed column, the edge values are held.'
+    ],
+    leeway: b => [
+      `Capped at ±${b.maxLeewayDeg}°.`,
+      `Fades in with speed: none below ${b.leewayFadeKn[0]} kn, in full from ${b.leewayFadeKn[1]} kn, so it does not snap on as the boat gets going. K × heel ÷ STW² grows without limit as the boat slows.`,
+      'Needs heel; without it leeway is 0.'
+    ],
+    twa: b => [
+      `Fades out towards head to wind and dead downwind: in full from ${b.twaTaperUpDeg}° to ${180 - b.twaTaperDownDeg}° TWA, none at 0° and 180°. TWA and TWD then pass smoothly through tacks and gybes instead of TWD following the bow. Upwind the boat is inside the fade only while tacking; downwind, sailing deeper than ${180 - b.twaTaperDownDeg}° gets part of the correction.`,
+      `To keep that smooth, upwind values must be within ±${b.twaTaperUpDeg}° and downwind values within ±${b.twaTaperDownDeg}°, and the row angles between ${b.twaTaperUpDeg}° and ${180 - b.twaTaperDownDeg}°.`,
+      'Beyond the first and last TWS columns, the end values are held.'
+    ],
+    tws: () => [
+      'Never takes TWS below 0. Beyond the first and last TWS columns, the end values are held.'
+    ]
+  }
+
   const CORRECTIONS = {
     stw: { name: 'Boat speed (STW)', what: 'Knots added to the paddlewheel by heel (rows, + = starboard side down) and speed (columns), like the H5000 boat speed / heel table. Blank cells are filled from the nearest value in their row. Applied before anything else uses STW.' },
     leeway: { name: 'Leeway', what: 'Sideways slip: leeway = K × heel ÷ STW². Turns the boat’s velocity to leeward for true wind and current.' },
@@ -55,6 +77,7 @@
       state.saved = body.config
       state.draft = clone(body.config)
       state.defaults = body.defaults
+      state.behaviour = body.behaviour || null
       state.configError = null
     } catch (e) {
       // Kept until a load succeeds: the live poll must not clear it.
@@ -195,7 +218,7 @@
       $('tiles').innerHTML = [
         tile('TWA', fmt(Math.abs(o.twa)), `° ${side(o.twa)}`, `uncorrected ${fmt(Math.abs(u.twa))}°`),
         tile('TWS', fmt(o.tws), 'kn', `uncorrected ${fmt(u.tws)} kn`),
-        tile('TWD', o.twd == null ? '--' : fmt(o.twd, 0), '° T', o.twd == null ? 'no heading' : headingNote(o)),
+        tile('TWD', o.twd == null ? '--' : fmt(o.twd, 0), '° T', r.lightAir ? 'light air: not published' : o.twd == null ? 'no heading' : headingNote(o)),
         tile('STW', fmt(o.stw, 2), 'kn', `paddlewheel ${fmt(r.input.stw, 2)} kn`),
         tile('Leeway', fmt(Math.abs(o.leeway)), `° ${side(o.leeway)}`, r.input.heel == null ? 'no heel' : `heel ${fmt(r.input.heel, 0)}°`),
         tile('Current', o.current ? fmt(o.current.drift, 2) : '--', o.current ? `kn · ${fmt(o.current.set, 0)}°` : 'kn', o.current ? '' : 'no SOG/COG or heading')
@@ -216,7 +239,7 @@
         return `<tr class="${sent.length ? '' : 'working'}"><th scope="row">${esc(s.name)}</th><td class="mono">${esc(s.input || '')}</td>` +
           `<td>${esc(s.skipped ? 'skipped — ' + s.skipped : s.detail || '')}</td><td class="mono result">${esc(s.output || '')}</td><td>${tag}</td></tr>`
       }).join('')
-      renderPublished(o, live.outputPaths || {})
+      renderPublished(o, live.outputPaths || {}, r.lightAir)
     }
 
     const inputs = live ? Object.entries(live.inputs) : []
@@ -226,14 +249,15 @@
   }
 
   // The values the plugin actually sends, one per path, matching what index.js publishes.
-  function renderPublished (o, paths) {
+  function renderPublished (o, paths, lightAir) {
     const on = id => !!(state.saved && state.saved.corrections[id] && state.saved.corrections[id].enabled)
     const side = v => v < 0 ? 'port' : 'stbd'
+    const held = 'not sent: light air'
     const rows = [
-      ['TWA', `${fmt(Math.abs(o.twa))}° ${side(o.twa)}`, paths.twa],
+      ['TWA', lightAir ? held : `${fmt(Math.abs(o.twa))}° ${side(o.twa)}`, paths.twa],
       ['TWS', `${fmt(o.tws)} kn`, paths.tws]
     ]
-    if (o.twd != null) rows.push(['TWD', `${fmt(o.twd, 0)}° T`, paths.twd])
+    if (o.twd != null) rows.push(['TWD', lightAir ? held : `${fmt(o.twd, 0)}° T`, paths.twd])
     if (on('stw')) rows.push(['STW', `${fmt(o.stw, 2)} kn`, paths.stw])
     if (on('leeway')) rows.push(['Leeway', `${fmt(Math.abs(o.leeway))}° ${side(o.leeway)}`, paths.leeway])
     if (o.current) rows.push(['Current', `${fmt(o.current.drift, 2)} kn → ${fmt(o.current.set, 0)}°`, paths.current])
@@ -283,9 +307,11 @@
           `${field('Downwind row from (° TWA)', 'corrections.twa.angles.downwind', a.downwind, 1)}</div>`
       }
     }
+    const limits = state.behaviour && LIMITS[id] ? LIMITS[id](state.behaviour, c) : []
     $('corrEditor').innerHTML =
       `<div class="panel-head"><h2>${esc(meta.name)}</h2><span class="state ${c.enabled ? 'on' : ''}">${c.enabled ? 'Enabled' : 'Disabled'}</span></div>` +
       `<p class="what muted">${esc(meta.what)}</p>${body}` +
+      (limits.length ? `<div class="limits"><h3>Built-in limits</h3><ul>${limits.map(l => `<li>${esc(l)}</li>`).join('')}</ul></div>` : '') +
       `<div><button type="button" class="ghost" data-defaults="${esc(id)}">Reset to defaults</button></div>`
   }
 
@@ -348,6 +374,13 @@
       `<div><b>${esc(name)}</b><span>${esc(desc)}</span></div></label>`).join('')
     const v = $('variation')
     if (document.activeElement !== v) v.value = state.draft.variation
+    const b = state.behaviour
+    $('behaviour').innerHTML = b ? [
+      `<b>Light air:</b> below ${b.lightAirOffKn} kn of TWS, wind direction is noise, so TWA and TWD are not published (TWS still is). They come back once TWS reaches ${b.lightAirOnKn} kn; the gap stops them flickering on and off.`,
+      `<b>Stale inputs:</b> an input older than ${b.staleS} s is not used. Without STW or apparent wind nothing is published; without heading, no TWD or current; without heel, no heel correction or leeway.`,
+      `<b>Rate limit:</b> no path is published more often than ${b.maxPublishHz} Hz. Faster updates are dropped and the status says so; that usually means a feedback loop with another plugin.`,
+      '<b>Implausible input</b> (apparent wind over 120 kn, STW over 60 kn, heel beyond ±90°, or negative speeds) is not used, and the status says why.'
+    ].map(t => `<li>${t}</li>`).join('') : '<li>Update the plugin to see these.</li>'
     renderSources()
   }
 

@@ -3,7 +3,7 @@
 const fs = require('fs')
 const path = require('path')
 const { DEFAULTS } = require('./lib/defaults')
-const { process, correctInputs, normalizeConfig, CORRECTIONS, CONFIG_SCHEMA } = require('./lib/processor')
+const { process, correctInputs, normalizeConfig, CORRECTIONS, CONFIG_SCHEMA, MAX_LEEWAY_DEG, LEEWAY_FADE_KN, TWA_TAPER_UP_DEG, TWA_TAPER_DOWN_DEG } = require('./lib/processor')
 
 const MS_TO_KN = 1.94384
 const RAD_TO_DEG = 180 / Math.PI
@@ -26,6 +26,11 @@ const ECHO_MIN_DELTA_MS = 1e-6
 // responsive. Nothing latches; the status says while it is happening.
 const MIN_PUBLISH_INTERVAL_MS = 50
 const RATE_NOTE_MS = 10000 // how long a dropped update keeps the status flagged
+// Below a breath of wind its direction is noise, and a TWD that swings with every puff is
+// worse than none. TWA and TWD stop below LIGHT_AIR_OFF_KN of TWS and resume from
+// LIGHT_AIR_ON_KN; the gap keeps them from flickering on and off around one value.
+const LIGHT_AIR_OFF_KN = 1.5
+const LIGHT_AIR_ON_KN = 2
 
 // Inputs, grouped the way they are chosen in Settings.
 const INPUTS = {
@@ -65,6 +70,8 @@ module.exports = function (app) {
   // Latest value per input path, and every source seen on each input group.
   let latest = {}
   let sourcesSeen = {}
+  let pluginStwSources = new Set() // other plugins seen publishing STW, which auto ignores
+  let lightAir = false
   let lastResult = null
   let lastResultAt = 0
   let lastStatus = ''
@@ -193,7 +200,7 @@ module.exports = function (app) {
     const stw = fresh('navigation.speedThroughWater', now)
     if (awa == null || aws == null) return status('nowind', 'Waiting for apparent wind')
     if (stw == null) {
-      const others = !config.sources.stw && sourcesSeen.stw ? Array.from(sourcesSeen.stw) : []
+      const others = config.sources.stw ? [] : Array.from(pluginStwSources)
       return status('nostw', others.length
         ? `No speed through water from a sensor, only from ${others.join(', ')}. Choose the STW source in Settings`
         : 'Waiting for speed through water — no true wind without it')
@@ -221,11 +228,13 @@ module.exports = function (app) {
     lastResultAt = now
 
     const o = result.out
-    const values = [
-      { path: outPath('twa'), value: o.twa / RAD_TO_DEG },
-      { path: outPath('tws'), value: o.tws / MS_TO_KN }
-    ]
-    if (o.twd != null) values.push({ path: outPath('twd'), value: o.twd / RAD_TO_DEG })
+    lightAir = o.tws < (lightAir ? LIGHT_AIR_ON_KN : LIGHT_AIR_OFF_KN)
+    lastResult.lightAir = lightAir
+    const values = [{ path: outPath('tws'), value: o.tws / MS_TO_KN }]
+    if (!lightAir) {
+      values.push({ path: outPath('twa'), value: o.twa / RAD_TO_DEG })
+      if (o.twd != null) values.push({ path: outPath('twd'), value: o.twd / RAD_TO_DEG })
+    }
     if (config.corrections.leeway.enabled) values.push({ path: outPath('leeway'), value: o.leeway / RAD_TO_DEG })
     if (o.current) values.push({ path: outPath('current'), value: { drift: o.current.drift / MS_TO_KN, setTrue: o.current.set / RAD_TO_DEG } })
     publish(values, timestamp, from)
@@ -233,7 +242,12 @@ module.exports = function (app) {
     const missing = []
     if (input.heel == null) missing.push('heel')
     if (o.twd == null) missing.push('heading')
-    status('running', `${config.mode === 'shadow' ? 'Shadow' : 'Live'} — TWA ${Math.abs(o.twa).toFixed(1)}°, TWS ${o.tws.toFixed(1)} kn, STW ${o.stw.toFixed(2)} kn` +
+    const mode = config.mode === 'shadow' ? 'Shadow' : 'Live'
+    if (lightAir) {
+      status('lightair', `${mode} — light air, TWS ${o.tws.toFixed(1)} kn: TWA and TWD not published until TWS reaches ${LIGHT_AIR_ON_KN} kn`)
+      return
+    }
+    status('running', `${mode} — TWA ${Math.abs(o.twa).toFixed(1)}°, TWS ${o.tws.toFixed(1)} kn, STW ${o.stw.toFixed(2)} kn` +
       (missing.length ? ` · no ${missing.join(' or ')}` : ''))
   }
 
@@ -252,6 +266,7 @@ module.exports = function (app) {
         const src = String(update.$source || '')
         const sensor = fromSensor(update)
         ;(sourcesSeen[group] = sourcesSeen[group] || new Set()).add(src)
+        if (group === 'stw' && !sensor) pluginStwSources.add(src)
         const wanted = config.sources[group]
         if (wanted && src !== wanted) continue
         // Without a chosen source, STW is read from sensors only. Another plugin's STW
@@ -282,6 +297,8 @@ module.exports = function (app) {
     dropsAt = []
     latest = {}
     sourcesSeen = {}
+    pluginStwSources = new Set()
+    lightAir = false
     lastResult = null
     running = true
 
@@ -418,7 +435,7 @@ module.exports = function (app) {
     // for its own options, ahead of the plugin's routes, so ours would never be reached.
     router.get('/calibration', (req, res) => {
       res.set('Cache-Control', 'no-store')
-      res.json({ config: config || normalizeConfig(loadStored()).config, defaults: DEFAULTS })
+      res.json({ config: config || normalizeConfig(loadStored()).config, defaults: DEFAULTS, behaviour: BEHAVIOUR })
     })
 
     router.put('/calibration', async (req, res) => {
@@ -444,5 +461,17 @@ module.exports = function (app) {
   return plugin
 }
 
+// Fixed behaviour the webapp describes, sent from here so its text always matches the code.
+const BEHAVIOUR = {
+  maxLeewayDeg: MAX_LEEWAY_DEG,
+  leewayFadeKn: LEEWAY_FADE_KN,
+  twaTaperUpDeg: TWA_TAPER_UP_DEG,
+  twaTaperDownDeg: TWA_TAPER_DOWN_DEG,
+  lightAirOffKn: LIGHT_AIR_OFF_KN,
+  lightAirOnKn: LIGHT_AIR_ON_KN,
+  staleS: STALE_MS / 1000,
+  maxPublishHz: 1000 / MIN_PUBLISH_INTERVAL_MS
+}
+
 // Exposed for the test suite only; not part of the Signal K plugin API.
-module.exports._internals = { OUTPUTS, INPUTS, SHADOW_SUFFIX, CONFIG_FILE }
+module.exports._internals = { OUTPUTS, INPUTS, SHADOW_SUFFIX, CONFIG_FILE, BEHAVIOUR }

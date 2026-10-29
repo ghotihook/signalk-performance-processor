@@ -79,6 +79,11 @@
         </fieldset>
       </div>
       <div class="panel">
+        <h2>Built-in limits</h2>
+        <p class="muted sub">Fixed in the plugin, so the numbers stay trustworthy at the edges.</p>
+        <ul id="behaviour" class="limits-list muted sub"></ul>
+      </div>
+      <div class="panel">
         <h2>Fallback magnetic variation</h2>
         <p class="muted sub">Used only when nothing on the boat sends true heading or magnetic variation. Normally your GPS supplies variation and this is never used; the Live page shows which applies.</p>
         <label class="field">Degrees east (west negative)
@@ -87,7 +92,7 @@
       </div>
       <div class="panel">
         <h2>Input sources</h2>
-        <p class="muted sub">Choose the instrument to read for each input. "Any" takes every source except this plugin. Pick your instruments, not another correcting plugin, so nothing is corrected twice.</p>
+        <p class="muted sub">Choose the instrument to read for each input. "Any" takes every source except this plugin. For STW the blank choice is "Auto (sensors only)": STW from data connections, never STW another plugin has published. Pick your instruments, not another correcting plugin, so nothing is corrected twice.</p>
         <div id="sources" class="sources"></div>
       </div>
     </section>

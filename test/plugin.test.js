@@ -236,6 +236,28 @@ test('a burst is thinned to 20 Hz, not stopped, and the flag clears', () => {
   assert.doesNotMatch(h.statuses[h.statuses.length - 1], /Rate limited/)
 })
 
+test('light air: TWA and TWD stop below 1.5 kn of TWS and come back from 2 kn', () => {
+  const h = harness({ mode: 'replace' })
+  // Drifting at 0 kn with apparent wind dead ahead: TWS = AWS.
+  const still = [{ path: 'navigation.speedThroughWater', value: 0 }, { path: 'navigation.headingTrue', value: 0 },
+    { path: 'navigation.attitude', value: { roll: 0 } }]
+  const at = kn => paths(h.feed([...still, { path: 'environment.wind.angleApparent', value: 40 * RAD }, { path: 'environment.wind.speedApparent', value: kn / MS_TO_KN }]))
+  const sent = o => ['angleTrueWater', 'directionTrue', 'speedTrue'].filter(k => ('environment.wind.' + k) in o)
+  assert.deepStrictEqual(sent(at(3)), ['angleTrueWater', 'directionTrue', 'speedTrue'])
+  assert.deepStrictEqual(sent(at(1.4)), ['speedTrue'], 'below 1.5 kn: TWS only')
+  assert.match(h.statuses[h.statuses.length - 1], /light air/)
+  assert.deepStrictEqual(sent(at(1.8)), ['speedTrue'], 'still held between 1.5 and 2')
+  assert.deepStrictEqual(sent(at(2.1)), ['angleTrueWater', 'directionTrue', 'speedTrue'], 'back from 2 kn')
+  assert.deepStrictEqual(sent(at(1.6)), ['angleTrueWater', 'directionTrue', 'speedTrue'], 'and stays until below 1.5 again')
+})
+
+test('stale sensor STW is reported as waiting, not blamed on the sensor', () => {
+  const h = harness()
+  h.feed([{ path: 'navigation.speedThroughWater', value: 6 / MS_TO_KN }])
+  h.feed(wind, 'h2000.II', 4000)
+  assert.match(h.statuses[h.statuses.length - 1], /^Waiting for speed through water/)
+})
+
 test('no true wind without STW, and the status says why', () => {
   const h = harness()
   assert.deepStrictEqual(h.feed(wind), [])
@@ -259,6 +281,15 @@ test('GET /calibration returns the boat defaults on a fresh install', async () =
   const r = await h.call('GET', '/calibration')
   assert.strictEqual(r.json.config.corrections.leeway.k, 7.9446)
   assert.strictEqual(r.json.config.mode, 'shadow')
+})
+
+test('GET /calibration sends the built-in limits the webapp describes', async () => {
+  const h = harness()
+  const { json } = await h.call('GET', '/calibration')
+  assert.deepStrictEqual(json.behaviour, {
+    maxLeewayDeg: 15, leewayFadeKn: [1.5, 3], twaTaperUpDeg: 30, twaTaperDownDeg: 10,
+    lightAirOffKn: 1.5, lightAirOnKn: 2, staleS: 3, maxPublishHz: 20
+  })
 })
 
 test('PUT /calibration validates, saves and restarts', async () => {

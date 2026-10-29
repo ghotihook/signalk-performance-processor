@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.0.6 — 2026-10-29
+
+Still a proof of concept: run it in Shadow mode alongside your instruments. Validated against 19 races of 2026 logs; the tables are unchanged.
+
+- **Fix: TWD followed the bow through every tack.** The TWA correction was applied in full right up to head to wind, so any \|TWA\| smaller than the correction read exactly 0° and TWD equalled heading for that part of the tack (correction jumps of up to 22° in a second in race logs). It now fades out over the last 30° to head to wind.
+- **Fix: TWA jumped crossing dead downwind** when the downwind correction was negative (5–7° in 7–12 kn of TWS). It now fades out over the last 10° to dead downwind.
+- The TWA table's values must now be within ±30° (upwind) and ±10° (downwind), and its row angles outside the fades, so corrected TWA always moves with uncorrected TWA.
+- **Fix: leeway snapped from 0° to the 15° cap** as the boat reached 1 kn, and sat at the cap up to about 2.5 kn. It now fades in between 1.5 and 3 kn.
+- **Light air:** below 1.5 kn of TWS, TWA and TWD are not published and the status and Live page say so; they return from 2 kn.
+- **Self-documenting limits:** each correction on the Calibration page lists its built-in limits (TWA fades and value limits, leeway cap and fade-in, STW taper below the first speed column), and Settings lists light air, stale inputs, the rate limit and implausible input. The numbers come from the plugin's own constants via `GET /calibration`, so the text cannot drift from the code.
+- Fix: when STW went stale, the status named the paddlewheel as if it were another plugin. It now names only plugin sources.
+
 ## 0.0.5 — 2026-10-29
 
 Still a proof of concept: run it in Shadow mode alongside your instruments.

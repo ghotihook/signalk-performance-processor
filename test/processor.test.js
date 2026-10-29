@@ -97,6 +97,73 @@ test('TWA table narrows TWA by the table value', () => {
   close(r.tws, plain.tws, 1e-9, 'TWS untouched by the TWA table')
 })
 
+// Stopped boat, so TWA = AWA and TWS = AWS: the TWA correction alone, at any angle.
+function twaOnly (twa, tws) {
+  const config = allOff()
+  config.corrections.twa.enabled = true
+  return process({ awa: twa, aws: tws, stw: 0 }, config).out.twa
+}
+const wrapDeg = d => ((d + 180) % 360 + 360) % 360 - 180
+
+test('TWA correction fades out through head to wind: no flat spot, no jump, TWD never follows the bow', () => {
+  for (const tws of [5, 10, 15, 25]) {
+    let prev = twaOnly(-40, tws)
+    for (let a = -39.9; a <= 40; a += 0.1) {
+      const t = twaOnly(a, tws)
+      assert.ok(t > prev, `TWS ${tws}: corrected TWA must keep rising through ${a.toFixed(1)} (${prev} -> ${t})`)
+      assert.ok(t - prev < 0.25, `TWS ${tws}: no jump at ${a.toFixed(1)}`)
+      prev = t
+    }
+    close(twaOnly(0, tws), 0, 1e-9, 'head to wind stays head to wind')
+  }
+})
+
+test('TWA correction fades out through dead downwind: no jump as TWA crosses 180', () => {
+  for (const tws of [5, 10, 15]) {
+    let prev = twaOnly(150, tws)
+    for (let a = 150.1; a <= 210; a += 0.1) {
+      const t = twaOnly(a > 180 ? a - 360 : a, tws)
+      const step = wrapDeg(t - prev)
+      assert.ok(step > 0 && step < 0.25, `TWS ${tws}: step ${step} at ${a.toFixed(1)}`)
+      prev = t
+    }
+  }
+})
+
+test('TWA correction is in full from 30 degrees off the wind to 10 short of dead downwind', () => {
+  const { _internals: { twaTaper } } = require('../lib/processor')
+  assert.strictEqual(twaTaper(30), 1)
+  assert.strictEqual(twaTaper(170), 1)
+  assert.strictEqual(twaTaper(15), 0.5)
+  assert.strictEqual(twaTaper(175), 0.5)
+  assert.strictEqual(twaTaper(0), 0)
+  assert.strictEqual(twaTaper(180), 0)
+})
+
+test('config: TWA table values must stay inside the taper, and its angles outside it', () => {
+  const bad = (twa, msg) => assert.ok(normalizeConfig({ corrections: { twa } }).errors.some(e => msg.test(e)), msg)
+  bad({ upwind: [-30, -12, -5, -5, 0, null] }, /upwind row: values must be within/)
+  bad({ downwind: [1, -10, 1, null, null, null] }, /downwind row: values must be within/)
+  bad({ angles: { upwind: 20, reach: 100, downwind: 130 } }, /TWA table angles/)
+  bad({ angles: { upwind: 70, reach: 100, downwind: 175 } }, /TWA table angles/)
+})
+
+test('leeway fades in between 1.5 and 3 kn, with no step', () => {
+  const { config } = normalizeConfig({})
+  config.corrections.stw.enabled = false
+  const lee = stw => correctInputs({ stw, heel: 15 }, config).c.leeway
+  assert.strictEqual(lee(1.5), 0)
+  assert.strictEqual(lee(0.5), 0)
+  close(lee(3), 7.9446 * 15 / 9, 1e-9, 'in full from 3 kn')
+  close(lee(6), 7.9446 * 15 / 36, 1e-9)
+  let prev = lee(0)
+  for (let v = 0.01; v <= 8; v += 0.01) {
+    const l = lee(v)
+    assert.ok(Math.abs(l - prev) < 0.2, `leeway steps ${prev} -> ${l} at ${v.toFixed(2)} kn`)
+    prev = l
+  }
+})
+
 test('TWS table adds knots, downwind only with the defaults (blank = no correction)', () => {
   const config = allOff()
   config.corrections.tws.enabled = true
