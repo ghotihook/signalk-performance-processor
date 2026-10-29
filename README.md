@@ -8,7 +8,7 @@ If your TWD swings 5–10° every time you tack or gybe, the wind hasn't shifted
 
 This plugin does the calibration job of a B&G H5000-class instrument processor inside Signal K. It corrects boat speed and leeway, then applies H5000-style TWA and TWS correction tables, and publishes corrected true wind and current. You edit everything in a webapp and can watch each correction work live. Run it in **Shadow mode** first: it publishes alongside your existing instruments without changing anything they do.
 
-> **Proof of concept (0.1.0).** Compare it against your instruments in Shadow mode before relying on it. See the [changelog](CHANGELOG.md).
+> **Proof of concept (0.1.1).** Compare it against your instruments in Shadow mode before relying on it. See the [changelog](CHANGELOG.md).
 
 ## Why it exists
 
@@ -29,16 +29,15 @@ This plugin moves the calibration into Signal K, where you can see it, change it
 
 ### On the boat it was built for
 
-From the offline model the defaults were fitted with: trained on 2025 race logs, tested on Jan–Mar 2026 races it had not seen, and measured by how far true wind direction jumps through each manoeuvre (median). The shipped defaults differ (the owner's leeway K, full STW table and TWA table from a later calibration fit), so treat these as an indication, not a guarantee.
+The defaults were fitted with boatcal's `plugincal` on every labelled race leg from January 2025 to March 2026, and checked by holding out each day in turn: each day is scored with tables fitted without it. The score is how far true wind direction jumps across each manoeuvre (median), against the H2000's own TWA and heading on the same manoeuvres:
 
-| | Uncorrected | Instrument (H2000) | This plugin |
+| | Uncorrected | Instrument (H2000) | This plugin, held out |
 |---|---|---|---|
-| Tacks (41) | 6.2° | 2.5° | 2.2° |
-| Gybes (5) | 2.4° | 4.7° | 1.1° |
-| Roundings (38) | 9.3° | 9.7° | 7.3° |
-| Current step through manoeuvres | 0.65 kn | 0.65 kn | 0.37 kn |
+| Tacks (158) | 19.9° | 8.2° | **6.7°** |
+| Gybes (27) | 7.7° | 9.6° | **4.7°** |
+| Correction still needed on tacks | −10.4° | −2.2° | **−0.4°** |
 
-These figures are one boat's, and the defaults are that boat's. On a different boat, start from the defaults in Shadow mode and refit. After the boat's own rig and log changes in late 2026, the defaults needed refitting too.
+After the boat's rig tune in September 2026 and the H2000's reset in October, the boat needs a different calibration (roughly half the upwind TWA correction). On the three clean days since (13, 20 and 25 October, which the defaults never saw), these defaults over-correct TWA by about 3.5° and the H2000's new table is ahead: tacks 5.8° against 3.2°, gybes 9.4° against 4.2°. Three days are not yet enough to fit the boat as it is now. These figures are one boat's, and the defaults are that boat's as it was. On any boat, start in Shadow mode and refit with `plugincal`.
 
 ## Who it's for
 
@@ -124,25 +123,25 @@ All configuration lives in the webapp. It is saved to `config.json` in the plugi
 
 What a fresh install starts with. Every value can be changed in the webapp.
 
-- **STW (kn added):** the owner's measured heel × STW table, resampled onto the H5000 layout (port and starboard averaged):
+- **STW (kn added)**, from the GPS (blank = too little data, filled from the nearest value in its row; relative to the H2000's boat speed setting then in force, 4.24):
 
   | Heel \ STW (kn) | 0 | 5 | 10 | 15 | 20 | 25 | 30 |
   |---|---|---|---|---|---|---|---|
-  | 0° | 0 | +0.05 | 0 | 0 | 0 | 0 | 0 |
-  | 10° | 0 | +0.01 | −0.03 | −0.03 | −0.03 | −0.03 | −0.03 |
-  | 20° | 0 | −0.08 | −0.13 | −0.13 | −0.13 | −0.13 | −0.13 |
+  | 0° | +0.60 | 0 | +0.07 | | | | |
+  | 10° | +0.57 | +0.03 | +0.12 | | | | |
+  | 20° | | −0.20 | −0.15 | | | | |
 
-  Blank cells are filled from the nearest value in their row.
+  The 0 kn column is the paddlewheel reading low when slow; it fades out below 1 kn.
 - **Leeway:** K = 7.9446, one value for every sail.
-- **TWA table (°)**, from the owner's calibration fit (blank = too little data). That fit was made for rows at 70°, 100° and 130°; refit it for the H5000 rows with `plugincal`:
+- **TWA table (°)** (blank = too little data):
 
   | TWA \ TWS (kn) | 0 | 5 | 10 | 15 | 20 | 25 | 30 |
   |---|---|---|---|---|---|---|---|
-  | 40° | 0 | −7.6 | −12.6 | −5.8 | −5.7 | +0.2 | |
-  | 90° | 0 | −2.4 | −4.4 | −5.4 | +1.4 | +3.9 | +1.0 |
-  | 165° | 0 | +1.2 | −3.5 | +1.0 | | | |
+  | 40° | 0 | −9.1 | −13.3 | −7.0 | −5.0 | −0.6 | |
+  | 90° | 0 | −9.8 | −15.4 | −8.5 | −3.8 | | |
+  | 165° | 0 | +2.8 | +0.7 | −4.5 | −0.2 | | |
 
-  A blank TWA cell uses the measured cells either side, holding the nearest one at the ends. The 0 kn column fades the correction out in no wind, as on the H5000.
+  A blank TWA cell uses the measured cells either side, holding the nearest one at the ends. The 0 kn column fades the correction out in no wind, as on the H5000. The 90° row is the least certain: few reaching manoeuvres, so tacks at 45–55° and its tie to the 40° row set most of it.
 - **TWS table (kn):** off. Correction 0, −0.5, −1, −1.5, −2, −2.5, −3 (−10% of each column), down angle 165° throughout.
 - **Fallback variation:** 12.8° E, used only when nothing on the boat sends true heading or magnetic variation. The Live page shows which applies.
 

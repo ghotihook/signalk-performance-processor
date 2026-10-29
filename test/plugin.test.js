@@ -93,7 +93,7 @@ test('shadow mode publishes …Corrected paths with units', () => {
   const h = harness()
   h.feed(boat)
   const out = paths(h.feed(wind))
-  assert.ok(Math.abs(Math.abs(out['environment.wind.angleTrueWaterCorrected']) / RAD - 39.1) < 0.05)
+  assert.ok(Math.abs(Math.abs(out['environment.wind.angleTrueWaterCorrected']) / RAD - 37.2) < 0.05)
   assert.ok(Math.abs(out['environment.wind.speedTrueCorrected'] * MS_TO_KN - 13.0) < 0.1)
   assert.ok('environment.wind.directionTrueCorrected' in out)
   assert.ok('navigation.leewayAngleCorrected' in out)
@@ -114,7 +114,7 @@ test('replace mode publishes the standard paths', () => {
 test('corrected STW goes out when the paddlewheel reports', () => {
   const h = harness({ mode: 'replace' })
   const out = paths(h.feed([{ path: 'navigation.attitude', value: { roll: -20 * RAD } }, { path: 'navigation.speedThroughWater', value: 6 / MS_TO_KN }]))
-  assert.ok(Math.abs(out['navigation.speedThroughWater'] * MS_TO_KN - (6 - 0.08 - 0.2 * 0.05)) < 1e-6)
+  assert.ok(Math.abs(out['navigation.speedThroughWater'] * MS_TO_KN - (6 - 0.2 + 0.2 * 0.05)) < 1e-6)
 })
 
 test('ignores its own output, however the source is spelled', () => {
@@ -396,6 +396,6 @@ test('publishes one TWA per update: the corrected one, never the working value',
   const twa = values.filter(v => v.path.startsWith('environment.wind.angleTrue'))
   assert.strictEqual(twa.length, 1, 'exactly one TWA value')
   assert.strictEqual(twa[0].path, 'environment.wind.angleTrueWaterCorrected')
-  // Before the table the TWA is ~47°; after it ~39.1°. Only the latter goes out.
-  assert.ok(Math.abs(Math.abs(twa[0].value) / RAD - 39.1) < 0.05)
+  // Before the table the TWA is ~47°; after it ~37.2°. Only the latter goes out.
+  assert.ok(Math.abs(Math.abs(twa[0].value) / RAD - 37.2) < 0.05)
 })

@@ -55,8 +55,8 @@ test('port and starboard are mirror images', () => {
 })
 
 test('STW: H5000 layout, heel either side x boat speed, exact at its cells, bilinear between', () => {
-  const { config } = normalizeConfig({})
-  const t = config.corrections.stw
+  const t = { heel: [0, 10, 20], stw: [0, 5, 10, 15, 20, 25, 30], add: [[0, 0.05, 0, 0, 0, 0, 0], [0, 0.01, -0.03, -0.03, -0.03, -0.03, -0.03], [0, -0.08, -0.13, -0.13, -0.13, -0.13, -0.13]] }
+  const config = { corrections: { stw: { enabled: true, ...t } } }
   close(stwGridLookup(t, 0, 5), 0.05, 1e-9, 'cell heel 0, 5 kn')
   close(stwGridLookup(t, -20, 10), -0.13, 1e-9, 'port heel uses the same row as starboard')
   close(stwGridLookup(t, 20, 10), -0.13, 1e-9)
@@ -215,10 +215,10 @@ test('a still current is reported as still', () => {
 test('the worked example from the model', () => {
   const { config } = normalizeConfig({})
   const r = process({ awa: 32, aws: 16.9, stw: 5.6, heel: -23, headingMagnetic: 110, sog: 5.4, cog: 119 }, config).out
-  close(r.stw, 5.514, 0.001)
-  close(r.leeway, -7.9446 * 23 / (5.514 * 5.514), 0.001)
-  close(Math.abs(r.twa), 39.1, 0.05)
-  close(r.tws, 13.01, 0.05)
+  close(r.stw, 5.6 - 0.2 + 0.05 * 0.6 / 5, 0.001)
+  close(r.leeway, -7.9446 * 23 / (5.406 * 5.406), 0.001)
+  close(Math.abs(r.twa), 37.2, 0.05)
+  close(r.tws, 13.09, 0.05)
 })
 
 test('config: strings from forms become numbers, sources stay text', () => {

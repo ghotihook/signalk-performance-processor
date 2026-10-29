@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1 — 2026-10-29
+
+- **Defaults fitted for the H5000 layout.** The STW and TWA tables are now boatcal `plugincal` 1.2.0's fit on every labelled race leg from January 2025 to March 2026 (158 tacks, 27 gybes). Held out by day it beats the H2000 on tacks (6.7° against 8.2°) and gybes (4.7° against 9.6°). 0.1.0's defaults were the older values carried onto the new rows, never fitted for them. This is the boat before its 2026 rig tune and H2000 reset: on the three clean days since, which it never saw, it over-corrects TWA by about 3.5° and the H2000 is ahead, so refit for the boat as it is now. Defaults apply on a fresh install or Reset to defaults; a saved configuration is not changed.
+- README: the results table is plugincal's held-out comparison against the H2000.
+
 ## 0.1.0 — 2026-10-29
 
 Still a proof of concept: run it in Shadow mode alongside your instruments. **Saved configurations are upgraded to schema 3, the H5000 layout; refit the TWA table** (boatcal `plugincal`), because its rows now sit at different angles.
