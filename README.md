@@ -2,22 +2,26 @@
 
 # signalk-performance-processor
 
-**True wind direction that holds steady when you tack.**
+**Steady true wind direction through tacks and gybes: true wind calibrated in Signal K, the way a B&G H5000 does it.**
 
-If your TWD swings 5–10° every time you tack or gybe, the wind hasn't shifted: your true wind calibration is off. It makes real shifts hard to call, puts laylines in the wrong place, and feeds bad numbers into your polars and targets.
+**The problem.** If your TWD swings 5–10° every time you tack or gybe, the wind hasn't shifted: your true wind is miscalibrated. True wind is worked out from apparent wind, boat speed and heading, so it inherits their errors. The masthead reads a bent airflow upwind, the paddlewheel misreads when heeled, and neither error is the same on both tacks. You can't call real shifts, laylines land in the wrong place, and polars and targets get bad numbers.
 
-This plugin does the calibration job of a B&G H5000 inside Signal K, with the H5000's tables in the H5000's layout. It corrects boat speed, works out true wind, applies the TWA and TWS tables, damps the result and publishes it, with leeway, current and ground wind. You edit everything in a webapp and can watch each correction work live. The tables are fitted from your own logs by boatcal's [`plugincal`](https://github.com/ghotihook/boatcal/tree/main/plugincal). What changed in each release is in the [changelog](CHANGELOG.md).
+**What it does.** It works out true wind again in Signal K from the raw apparent wind, boat speed and heading, and corrects it as an H5000 does: a boat speed / heel table, then TWA and TWS correction tables, then damping. It publishes corrected TWA, TWS and TWD, with boat speed, leeway, current and ground wind.
 
-## Why
+**How it is calibrated.** From your own sailing. TWD should not change when the boat tacks or gybes, so every manoeuvre in your logs measures how far TWA is out; boatcal's [`plugincal`](https://github.com/ghotihook/boatcal/tree/main/plugincal) fits the tables from them, and the GPS fits the boat speed table. Paste the result into the webapp, watch each step work live, and run it in **Shadow mode** beside your instruments until you trust it.
 
-True wind is worked out from apparent wind, boat speed and heading, so it inherits every error in them: the masthead reads a bent airflow upwind, the paddlewheel misreads when heeled, and none of it is the same on both tacks. That is why an uncalibrated TWD jumps through every tack.
+![The Live page: one row per value sent to Signal K, each step with its value now](docs/screenshots/live.png)
 
-Instrument processors fix this with tables, but the tables are locked in the box: edited through display menus, invisible while sailing, with no history. Older systems have less (an H2000's TWS correction is downwind only), and a single upwash formula cannot follow a boat whose correction is twice as big in light air as in a breeze. This plugin puts the H5000's tables in Signal K, where you can see them, log them and fit them from race data:
+## Why in Signal K
+
+Instrument processors correct true wind with tables too, but the tables are locked in the box: edited through display menus, invisible while sailing, with no history. Older systems have less (an H2000's TWS correction is downwind only), and a single upwash formula cannot follow a boat whose correction is twice as big in light air as in a breeze. Here the H5000's tables are in Signal K, where you can see them, log them and fit them from race data:
 
 - **An H5000 calibration carries across cell for cell**, and the H5000 rule ("TWD lifts on every tack: take half the error off TWA") works unchanged.
 - **Every correction has a switch and a live readout.**
 - **The calibration is a JSON file**, easy to back up, compare and fit offline.
 - **It is safe to try:** Shadow mode publishes `…Corrected` paths and changes nothing else.
+
+What changed in each release is in the [changelog](CHANGELOG.md).
 
 ## On the boat it was built for
 
@@ -129,6 +133,13 @@ Everything is published under this plugin's own `$source`: STW each time the pad
 ## The webapp
 
 Open **Webapps → Performance Processor**.
+
+| | |
+|---|---|
+| ![Calibration: the TWA table, in the H5000 layout](docs/screenshots/calibration-twa.png) | ![Calibration: the boat speed / heel table](docs/screenshots/calibration-stw.png) |
+| ![Settings: output mode, damping, input sources](docs/screenshots/settings.png) | ![The Live page in dark mode](docs/screenshots/live-dark.png) |
+
+On a phone each chain stacks: ![The Live page on a phone](docs/screenshots/live-phone.png)
 
 - **Live**: the published values, with the undamped and uncorrected ones under them; the pipeline, one chain per value sent: what it uses, each step with its value now and what it changed, the damping, and on the right what is sent (switched-off steps dashed), and under **Step by step** the same as a table; every path sent; each input's source and age.
 - **Calibration**: the corrections in pipeline order, each with an on/off switch and its editor. Table headings are fixed (the H5000 layout); blank cells are allowed where a table says so. **Paste a table** reads the text `plugincal` prints (or the same from a spreadsheet); **Copy this table** writes it. **Reset to defaults** puts back the defaults for that correction. **Save** to apply.

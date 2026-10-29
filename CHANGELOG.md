@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.4 — 2026-10-30
+
+- **The pipeline's boxes are all one size and stay put.** Each box is fixed in size, so nothing moves as the values change: a long value is cut with "…" and a long note stops after two lines, with the whole note on hover. Damping is a box like the others ("Damping, 3 s"), and the sent values sit in boxes of one size on the right.
+- **Screenshots** for the README and the Signal K App Store (`signalk.screenshots`): the Live page (light, dark and phone), the TWA and boat speed tables, and Settings, in `docs/screenshots/`.
+- **The description says what it is for**: the problem (TWD swinging through tacks and gybes), what it does (true wind calibrated in Signal K the way an H5000 does) and how it is calibrated (from your own sailing), before the features. In `package.json` and at the top of the README.
+- **The App Store icon**: `icon.svg` is now also at the package root, where `appIcon` points.
+
 ## 0.2.3 — 2026-10-30
 
 - **No longer marked a proof of concept**: the README's banner is gone (the advice to start in Shadow mode stays, in Calibrating your boat), and the changelog link moves into the introduction.

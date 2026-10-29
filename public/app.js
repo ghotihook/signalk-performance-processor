@@ -216,7 +216,7 @@
     const side = v => v < 0 ? 'port' : 'stbd'
     const angle = v => `${fmt(Math.abs(v))}° ${side(v)}`
     const change = (v, d) => (v > 0 ? '+' : v < 0 ? '−' : '±') + Math.abs(v).toFixed(d)
-    const damping = s => ({ label: s ? `damped ${s} s` : 'undamped', cls: 'damp' })
+    const damping = s => ({ label: 'Damping', value: s ? `${s} s` : 'none', cls: 'damp' })
     const before = trueWind(i, o.stw)
     const held = r.lightAir
     // Inputs: from a sensor, or made by another chain.
@@ -252,7 +252,7 @@
       },
       {
         name: 'True wind',
-        inputs: [sensor('Apparent wind', `${angle(i.awa)} · ${fmt(i.aws)} kn`), stw],
+        inputs: [sensor('Apparent wind', angle(i.awa), `${fmt(i.aws)} kn`), stw],
         steps: [
           { label: 'Apparent − boat', value: `${fmt(Math.abs(before.twa))}° · ${fmt(before.tws)} kn`, note: 'STW along the heading, no leeway' },
           // The tables' own account, including how much of the row applies where they
@@ -268,7 +268,7 @@
         inputs: [from('TWA', `${fmt(Math.abs(o.twa))}°`, 'true wind'), heading],
         steps: o.twd == null
           ? [{ label: 'No TWD', value: '--', note: 'TWA damped on its own', cls: 'off' }, damping(dm.trueWindS)]
-          : [{ label: 'Heading + TWA', value: `${fmt(o.twd, 0)}° T` }, damping(dm.trueWindS), { label: '− heading', value: 'TWA', cls: 'damp' }],
+          : [{ label: 'Heading + TWA', value: `${fmt(o.twd, 0)}° T` }, damping(dm.trueWindS), { label: 'TWD − heading', value: 'TWA', note: 'answers the helm at once' }],
         out: held
           ? { lines: ['TWA and TWD held'], note: 'light air', cls: 'off' }
           : { lines: [o.twd == null ? `TWA ${angle(p.twa)}` : `TWD ${fmt(p.twd, 0)}° T`, ...(o.twd == null ? [] : [`TWA ${angle(p.twa)}`])], note: o.twd == null ? null : `TWA = ${twdNote}` }
@@ -297,8 +297,10 @@
   }
 
   function renderFlow (live) {
-    const chip = c => `<div class="fchip ${c.cls || ''}"><div class="l">${esc(c.label)}</div>` +
-      (c.value ? `<div class="v">${esc(c.value)}</div>` : '') + (c.note ? `<div class="n">${esc(c.note)}</div>` : '') + '</div>'
+    // Every box is the same size, so nothing moves as the values change: a long note is cut
+    // to two lines, with the whole of it on hover.
+    const chip = c => `<div class="fchip ${c.cls || ''}"${c.note ? ` title="${esc(c.note)}"` : ''}><div class="l">${esc(c.label)}</div>` +
+      `<div class="v">${esc(c.value || '')}</div>` + (c.note ? `<div class="n">${esc(c.note)}</div>` : '') + '</div>'
     $('flow').innerHTML = flowChains(live).map(ch =>
       `<div class="chain"><div class="cname">${esc(ch.name)}</div>` +
       `<div class="cin">${ch.inputs.map(chip).join('')}</div>` +

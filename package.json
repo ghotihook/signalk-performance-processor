@@ -1,7 +1,7 @@
 {
   "name": "signalk-performance-processor",
-  "version": "0.2.3",
-  "description": "True wind direction that holds steady through tacks and gybes. The B&G H5000's calibration tables and damping in Signal K: boat speed, TWA and TWS tables, fitted from your logs by boatcal plugincal, edited and watched live in a webapp. Try it in shadow mode beside your instruments.",
+  "version": "0.2.4",
+  "description": "Stops true wind direction swinging every time you tack or gybe. Calibrates true wind in Signal K the way a B&G H5000 does: boat speed, TWA and TWS correction tables fitted from your own sailing logs, then damping, with every step shown live in a webapp.",
   "main": "index.js",
   "scripts": {
     "test": "node --test",
@@ -22,12 +22,22 @@
   "signalk-plugin-enabled-by-default": false,
   "signalk": {
     "displayName": "Performance Processor",
-    "appIcon": "./icon.svg"
+    "appIcon": "./icon.svg",
+    "screenshots": [
+      "./docs/screenshots/live.png",
+      "./docs/screenshots/calibration-twa.png",
+      "./docs/screenshots/calibration-stw.png",
+      "./docs/screenshots/live-phone.png",
+      "./docs/screenshots/live-dark.png",
+      "./docs/screenshots/settings.png"
+    ]
   },
   "files": [
     "index.js",
+    "icon.svg",
     "lib/",
     "public/",
+    "docs/screenshots/",
     "CHANGELOG.md"
   ],
   "engines": {
