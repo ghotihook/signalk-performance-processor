@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.2 — 2026-10-30
+
+- **Ground wind**: the wind over the ground, true wind plus current, so the tables apply to it too. Published as `environment.wind.speedOverGround`, `angleTrueGround` and `directionGround` (the last is not in the Signal K schema, so it carries `meta`; in Shadow mode all three get the `Corrected` suffix), damped as true wind, with direction and angle held back in light air.
+- **The Live pipeline as one chain per value sent**, checked against the code: each row reads left to right, what it uses, each step with its value now, the damping, and on the far right what is sent. A value made by another chain is marked "from boat speed" and so on, instead of a crossing line. So heel and corrected STW go into leeway; corrected STW, leeway, heading and SOG/COG into current; STW is sent from the STW table; and TWA is sent as the damped TWD less the heading. On a narrow screen each chain stacks. The README has the same chains as a table.
+- **Releases on GitHub carry their changelog section.** A new workflow (`release.yml`, Linux, seconds) makes a GitHub release for each version tag, its notes that version's section of this file; run it by hand to add one for an existing tag.
+- **The TWS table says how it blends in.** The Calibration page explains that it ramps in with TWA rather than switching on, with a worked example from the values being edited ("at 10 kn TWS: nothing at 90° TWA or less, −0.50 kn at 128°, the full −1.00 kn from 165° to 180°"), and that a down angle near 90° makes the ramp short and steep. On the Live diagram the TWA and TWS table boxes show the table's own account, including how much of the row applies while it blends in or fades out.
+
 ## 0.2.1 — 2026-10-30
 
 ### Added

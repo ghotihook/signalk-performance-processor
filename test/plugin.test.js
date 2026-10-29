@@ -100,6 +100,7 @@ test('shadow mode publishes …Corrected paths with units', () => {
   assert.ok('environment.wind.directionTrueCorrected' in out)
   assert.ok('navigation.leewayAngleCorrected' in out)
   assert.ok(out['environment.currentCorrected'].drift >= 0)
+  for (const p of ['speedOverGround', 'angleTrueGround', 'directionGround']) assert.ok(`environment.wind.${p}Corrected` in out, `ground wind ${p}`)
   assert.ok(!('environment.wind.speedTrue' in out), 'standard paths untouched in shadow mode')
   assert.ok(h.meta.includes('environment.wind.speedTrueCorrected'))
 })
@@ -110,7 +111,8 @@ test('replace mode publishes the standard paths', () => {
   const out = paths(h.feed(wind))
   assert.ok('environment.wind.angleTrueWater' in out)
   assert.ok('environment.wind.speedTrue' in out)
-  assert.strictEqual(h.meta.length, 0)
+  assert.ok('environment.wind.speedOverGround' in out)
+  assert.deepStrictEqual(h.meta, ['environment.wind.directionGround'], 'meta only for the path the schema lacks')
 })
 
 test('corrected STW goes out when the paddlewheel reports', () => {
@@ -444,7 +446,7 @@ test('publishes one TWA per update: the corrected one, never the working value',
   const h = harness()
   h.feed(boat)
   const values = h.feed(wind).flatMap(o => o.values)
-  const twa = values.filter(v => v.path.startsWith('environment.wind.angleTrue'))
+  const twa = values.filter(v => v.path.startsWith('environment.wind.angleTrueWater'))
   assert.strictEqual(twa.length, 1, 'exactly one TWA value')
   assert.strictEqual(twa[0].path, 'environment.wind.angleTrueWaterCorrected')
   // Before the table the TWA is ~45°; after it ~36.7°. Only the latter goes out.

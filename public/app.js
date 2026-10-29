@@ -24,8 +24,10 @@
       'Beyond the first and last TWS columns, the end values are held.'
     ],
     tws: b => [
-      `Downwind only: no correction below ${b.twsNoneBelowDeg}° TWA, in full from the down angle for that TWS, linear between.`,
-      'Never takes TWS below 0. Beyond the first and last TWS columns, the end values are held.'
+      `Ramps in with TWA, never a step: none at ${b.twsNoneBelowDeg}° TWA or less, rising in a straight line to the full correction at the down angle, and full from there to 180°, so nothing changes through a gybe.`,
+      `Each down angle must be above ${b.twsNoneBelowDeg}°. The closer it is to ${b.twsNoneBelowDeg}°, the shorter and steeper the ramp.`,
+      'Between TWS columns the correction and the down angle are interpolated in a straight line; beyond the first and last columns the end values are held.',
+      'Never takes TWS below 0.'
     ]
   }
 
@@ -34,7 +36,7 @@
     stw: { name: 'Boat speed (STW)', what: 'Knots added to the paddlewheel by heel (rows, either side) and boat speed (columns): the H5000 boat speed / heel table. Blank cells are filled from the nearest value in their row. Applied before anything else uses STW.' },
     leeway: { name: 'Leeway', what: 'Sideways slip: leeway = K × heel ÷ STW². Published, and used for current. Not used in true wind: the TWA table takes up its effect.' },
     twa: { name: 'TWA table', what: 'Degrees added to |TWA| by TWS, in rows at TWA 40°, 90° and 165°: the H5000 TWA correction table. Negative = TWA was reading too wide.' },
-    tws: { name: 'TWS table', what: 'Knots added to TWS by TWS, downwind: the H5000 TWS correction and its down angle. Blank = no correction. The default is −10% of each column.' }
+    tws: { name: 'TWS table', what: 'Knots added to TWS downwind, by TWS: the H5000 TWS correction. It ramps in with TWA rather than switching on: none at 90° or less, the full correction from the down angle (165° by default). Blank = no correction. The default is −10% of each column.' }
   }
 
   // The tables' text format (tables.js): what Paste a table reads and Copy writes.
@@ -156,6 +158,7 @@
     } else value = el.value
     setPath(el.dataset.path, value)
     renderSaveBar()
+    if (el.dataset.path.startsWith('corrections.tws.') && $('twsExample')) $('twsExample').textContent = twsExample(state.draft.corrections.tws)
     if (el.type === 'checkbox' || el.type === 'radio' || el.tagName === 'SELECT') renderAll()
   }
 
@@ -198,25 +201,11 @@
     return { twa: Math.atan2(y, x) * 180 / Math.PI, tws: Math.hypot(x, y) }
   }
 
-  // The pipeline as a diagram: one lane each for boat speed, true wind and direction,
-  // inputs on the left, published values on the right. Each box is [id, step, lane]; on
-  // a narrow screen the diagram turns on its side, lanes becoming columns.
-  const FLOW_NODES = [
-    ['paddle', 0, 0], ['wind', 0, 1], ['heading', 0, 2],
-    ['stw', 1, 0], ['leeway', 2, 0], ['current', 3, 0],
-    ['truewind', 2, 1], ['twa', 3, 1], ['tws', 4, 1],
-    ['twd', 3, 2],
-    ['outSpeed', 5, 0], ['outWind', 5, 1], ['outDir', 5, 2]
-  ]
-  const FLOW_EDGES = [
-    ['paddle', 'stw'], ['stw', 'leeway'], ['leeway', 'current'], ['current', 'outSpeed'],
-    ['wind', 'truewind'], ['stw', 'truewind'], ['truewind', 'twa'], ['twa', 'tws'], ['tws', 'outWind'],
-    ['heading', 'twd'], ['twa', 'twd'], ['twd', 'outDir']
-  ]
-  const FLOW_NARROW_PX = 900
-
-  // What each box says: { title, value or lines, sub, cls }.
-  function flowContent (live) {
+  // The pipeline, one chain per value sent to Signal K, read left to right: what it uses,
+  // each step with its value now, the damping, and on the far right what is sent. Every
+  // input is one the code uses (lib/processor.js, and the damping in index.js); a value
+  // made by another chain is marked with that chain's name instead of a crossing line.
+  function flowChains (live) {
     const r = live.result
     const o = r.out
     const p = r.published || o
@@ -225,82 +214,97 @@
     const on = id => !!(state.saved && state.saved.corrections[id] && state.saved.corrections[id].enabled)
     const step = id => r.steps.find(s => s.id === id) || {}
     const side = v => v < 0 ? 'port' : 'stbd'
+    const angle = v => `${fmt(Math.abs(v))}° ${side(v)}`
     const change = (v, d) => (v > 0 ? '+' : v < 0 ? '−' : '±') + Math.abs(v).toFixed(d)
-    const damped = s => s ? `damped ${s} s` : 'undamped'
+    const damping = s => ({ label: s ? `damped ${s} s` : 'undamped', cls: 'damp' })
     const before = trueWind(i, o.stw)
-    // A correction's box: off, skipped (and why), or its result and what it changed.
-    const corr = (id, title, value, sub) => {
+    const held = r.lightAir
+    // Inputs: from a sensor, or made by another chain.
+    const sensor = (label, value, note) => ({ label, value, note, cls: 'sensor' })
+    const from = (label, value, chain) => ({ label, value, note: `from ${chain}`, cls: 'from' })
+    const missing = (label, note) => ({ label, value: 'none', note, cls: 'off' })
+    // A correction step: off, skipped (and why), or what it did.
+    const corr = (id, label, value, note) => {
       const s = step(id)
-      if (!s.enabled) return { title, value: 'off', cls: 'off' }
-      if (s.skipped) return { title, value: '--', sub: s.skipped, cls: 'off' }
-      return { title, value, sub }
+      if (!s.enabled) return { label, value: 'off', note: 'passes the value through', cls: 'off' }
+      if (s.skipped) return { label, value: '--', note: s.skipped, cls: 'off' }
+      return { label, value, note }
     }
-    const held = 'not sent: light air'
-    const speed = [
-      on('stw') && p.stw != null ? `STW ${fmt(p.stw, 2)} kn` : null,
-      on('leeway') ? `Leeway ${fmt(Math.abs(o.leeway))}° ${side(o.leeway)}` : null,
-      p.current ? `Current ${fmt(p.current.drift, 2)} kn → ${fmt(p.current.set, 0)}°` : null
-    ].filter(Boolean)
-    return {
-      paddle: { title: 'Paddlewheel', value: `${fmt(i.stw, 2)} kn`, sub: i.heel == null ? 'no heel' : `heel ${fmt(Math.abs(i.heel), 0)}° ${side(i.heel)}, ${damped(dm.heelS)}`, cls: 'input' },
-      wind: { title: 'Apparent wind', value: `${fmt(Math.abs(i.awa))}° ${side(i.awa)}`, sub: `${fmt(i.aws)} kn`, cls: 'input' },
-      heading: o.heading == null
-        ? { title: 'Heading', value: '--', sub: 'none: no TWD or current', cls: 'input off' }
-        : { title: 'Heading', value: `${fmt(o.heading, 0)}° T`, sub: `${headingNote(o)}, ${damped(dm.headingS)}`, cls: 'input' },
-      stw: corr('stw', 'STW table', `${fmt(o.stw, 2)} kn`, `${change(o.stw - i.stw, 2)} kn`),
-      leeway: corr('leeway', 'Leeway', `${fmt(Math.abs(o.leeway))}° ${side(o.leeway)}`, 'K × heel ÷ STW²'),
-      current: o.current
-        ? { title: 'Current', value: `${fmt(o.current.drift, 2)} kn → ${fmt(o.current.set, 0)}°`, sub: 'SOG, COG − water' }
-        : { title: 'Current', value: '--', sub: 'needs heading, SOG and COG', cls: 'off' },
-      truewind: { title: 'True wind', value: `${fmt(Math.abs(before.twa))}° · ${fmt(before.tws)} kn`, sub: 'before the tables' },
-      twa: corr('twa', 'TWA table', `${fmt(Math.abs(o.twa))}°`, `${change(Math.abs(o.twa) - Math.abs(before.twa), 1)}°`),
-      tws: corr('tws', 'TWS table', `${fmt(o.tws)} kn`, `${change(o.tws - before.tws, 1)} kn`),
-      twd: o.twd == null
-        ? { title: 'TWD', value: '--', sub: 'no heading', cls: 'off' }
-        : { title: 'TWD', value: `${fmt(o.twd, 0)}° T`, sub: 'heading + TWA' },
-      outSpeed: { title: 'Published', lines: speed.length ? speed : ['nothing'], sub: `STW ${damped(dm.stwS)}, current ${damped(dm.currentS)}`, cls: 'pub' },
-      outWind: { title: 'Published', lines: [r.lightAir ? `TWA ${held}` : `TWA ${fmt(Math.abs(p.twa))}° ${side(p.twa)}`, `TWS ${fmt(p.tws)} kn`], sub: damped(dm.trueWindS), cls: 'pub' },
-      outDir: { title: 'Published', lines: [p.twd == null ? 'TWD: no heading' : r.lightAir ? `TWD ${held}` : `TWD ${fmt(p.twd, 0)}° T`], sub: damped(dm.trueWindS), cls: 'pub' }
-    }
+    const notSent = why => ({ lines: ['not sent'], note: why, cls: 'off' })
+
+    const heel = i.heel == null ? missing('Heel', 'upright row, no leeway') : sensor('Heel', `${fmt(Math.abs(i.heel), 0)}° ${side(i.heel)}`, `damped ${dm.heelS} s`)
+    const heading = o.heading == null ? missing('Heading', 'no TWD, current or ground wind') : sensor('Heading', `${fmt(o.heading, 0)}° T`, `${headingNote(o)}, damped ${dm.headingS} s`)
+    const stw = from('STW', `${fmt(o.stw, 2)} kn`, 'boat speed')
+    const twdNote = 'damped TWD − heading'
+
+    return [
+      {
+        name: 'Boat speed',
+        inputs: [sensor('Paddlewheel', `${fmt(i.stw, 2)} kn`, 'raw'), heel],
+        steps: [corr('stw', 'STW table', `${change(o.stw - i.stw, 2)} kn`, i.heel == null ? 'upright row' : `at ${fmt(Math.abs(i.heel), 0)}° heel`), damping(dm.stwS)],
+        out: on('stw') && p.stw != null ? { lines: [`STW ${fmt(p.stw, 2)} kn`] } : notSent('STW table off: the paddlewheel is used as it is')
+      },
+      {
+        name: 'Leeway',
+        inputs: [heel, stw],
+        steps: [corr('leeway', 'K × heel ÷ STW²', angle(o.leeway), `K ${state.saved ? state.saved.corrections.leeway.k : ''}`)],
+        out: on('leeway') ? { lines: [`Leeway ${angle(o.leeway)}`], note: 'undamped' } : notSent('leeway off: 0°')
+      },
+      {
+        name: 'True wind',
+        inputs: [sensor('Apparent wind', `${angle(i.awa)} · ${fmt(i.aws)} kn`), stw],
+        steps: [
+          { label: 'Apparent − boat', value: `${fmt(Math.abs(before.twa))}° · ${fmt(before.tws)} kn`, note: 'STW along the heading, no leeway' },
+          // The tables' own account, including how much of the row applies where they
+          // blend in or fade out.
+          corr('twa', 'TWA table', `${fmt(Math.abs(o.twa))}°`, step('twa').detail),
+          corr('tws', 'TWS table', `${fmt(o.tws)} kn`, step('tws').detail),
+          damping(dm.trueWindS)
+        ],
+        out: { lines: [`TWS ${fmt(p.tws)} kn`], note: o.twd == null ? null : 'TWA goes on to direction' }
+      },
+      {
+        name: 'Direction',
+        inputs: [from('TWA', `${fmt(Math.abs(o.twa))}°`, 'true wind'), heading],
+        steps: o.twd == null
+          ? [{ label: 'No TWD', value: '--', note: 'TWA damped on its own', cls: 'off' }, damping(dm.trueWindS)]
+          : [{ label: 'Heading + TWA', value: `${fmt(o.twd, 0)}° T` }, damping(dm.trueWindS), { label: '− heading', value: 'TWA', cls: 'damp' }],
+        out: held
+          ? { lines: ['TWA and TWD held'], note: 'light air', cls: 'off' }
+          : { lines: [o.twd == null ? `TWA ${angle(p.twa)}` : `TWD ${fmt(p.twd, 0)}° T`, ...(o.twd == null ? [] : [`TWA ${angle(p.twa)}`])], note: o.twd == null ? null : `TWA = ${twdNote}` }
+      },
+      {
+        name: 'Current',
+        inputs: [i.sog == null || i.cog == null ? missing('SOG, COG', 'no current') : sensor('SOG, COG', `${fmt(i.sog, 2)} kn · ${fmt(i.cog, 0)}°`), heading, stw, from('Leeway', angle(o.leeway), 'leeway')],
+        steps: o.current
+          ? [{ label: 'Ground − water', value: `${fmt(o.current.drift, 2)} kn → ${fmt(o.current.set, 0)}°`, note: 'water: STW along heading + leeway' }, damping(dm.currentS)]
+          : [{ label: 'Ground − water', value: '--', note: 'needs heading, SOG and COG', cls: 'off' }],
+        out: p.current ? { lines: [`${fmt(p.current.drift, 2)} kn → ${fmt(p.current.set, 0)}°`], note: 'a trend: average it over a beat' } : notSent('no heading or GPS')
+      },
+      {
+        name: 'Ground wind',
+        inputs: o.groundWind
+          ? [from('TWD', `${fmt(o.twd, 0)}°`, 'direction'), from('TWS', `${fmt(o.tws)} kn`, 'true wind'), from('Current', `${fmt(o.current.drift, 2)} kn`, 'current')]
+          : [missing('Current', 'needs heading, SOG and COG')],
+        steps: o.groundWind
+          ? [{ label: 'True wind + current', value: `${fmt(o.groundWind.direction, 0)}° · ${fmt(o.groundWind.speed)} kn` }, damping(dm.trueWindS)]
+          : [],
+        out: !p.groundWind ? notSent('no current')
+          : held ? { lines: [`${fmt(p.groundWind.speed)} kn`], note: 'direction and angle held: light air' }
+            : { lines: [`${fmt(p.groundWind.direction, 0)}° T · ${fmt(p.groundWind.speed)} kn`, `angle ${angle(p.groundWind.angle)}`] }
+      }
+    ]
   }
 
   function renderFlow (live) {
-    const el = $('flow')
-    const n = flowContent(live)
-    const narrow = el.clientWidth < FLOW_NARROW_PX
-    el.classList.toggle('narrow', narrow)
-    el.innerHTML = '<svg class="edges" aria-hidden="true"><defs><marker id="flowArrow" viewBox="0 0 8 8" refX="7" refY="4" ' +
-      'markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z"/></marker></defs></svg>' +
-      FLOW_NODES.map(([id, s, lane]) => {
-        const b = n[id]
-        const [col, row] = narrow ? [lane, s] : [s, lane]
-        return `<div class="fnode ${b.cls || ''}" data-node="${id}" style="grid-column:${col + 1};grid-row:${row + 1}">` +
-          `<div class="t">${esc(b.title)}</div><div class="v">${(b.lines || [b.value]).map(esc).join('<br>')}</div>` +
-          (b.sub ? `<div class="s">${esc(b.sub)}</div>` : '') + '</div>'
-      }).join('')
-    drawEdges(el)
-  }
-
-  // Connectors from where the grid put the boxes: straight along a row or down a column,
-  // otherwise down out of one box, across, and down into the top of the next.
-  function drawEdges (el) {
-    const svg = el.querySelector('svg.edges')
-    const box = el.getBoundingClientRect()
-    const at = id => {
-      const b = el.querySelector(`[data-node="${id}"]`).getBoundingClientRect()
-      const l = b.left - box.left; const t = b.top - box.top
-      return { l, t, r: l + b.width, b: t + b.height, x: l + b.width / 2, y: t + b.height / 2 }
-    }
-    svg.setAttribute('width', box.width)
-    svg.setAttribute('height', box.height)
-    svg.insertAdjacentHTML('beforeend', FLOW_EDGES.map(([from, to]) => {
-      const a = at(from); const b = at(to)
-      let d
-      if (b.l >= a.r && Math.abs(a.y - b.y) < 2) d = `M${a.r},${a.y} H${b.l}`
-      else if (b.t >= a.b && Math.abs(a.x - b.x) < 2) d = `M${a.x},${a.b} V${b.t}`
-      else d = `M${a.x},${a.b} V${(a.b + b.t) / 2} H${b.x} V${b.t}`
-      return `<path class="e" d="${d}" marker-end="url(#flowArrow)"/>`
-    }).join(''))
+    const chip = c => `<div class="fchip ${c.cls || ''}"><div class="l">${esc(c.label)}</div>` +
+      (c.value ? `<div class="v">${esc(c.value)}</div>` : '') + (c.note ? `<div class="n">${esc(c.note)}</div>` : '') + '</div>'
+    $('flow').innerHTML = flowChains(live).map(ch =>
+      `<div class="chain"><div class="cname">${esc(ch.name)}</div>` +
+      `<div class="cin">${ch.inputs.map(chip).join('')}</div>` +
+      `<div class="csteps"><span class="arrow">→</span>${ch.steps.map(chip).join('<span class="arrow">→</span>')}<span class="tail"></span></div>` +
+      `<div class="cout"><div class="obox ${ch.out.cls || ''}">${ch.out.lines.map(esc).join('<br>')}` +
+      (ch.out.note ? `<div class="n">${esc(ch.out.note)}</div>` : '') + '</div></div></div>').join('')
   }
 
   // Where true heading came from, so a fallback variation is visible at a glance.
@@ -378,6 +382,11 @@
     if (on('stw')) rows.push(['STW', `${fmt(o.stw, 2)} kn`, paths.stw])
     if (on('leeway')) rows.push(['Leeway', `${fmt(Math.abs(o.leeway))}° ${side(o.leeway)}`, paths.leeway])
     if (o.current) rows.push(['Current', `${fmt(o.current.drift, 2)} kn → ${fmt(o.current.set, 0)}°`, paths.current])
+    if (o.groundWind) {
+      rows.push(['Ground wind speed', `${fmt(o.groundWind.speed)} kn`, paths.gws])
+      rows.push(['Ground wind direction', lightAir ? held : `${fmt(o.groundWind.direction, 0)}° T`, paths.gwd])
+      rows.push(['Ground wind angle', lightAir ? held : `${fmt(Math.abs(o.groundWind.angle))}° ${side(o.groundWind.angle)}`, paths.gwa])
+    }
     $('published').innerHTML = rows.map(([label, value, p]) =>
       `<tr><th scope="row">${esc(label)}</th><td class="num">${esc(value)}</td><td class="mono">${esc(p || '')}</td></tr>`).join('')
   }
@@ -408,7 +417,8 @@
       body = grid('Degrees added to |TWA| (blank = not enough data: nearest measured value used)', 'TWS kn', 'corrections.twa', 'tws', rows, c)
     } else if (id === 'tws') {
       const rows = [['Correction kn', 'correction', true], ['Down angle °', 'downAngle', false]]
-      body = grid('Knots added to TWS, and the TWA it applies in full from (blank correction = none)', 'TWS kn', 'corrections.tws', 'tws', rows, c)
+      body = grid('Knots added to TWS (blank = none), and the down angle: the TWA it applies in full from', 'TWS kn', 'corrections.tws', 'tws', rows, c) +
+        `<p id="twsExample" class="muted sub">${esc(twsExample(c))}</p>`
     }
     if (PASTE[id]) body += pasteBox(id)
     const limits = state.behaviour && LIMITS[id] ? LIMITS[id](state.behaviour) : []
@@ -437,6 +447,19 @@
       `<textarea id="paste-${esc(id)}" rows="6" spellcheck="false" aria-label="${esc(CORRECTIONS[id].name)} to paste"></textarea>` +
       `<div><button type="button" class="ghost" data-paste="${esc(id)}">Replace the table</button> ` +
       `<button type="button" class="ghost" data-copy="${esc(id)}">Copy this table</button> <span id="paste-msg-${esc(id)}" class="warn"></span></div></details>`
+  }
+
+  // A worked example of the TWS table's ramp, from the values being edited, so it is plain
+  // that the correction blends in with TWA instead of switching on. Uses the column nearest
+  // 10 kn that has a correction.
+  function twsExample (t) {
+    const cols = t.tws.map((v, j) => ({ v, kn: t.correction[j], down: t.downAngle[j] })).filter(c => c.kn)
+    if (!cols.length) return 'No correction in any column: TWS is not changed.'
+    const c = cols.reduce((a, b) => Math.abs(b.v - 10) < Math.abs(a.v - 10) ? b : a)
+    const none = state.behaviour ? state.behaviour.twsNoneBelowDeg : 90
+    const kn = v => `${v > 0 ? '+' : '−'}${Math.abs(v).toFixed(2)} kn`
+    return `For example, at ${c.v} kn TWS: nothing at ${none}° TWA or less, ${kn(c.kn / 2)} at ${fmt((none + c.down) / 2, 0)}°, ` +
+      `the full ${kn(c.kn)} from ${c.down}° to 180°, rising in a straight line between.`
   }
 
   // A two-dimensional table: fixed row and column headings, editable cells, and blank
@@ -542,8 +565,6 @@
     renderAll()
   })
   window.addEventListener('hashchange', route)
-  // The diagram's layout and connectors depend on its width.
-  window.addEventListener('resize', () => { if (state.view === 'live' && state.live && state.live.result) renderFlow(state.live) })
   window.addEventListener('beforeunload', e => { if (state.draft && dirty()) { e.preventDefault(); e.returnValue = '' } })
 
   route()

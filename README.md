@@ -6,9 +6,9 @@
 
 If your TWD swings 5–10° every time you tack or gybe, the wind hasn't shifted: your true wind calibration is off. It makes real shifts hard to call, puts laylines in the wrong place, and feeds bad numbers into your polars and targets.
 
-This plugin does the calibration job of a B&G H5000 inside Signal K, with the H5000's tables in the H5000's layout. It corrects boat speed, works out true wind, applies the TWA and TWS tables, damps the result and publishes it, with leeway and current. You edit everything in a webapp and can watch each correction work live. The tables are fitted from your own logs by boatcal's [`plugincal`](https://github.com/ghotihook/boatcal/tree/main/plugincal).
+This plugin does the calibration job of a B&G H5000 inside Signal K, with the H5000's tables in the H5000's layout. It corrects boat speed, works out true wind, applies the TWA and TWS tables, damps the result and publishes it, with leeway, current and ground wind. You edit everything in a webapp and can watch each correction work live. The tables are fitted from your own logs by boatcal's [`plugincal`](https://github.com/ghotihook/boatcal/tree/main/plugincal).
 
-> **Proof of concept (0.2.1).** Run it in **Shadow mode** beside your instruments and compare before relying on it. See the [changelog](CHANGELOG.md).
+> **Proof of concept (0.2.2).** Run it in **Shadow mode** beside your instruments and compare before relying on it. See the [changelog](CHANGELOG.md).
 
 ## Why
 
@@ -56,18 +56,18 @@ An H5000 calibration can be typed or pasted in directly: the tables have the sam
 
 ## What it does
 
-```
- Inputs                                                                       Published
- Paddlewheel ──► STW table ──► Leeway ──────► Current ─────────────────────► STW, leeway, current
- (heel)              │         (heel)         (heading, SOG, COG)
-                     ▼
- Apparent wind ──────────────► True wind ───► TWA table ──► TWS table ─────► TWA, TWS
-                                                  │
-                                                  ▼
- Heading ────────────────────────────────────► TWD ────────────────────────► TWD
-```
+One chain per value sent to Signal K. Inputs in *italics* are made by another chain.
 
-The Live page draws the same diagram with each step's value now. Each step works on the output of the one before:
+| Chain | Uses | Steps | Sent (damping as in Settings) |
+|---|---|---|---|
+| Boat speed | paddlewheel, heel | STW table → damping | STW |
+| Leeway | heel, *STW* | K × heel ÷ STW² | leeway |
+| True wind | apparent wind, *STW* | apparent wind − STW along the heading → TWA table → TWS table → damping | TWS |
+| Direction | *TWA*, heading | heading + TWA → damping | TWD, and TWA as the damped TWD − heading |
+| Current | SOG, COG, heading, *STW*, *leeway* | ground velocity − water velocity → damping | current |
+| Ground wind | *TWD*, *TWS*, *current* | true wind + current → damping | ground wind speed, direction and angle |
+
+The Live page shows the same chains with each value now. The steps:
 
 | Step | What | Default |
 |---|---|---|
@@ -76,7 +76,8 @@ The Live page draws the same diagram with each step's value now. Each step works
 | True wind | Apparent wind minus the boat's velocity through the water, along the heading | Always |
 | TWA table | Degrees added to \|TWA\| by TWS: rows at TWA 40°, 90° and 165° × TWS 0, 5 … 30 kn, linear between rows and columns. In full from 30° off the wind to 10° short of dead downwind, fading to none at 0° and 180° | On |
 | TWS table | Knots added to TWS by TWS, with the H5000's down angle: none below 90° TWA, in full from the down angle (165° by default) | Off |
-| TWD, current | TWD = heading + TWA; current = ground velocity − water velocity | With heading and GPS |
+| TWD, current | TWD = heading + TWA; current = ground velocity − water velocity (STW along the heading turned by leeway) | With heading and GPS |
+| Ground wind | The wind over the ground: true wind plus current, so the tables apply to it too | With heading and GPS |
 
 **Damping**, in seconds as on the H5000 (0 = none), set in Settings:
 
@@ -84,7 +85,7 @@ The Live page draws the same diagram with each step's value now. Each step works
 |---|---|---|
 | Heading | 2 s | Heading before true wind, to line up with an apparent wind the instrument has already damped: a yaw then cancels instead of swinging TWD |
 | Heel | 2 s | Heel before the STW table and leeway: takes most of the roll out |
-| True wind | 3 s | TWD and TWS. TWA is the damped TWD less the heading, so it still answers the helm at once |
+| True wind | 3 s | TWD, TWS and ground wind. TWA is the damped TWD less the heading, so it still answers the helm at once; the ground wind angle likewise |
 | STW | 1 s | The published STW |
 | Current | 10 s | Current, as a vector |
 
@@ -119,14 +120,17 @@ This plugin publishes STW too, so two STW correctors that each read the other wo
 | Speed through water (when on) | `navigation.speedThroughWaterCorrected` | `navigation.speedThroughWater` |
 | Leeway (when on) | `navigation.leewayAngleCorrected` | `navigation.leewayAngle` |
 | Current | `environment.currentCorrected` | `environment.current` (`drift`, `setTrue`) |
+| Ground wind speed | `environment.wind.speedOverGroundCorrected` | `environment.wind.speedOverGround` |
+| Ground wind angle, from the bow | `environment.wind.angleTrueGroundCorrected` | `environment.wind.angleTrueGround` |
+| Ground wind direction | `environment.wind.directionGroundCorrected` | `environment.wind.directionGround` (not in the Signal K schema, which has no ground wind direction; sent with `meta`) |
 
-Everything is published under this plugin's own `$source`: STW each time the paddlewheel reports, the rest with each apparent wind update. Shadow paths carry `meta` with units. The plugin publishes into Signal K only; your instrument displays show the instrument's own numbers unless something forwards these to NMEA 2000.
+Everything is published under this plugin's own `$source`: STW each time the paddlewheel reports, the rest with each apparent wind update. Shadow paths carry `meta` with units. Like TWA and TWD, ground wind direction and angle are held back in light air. The plugin publishes into Signal K only; your instrument displays show the instrument's own numbers unless something forwards these to NMEA 2000.
 
 ## The webapp
 
 Open **Webapps → Performance Processor**.
 
-- **Live**: the published values, with the undamped and uncorrected ones under them; the pipeline as a diagram, inputs to published values, with each step's value now and what it changed (switched-off steps dashed), and under **Step by step** the same as a table; every path sent; each input's source and age.
+- **Live**: the published values, with the undamped and uncorrected ones under them; the pipeline, one chain per value sent: what it uses, each step with its value now and what it changed, the damping, and on the right what is sent (switched-off steps dashed), and under **Step by step** the same as a table; every path sent; each input's source and age.
 - **Calibration**: the corrections in pipeline order, each with an on/off switch and its editor. Table headings are fixed (the H5000 layout); blank cells are allowed where a table says so. **Paste a table** reads the text `plugincal` prints (or the same from a spreadsheet); **Copy this table** writes it. **Reset to defaults** puts back the defaults for that correction. **Save** to apply.
 - **Settings**: Shadow or Replace, damping, the fallback variation, and the source for each input.
 

@@ -49,7 +49,11 @@ const OUTPUTS = {
   twd: { path: 'environment.wind.directionTrue', units: 'rad', description: 'True wind direction, corrected' },
   stw: { path: 'navigation.speedThroughWater', units: 'm/s', description: 'Speed through water, corrected' },
   leeway: { path: 'navigation.leewayAngle', units: 'rad', description: 'Leeway angle, + to starboard' },
-  current: { path: 'environment.current', description: 'Current: drift (m/s) and setTrue (rad)' }
+  current: { path: 'environment.current', description: 'Current: drift (m/s) and setTrue (rad)' },
+  gws: { path: 'environment.wind.speedOverGround', units: 'm/s', description: 'Ground wind speed: true wind plus current' },
+  gwa: { path: 'environment.wind.angleTrueGround', units: 'rad', description: 'Ground wind angle from the bow, + to starboard' },
+  // The Signal K schema has no ground wind direction (directionTrue is the water wind's).
+  gwd: { path: 'environment.wind.directionGround', units: 'rad', description: 'Ground wind direction, true: where the wind over the ground comes from', custom: true }
 }
 const SHADOW_SUFFIX = 'Corrected'
 
@@ -80,7 +84,9 @@ module.exports = function (app) {
     tws: new Smooth(),
     twa: new SmoothAngle(), // only when there is no heading, so no TWD to derive it from
     stw: new Smooth(),
-    current: new SmoothVector()
+    current: new SmoothVector(),
+    gwd: new SmoothAngle(),
+    gws: new Smooth()
   }
   const resetDamping = () => Object.values(damp).forEach(d => d.reset())
   let lastResult = null
@@ -248,14 +254,25 @@ module.exports = function (app) {
       twa = ((damp.twa.update(o.twa, now, dm.trueWindS) + 180) % 360) - 180
     }
     const cur = o.current ? damp.current.update(o.current.drift, o.current.set, now, dm.currentS) : null
-    lastResult.published = { twa, tws, twd, stw: config.corrections.stw.enabled ? damp.stw.v : null, current: cur && { drift: cur.speed, set: cur.deg } }
+    // Ground wind is damped as true wind is, its angle following from the heading now.
+    let gw = null
+    if (o.groundWind) {
+      const gwd = damp.gwd.update(o.groundWind.direction, now, dm.trueWindS)
+      gw = { direction: gwd, speed: damp.gws.update(o.groundWind.speed, now, dm.trueWindS), angle: ((gwd - o.heading) % 360 + 540) % 360 - 180 }
+    }
+    lastResult.published = { twa, tws, twd, stw: config.corrections.stw.enabled ? damp.stw.v : null, current: cur && { drift: cur.speed, set: cur.deg }, groundWind: gw }
 
     lightAir = tws < (lightAir ? LIGHT_AIR_ON_KN : LIGHT_AIR_OFF_KN)
     lastResult.lightAir = lightAir
     const values = [{ path: outPath('tws'), value: tws / MS_TO_KN }]
+    if (gw) values.push({ path: outPath('gws'), value: gw.speed / MS_TO_KN })
     if (!lightAir) {
       values.push({ path: outPath('twa'), value: twa / RAD_TO_DEG })
       if (twd != null) values.push({ path: outPath('twd'), value: twd / RAD_TO_DEG })
+      if (gw) {
+        values.push({ path: outPath('gwd'), value: gw.direction / RAD_TO_DEG })
+        values.push({ path: outPath('gwa'), value: gw.angle / RAD_TO_DEG })
+      }
     }
     if (config.corrections.leeway.enabled) values.push({ path: outPath('leeway'), value: o.leeway / RAD_TO_DEG })
     if (cur) values.push({ path: outPath('current'), value: { drift: cur.speed / MS_TO_KN, setTrue: cur.deg / RAD_TO_DEG } })
@@ -318,12 +335,14 @@ module.exports = function (app) {
     lastResult = null
     running = true
 
-    if (config.mode === 'shadow') {
-      // The shadow paths are not in the Signal K schema; give consumers their units.
+    // Paths not in the Signal K schema (every shadow path, and ground wind direction in
+    // replace mode too) get their units, so consumers can display them.
+    const custom = Object.keys(OUTPUTS).filter(k => config.mode === 'shadow' || OUTPUTS[k].custom)
+    if (custom.length) {
       app.handleMessage(plugin.id, {
         updates: [{
-          meta: Object.keys(OUTPUTS).map(k => ({
-            path: OUTPUTS[k].path + SHADOW_SUFFIX,
+          meta: custom.map(k => ({
+            path: outPath(k),
             value: { description: OUTPUTS[k].description, ...(OUTPUTS[k].units ? { units: OUTPUTS[k].units } : {}) }
           }))
         }]

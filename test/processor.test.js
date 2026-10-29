@@ -224,6 +224,23 @@ test('a still current is reported as still', () => {
   const config = allOff()
   const r = process({ awa: 40, aws: 12, stw: 6, headingTrue: 90, sog: 6, cog: 90 }, config).out
   close(r.current.drift, 0, 1e-9)
+  close(r.groundWind.speed, r.tws, 1e-9, 'no current: ground wind is true wind')
+  close(r.groundWind.direction, r.twd, 1e-9)
+})
+
+test('ground wind is true wind plus current', () => {
+  // 10 kn from the north over the water, and 1 kn of current setting east: the air over
+  // the ground moves south at 10 and east at 1, so it comes from 354.3° at 10.05 kn.
+  // Boat on 090 at 5 kn through the water: true wind 90° to port; ground moves at 6 kn.
+  const config = allOff()
+  const aws = Math.hypot(10, 5)
+  const awa = -Math.atan2(10, 5) * 180 / Math.PI
+  const r = process({ awa, aws, stw: 5, headingTrue: 90, sog: 6, cog: 90 }, config).out
+  close(r.twd, 0, 1e-9)
+  close(r.current.drift, 1, 1e-9)
+  close(r.groundWind.speed, Math.hypot(10, 1), 1e-9)
+  close(r.groundWind.direction, 360 - Math.atan2(1, 10) * 180 / Math.PI, 1e-9)
+  close(r.groundWind.angle, r.groundWind.direction - 360 - 90, 1e-9, 'angle from the bow')
 })
 
 test('the worked example from the model', () => {
@@ -285,10 +302,10 @@ test('each step declares what its result replaces, so the webapp can tell publis
   const steps = process({ awa: 32, aws: 16.9, stw: 5.6, heel: -23, headingMagnetic: 110, sog: 5.4, cog: 119 }, config).steps
   const produces = Object.fromEntries(steps.map(s => [s.id, s.produces]))
   assert.deepStrictEqual(produces, {
-    stw: ['stw'], leeway: ['leeway'], truewind: ['twa', 'tws'], twa: ['twa'], tws: ['tws'], current: ['current']
+    stw: ['stw'], leeway: ['leeway'], truewind: ['twa', 'tws'], twa: ['twa'], tws: ['tws'], current: ['current'], groundwind: ['groundWind']
   })
   // With the defaults (TWS table off) the last enabled producer of each quantity is:
   const last = {}
   steps.forEach((s, i) => { if (s.enabled) (s.produces || []).forEach(q => { last[q] = s.id }) })
-  assert.deepStrictEqual(last, { stw: 'stw', leeway: 'leeway', twa: 'twa', tws: 'truewind', current: 'current' })
+  assert.deepStrictEqual(last, { stw: 'stw', leeway: 'leeway', twa: 'twa', tws: 'truewind', current: 'current', groundWind: 'groundwind' })
 })

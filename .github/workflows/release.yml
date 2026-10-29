@@ -1,0 +1,37 @@
+name: release
+
+# A GitHub release for each version tag, its notes that version's section of
+# CHANGELOG.md, so the release list shows what changed rather than the bare tag. Linux,
+# a few seconds of Actions time. For a tag that already exists, run it by hand with the
+# tag: the notes come from CHANGELOG.md on main.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: An existing tag, such as v0.2.1
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Release with the CHANGELOG section as its notes
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${TAG#v}"
+          # From "## <version> — <date>" up to the next "## ".
+          awk -v h="## $v" 'index($0, h " ") == 1 || $0 == h { on = 1; next } /^## / { if (on) exit } on' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then echo "CHANGELOG.md has no section for $v"; exit 1; fi
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release edit "$TAG" --notes-file notes.md
+          else
+            gh release create "$TAG" --verify-tag --title "$TAG" --notes-file notes.md
+          fi
