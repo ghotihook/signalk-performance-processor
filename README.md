@@ -6,9 +6,7 @@
 
 If your TWD swings 5–10° every time you tack or gybe, the wind hasn't shifted: your true wind calibration is off. It makes real shifts hard to call, puts laylines in the wrong place, and feeds bad numbers into your polars and targets.
 
-This plugin does the calibration job of a B&G H5000 inside Signal K, with the H5000's tables in the H5000's layout. It corrects boat speed, works out true wind, applies the TWA and TWS tables, damps the result and publishes it, with leeway, current and ground wind. You edit everything in a webapp and can watch each correction work live. The tables are fitted from your own logs by boatcal's [`plugincal`](https://github.com/ghotihook/boatcal/tree/main/plugincal).
-
-> **Proof of concept (0.2.2).** Run it in **Shadow mode** beside your instruments and compare before relying on it. See the [changelog](CHANGELOG.md).
+This plugin does the calibration job of a B&G H5000 inside Signal K, with the H5000's tables in the H5000's layout. It corrects boat speed, works out true wind, applies the TWA and TWS tables, damps the result and publishes it, with leeway, current and ground wind. You edit everything in a webapp and can watch each correction work live. The tables are fitted from your own logs by boatcal's [`plugincal`](https://github.com/ghotihook/boatcal/tree/main/plugincal). What changed in each release is in the [changelog](CHANGELOG.md).
 
 ## Why
 
@@ -46,7 +44,9 @@ These are one boat's figures, and the defaults are that boat as it was: after it
 
 ## Calibrating your boat
 
-1. **Install and leave it in Shadow mode.** It needs apparent wind, boat speed through water and heading in Signal K; heel (`navigation.attitude`) adds the heel corrections and leeway, SOG and COG add current. Feed it **measured** apparent wind and the **raw** paddlewheel.
+> **Apparent wind must be raw: AWA and AWS as the masthead measures them, uncorrected and undamped.** The plugin applies the calibration and the damping itself. Wind that an instrument has already corrected gets corrected twice, and wind it has already damped lags heading and boat speed, so TWD swings with every yaw. In the instrument, take the wind tables out and set wind damping to 0, or read apparent wind from a source ahead of it. Masthead alignment (an offset fixed on the sensor) is the exception: keep it in the instrument.
+
+1. **Install and leave it in Shadow mode.** It needs apparent wind, boat speed through water and heading in Signal K; heel (`navigation.attitude`) adds the heel corrections and leeway, SOG and COG add current. Feed it **raw** apparent wind (above) and the **raw** paddlewheel.
 2. **Get boat speed right in the instrument first**, then log some sailing: a session with 10 or more tacks and gybes in steady wind, some reaching and a few roundings, covers the wind speeds sailed.
 3. **Fit** with boatcal: `python -m plugincal --since <the day your setup last changed>`. Paste each printed table into the Calibration page (or load the config it writes), and **Save**.
 4. **Compare** the `…Corrected` paths with your instruments on the next races. Refit after a rig tune, new sails or a boat speed calibration change.
@@ -98,8 +98,8 @@ Undamped, TWD jumps by more than 5° about 480 times an hour on a straight leg; 
 The webapp lists these with the plugin's own numbers.
 
 - **Through tacks and gybes.** A TWA correction applied in full up to head to wind would hold TWA at 0° for as many degrees as the correction, so TWD would follow the bow through every tack. So the correction fades out over the last 30° to head to wind and the last 10° to dead downwind, and the 40° row must be within ±30° and the 165° row within ±10°: corrected TWA then always moves with uncorrected TWA.
-- **Light air.** Below 1.5 kn of TWS, wind direction is noise: TWA and TWD are not published (TWS still is) until TWS is back to 2 kn.
-- **Stale or implausible input.** Inputs older than 3 s are not used. Without STW there is no true wind; without heel, no heel correction or leeway; without heading, no TWD or current. Apparent wind over 120 kn, STW over 60 kn or heel beyond ±90° is ignored, and the status says why.
+- **Light air.** Below 1.5 kn of TWS, wind direction is noise: TWA, TWD and the ground wind direction and angle are not published (TWS and ground wind speed still are) until TWS is back to 2 kn.
+- **Stale or implausible input.** Inputs older than 3 s are not used. Without STW there is no true wind; without heel, no heel correction or leeway; without heading, no TWD, current or ground wind; without SOG and COG, no current or ground wind. Apparent wind over 120 kn, STW over 60 kn or heel beyond ±90° is ignored, and the status says why.
 - **Heading.** `navigation.headingTrue` if present; otherwise magnetic heading plus `navigation.magneticVariation` (normally from the GPS); otherwise the fallback variation in Settings.
 
 ### Other STW plugins
@@ -124,7 +124,7 @@ This plugin publishes STW too, so two STW correctors that each read the other wo
 | Ground wind angle, from the bow | `environment.wind.angleTrueGroundCorrected` | `environment.wind.angleTrueGround` |
 | Ground wind direction | `environment.wind.directionGroundCorrected` | `environment.wind.directionGround` (not in the Signal K schema, which has no ground wind direction; sent with `meta`) |
 
-Everything is published under this plugin's own `$source`: STW each time the paddlewheel reports, the rest with each apparent wind update. Shadow paths carry `meta` with units. Like TWA and TWD, ground wind direction and angle are held back in light air. The plugin publishes into Signal K only; your instrument displays show the instrument's own numbers unless something forwards these to NMEA 2000.
+Everything is published under this plugin's own `$source`: STW each time the paddlewheel reports, the rest with each apparent wind update. Shadow paths carry `meta` with units. The plugin publishes into Signal K only; your instrument displays show the instrument's own numbers unless something forwards these to NMEA 2000.
 
 ## The webapp
 

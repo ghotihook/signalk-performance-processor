@@ -283,7 +283,7 @@ module.exports = function (app) {
     if (o.twd == null) missing.push('heading')
     const mode = config.mode === 'shadow' ? 'Shadow' : 'Live'
     if (lightAir) {
-      status('lightair', `${mode} — light air, TWS ${tws.toFixed(1)} kn: TWA and TWD not published until TWS reaches ${LIGHT_AIR_ON_KN} kn`)
+      status('lightair', `${mode} — light air, TWS ${tws.toFixed(1)} kn: wind direction not published until TWS reaches ${LIGHT_AIR_ON_KN} kn`)
       return
     }
     status('running', `${mode} — TWA ${Math.abs(twa).toFixed(1)}°, TWS ${tws.toFixed(1)} kn, STW ${o.stw.toFixed(2)} kn` +

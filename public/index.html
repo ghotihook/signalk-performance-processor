@@ -109,6 +109,7 @@
       <div class="panel">
         <h2>Input sources</h2>
         <p class="muted sub">Choose the instrument to read for each input. "Any" takes every source except this plugin. For STW the blank choice is "Auto (sensors only)": STW from data connections, never STW another plugin has published. Pick your instruments, not another correcting plugin, so nothing is corrected twice.</p>
+        <p class="sub warn">Apparent wind must be raw: AWA and AWS as the masthead measures them, uncorrected and undamped. Take the wind tables out of the instrument and set its wind damping to 0, or choose a source ahead of it; this plugin corrects and damps them itself. Keep the masthead alignment in the instrument.</p>
         <div id="sources" class="sources"></div>
       </div>
     </section>

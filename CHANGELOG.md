@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.3 — 2026-10-30
+
+- **No longer marked a proof of concept**: the README's banner is gone (the advice to start in Shadow mode stays, in Calibrating your boat), and the changelog link moves into the introduction.
+- **Light air and missing inputs mention ground wind**: in light air its direction and angle are held back with TWA and TWD, and without heading, SOG or COG there is none; the README, Settings and the status line now say so.
+- **The documentation says apparent wind must be raw**: AWA and AWS as the masthead measures them, uncorrected and undamped, since the plugin corrects and damps them itself. Stated at the top of "Calibrating your boat" in the README and under Input sources in Settings, with how to get it (wind tables out and wind damping at 0 in the instrument, or a source ahead of it) and the one exception (masthead alignment stays in the instrument).
+
 ## 0.2.2 — 2026-10-30
 
 - **Ground wind**: the wind over the ground, true wind plus current, so the tables apply to it too. Published as `environment.wind.speedOverGround`, `angleTrueGround` and `directionGround` (the last is not in the Signal K schema, so it carries `meta`; in Shadow mode all three get the `Corrected` suffix), damped as true wind, with direction and angle held back in light air.
