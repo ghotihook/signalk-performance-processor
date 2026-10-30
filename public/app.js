@@ -9,8 +9,9 @@
   // the description always matches the code.
   const LIMITS = {
     stw: b => [
-      `Below ${b.stwFadeKn} kn the correction fades to nothing at 0 kn, so a stopped boat is not given speed by the 0 kn column.`,
-      'Heel either side uses the same row, as on the H5000. More heel than the last row uses the last row; beyond the last speed column, that column is held.'
+      `Below the first column (${b.axes.stwSpeed[0]} kn) the correction runs in a straight line to nothing at 0 kn, as on the H5000, so a stopped boat is never given speed. Beyond the last column (${b.axes.stwSpeed[b.axes.stwSpeed.length - 1]} kn) that column is held.`,
+      'Rows are heel each side (− = port side down, + = starboard side down), linear between rows; more heel than the last row uses the last row. Edit symmetrically copies each value to the same heel on the other side.',
+      'Most paddlewheels read low when slow, so positive values at low speed are normal.'
     ],
     leeway: b => [
       `Capped at ±${b.maxLeewayDeg}°.`,
@@ -21,29 +22,29 @@
       `Rows at TWA ${b.twaRows.upwind}°, ${b.twaRows.reach}° and ${b.twaRows.downwind}°, as on the H5000: the ${b.twaRows.upwind}° row applies in full below ${b.twaRows.upwind}°, the ${b.twaRows.downwind}° row beyond ${b.twaRows.downwind}°, linear between rows and between TWS columns.`,
       `Fades out towards head to wind and dead downwind: in full from ${b.twaTaperUpDeg}° to ${180 - b.twaTaperDownDeg}° TWA, none at 0° and 180°. TWA and TWD then pass smoothly through tacks and gybes instead of TWD following the bow. Upwind the boat is inside the fade only while tacking; downwind, sailing deeper than ${180 - b.twaTaperDownDeg}° gets part of the correction.`,
       `To keep that smooth, the ${b.twaRows.upwind}° row must be within ±${b.twaTaperUpDeg}° and the ${b.twaRows.downwind}° row within ±${b.twaTaperDownDeg}°.`,
-      'Beyond the first and last TWS columns, the end values are held.'
+      `Below the first TWS column (${b.axes.twaTws[0]} kn) the correction runs in a straight line to nothing at 0 kn; beyond the last (${b.axes.twaTws[b.axes.twaTws.length - 1]} kn) that column is held.`
     ],
     tws: b => [
-      `Ramps in with TWA, never a step: none at ${b.twsNoneBelowDeg}° TWA or less, rising in a straight line to the full correction at the down angle, and full from there to 180°, so nothing changes through a gybe.`,
-      `Each down angle must be above ${b.twsNoneBelowDeg}°. The closer it is to ${b.twsNoneBelowDeg}°, the shorter and steeper the ramp.`,
-      'Between TWS columns the correction and the down angle are interpolated in a straight line; beyond the first and last columns the end values are held.',
+      `Blends with TWA, never a step: the upwind correction in full up to the up angle, the reaching correction in full at ${b.reachDeg}°, the downwind correction in full from the down angle, a straight line between.`,
+      `The up angle must be below ${b.reachDeg}° and the down angle above it.`,
+      `Below the first TWS column (${b.axes.twsTws[0]} kn) each correction runs in a straight line to nothing at 0 kn; between columns, corrections and angles are interpolated in a straight line; beyond the last column it is held.`,
       'Never takes TWS below 0.'
     ]
   }
 
   // Display names and help for each correction, in pipeline order.
   const CORRECTIONS = {
-    stw: { name: 'Boat speed (STW)', what: 'Knots added to the paddlewheel by heel (rows, either side) and boat speed (columns): the H5000 boat speed / heel table. Blank cells are filled from the nearest value in their row. Applied before anything else uses STW.' },
+    stw: { name: 'Boat speed (STW)', what: 'Knots added to the paddlewheel by heel (rows, port − and starboard +) and boat speed (columns): the H5000 boat speed / heel table. Blank cells are filled from the nearest value in their row. Applied before anything else uses STW.' },
     leeway: { name: 'Leeway', what: 'Sideways slip: leeway = K × heel ÷ STW². Published, and used for current. Not used in true wind: the TWA table takes up its effect.' },
     twa: { name: 'TWA table', what: 'Degrees added to |TWA| by TWS, in rows at TWA 40°, 90° and 165°: the H5000 TWA correction table. Negative = TWA was reading too wide.' },
-    tws: { name: 'TWS table', what: 'Knots added to TWS downwind, by TWS: the H5000 TWS correction. It ramps in with TWA rather than switching on: none at 90° or less, the full correction from the down angle (165° by default). Blank = no correction. The default is −10% of each column.' }
+    tws: { name: 'TWS table', what: 'Knots added to TWS by TWS, as upwind, reaching and downwind corrections blended by TWA: the H5000 TWS correction table. Masthead units read high downwind (the sails speed the air up over the top of the rig), so the downwind correction is usually negative. Blank cells take the nearest value in their row.' }
   }
 
   // The tables' text format (tables.js): what Paste a table reads and Copy writes.
   const PASTE = {
-    stw: { parse: t => PPTables.parseStw(t), hint: 'First row <code>heel\\stw</code> then the boat speeds 0, 5 … 30; then a row for heel 0, 10 and 20, each its label then its values. This is what boatcal <code>plugincal</code> prints.' },
-    twa: { parse: t => PPTables.parseTwa(t), hint: 'First row <code>TWA\\TWS</code> then the TWS columns 0, 5 … 30; then a row for TWA 40, 90 and 165, each its label then its values. This is what boatcal <code>plugincal</code> prints.' },
-    tws: { parse: t => PPTables.parseTws(t), hint: 'First row <code>TWS</code> then the TWS columns 0, 5 … 30; then a <code>correction</code> row and a <code>down angle</code> row.' }
+    stw: { parse: t => PPTables.parseStw(t), hint: 'First row <code>heel\\stw</code> then the boat speeds 2.5, 5 … 15; then a row for heel −20, −10, 0, 10 and 20, each its label then its values. This is what boatcal <code>plugincal</code> prints.' },
+    twa: { parse: t => PPTables.parseTwa(t), hint: 'First row <code>TWA\\TWS</code> then the TWS columns 2.5, 5 … 15; then a row for TWA 40, 90 and 165, each its label then its values. This is what boatcal <code>plugincal</code> prints.' },
+    tws: { parse: t => PPTables.parseTws(t), hint: 'First row <code>TWS</code> then the TWS columns 5, 10 … 30; then rows <code>upwind</code>, <code>reach</code>, <code>downwind</code> (kn), <code>up angle</code> and <code>down angle</code> (°). This is what boatcal <code>plugincal</code> prints.' }
   }
 
   const SOURCE_LABELS = {
@@ -61,6 +62,7 @@
     draft: null, // config being edited
     defaults: null,
     selected: 'twa',
+    symmetric: false, // STW table: edit the same heel on both sides at once
     live: null,
     liveAt: 0,
     saving: false
@@ -148,6 +150,7 @@
 
   function onEdit (e) {
     const el = e.target
+    if (el.id === 'stwSymmetric') { state.symmetric = el.checked; return }
     if (!el.dataset || !el.dataset.path || !state.draft) return
     let value
     if (el.type === 'checkbox') value = el.checked
@@ -157,6 +160,14 @@
       if (el.value === '') { if (!el.dataset.nullable) return; value = null } else value = Number(el.value)
     } else value = el.value
     setPath(el.dataset.path, value)
+    // Edit symmetrically: the same value at the same heel on the other side.
+    const m = el.dataset.path.match(/^corrections\.stw\.add\.(\d+)\.(\d+)$/)
+    if (m && state.symmetric) {
+      const mirror = state.draft.corrections.stw.add.length - 1 - Number(m[1])
+      setPath(`corrections.stw.add.${mirror}.${m[2]}`, value)
+      const other = document.querySelector(`[data-path="corrections.stw.add.${mirror}.${m[2]}"]`)
+      if (other) other.value = value == null ? '' : value
+    }
     renderSaveBar()
     if (el.dataset.path.startsWith('corrections.tws.') && $('twsExample')) $('twsExample').textContent = twsExample(state.draft.corrections.tws)
     if (el.type === 'checkbox' || el.type === 'radio' || el.tagName === 'SELECT') renderAll()
@@ -233,7 +244,7 @@
     const notSent = why => ({ lines: ['not sent'], note: why, cls: 'off' })
 
     const heel = i.heel == null ? missing('Heel', 'upright row, no leeway') : sensor('Heel', `${fmt(Math.abs(i.heel), 0)}° ${side(i.heel)}`, `damped ${dm.heelS} s`)
-    const heading = o.heading == null ? missing('Heading', 'no TWD, current or ground wind') : sensor('Heading', `${fmt(o.heading, 0)}° T`, `${headingNote(o)}, damped ${dm.headingS} s`)
+    const heading = o.heading == null ? missing('Heading', 'no TWD, current or ground wind') : sensor('Heading', `${fmt(o.heading, 0)}° T`, `${headingNote(o)}${dm.headingS ? `, damped ${dm.headingS} s` : ''}`)
     const stw = from('STW', `${fmt(o.stw, 2)} kn`, 'boat speed')
     const twdNote = 'damped TWD − heading'
 
@@ -241,7 +252,7 @@
       {
         name: 'Boat speed',
         inputs: [sensor('Paddlewheel', `${fmt(i.stw, 2)} kn`, 'raw'), heel],
-        steps: [corr('stw', 'STW table', `${change(o.stw - i.stw, 2)} kn`, i.heel == null ? 'upright row' : `at ${fmt(Math.abs(i.heel), 0)}° heel`), damping(dm.stwS)],
+        steps: [corr('stw', 'STW table', `${change(o.stw - i.stw, 2)} kn`, i.heel == null ? 'upright row' : `at ${fmt(Math.abs(i.heel), 0)}° heel ${side(i.heel)}`), damping(dm.stwS)],
         out: on('stw') && p.stw != null ? { lines: [`STW ${fmt(p.stw, 2)} kn`] } : notSent('STW table off: the paddlewheel is used as it is')
       },
       {
@@ -411,15 +422,16 @@
     const meta = CORRECTIONS[id]
     let body = ''
     if (id === 'stw') {
-      body = grid2d('Knots added to STW', 'Heel ╲ STW kn', 'corrections.stw', c)
+      body = grid2d('Knots added to STW', 'Heel ╲ STW kn', 'corrections.stw', c) +
+        `<label class="check"><input type="checkbox" id="stwSymmetric" ${state.symmetric ? 'checked' : ''}> Edit symmetrically</label>`
     } else if (id === 'leeway') {
       body = `<div class="fields">${field('K', 'corrections.leeway.k', c.k, 0.01)}</div>`
     } else if (id === 'twa') {
       const rows = [['40° TWA', 'upwind', true], ['90° TWA', 'reach', true], ['165° TWA', 'downwind', true]]
       body = grid('Degrees added to |TWA| (blank = not enough data: nearest measured value used)', 'TWS kn', 'corrections.twa', 'tws', rows, c)
     } else if (id === 'tws') {
-      const rows = [['Correction kn', 'correction', true], ['Down angle °', 'downAngle', false]]
-      body = grid('Knots added to TWS (blank = none), and the down angle: the TWA it applies in full from', 'TWS kn', 'corrections.tws', 'tws', rows, c) +
+      const rows = [['Upwind kn', 'upwind', true], ['Reaching kn', 'reach', true], ['Downwind kn', 'downwind', true], ['Up angle °', 'upAngle', false], ['Down angle °', 'downAngle', false]]
+      body = grid('Knots added to TWS: upwind in full up to the up angle, reaching at 90°, downwind in full from the down angle', 'TWS kn', 'corrections.tws', 'tws', rows, c) +
         `<p id="twsExample" class="muted sub">${esc(twsExample(c))}</p>`
     }
     if (PASTE[id]) body += pasteBox(id)
@@ -455,20 +467,20 @@
   // that the correction blends in with TWA instead of switching on. Uses the column nearest
   // 10 kn that has a correction.
   function twsExample (t) {
-    const cols = t.tws.map((v, j) => ({ v, kn: t.correction[j], down: t.downAngle[j] })).filter(c => c.kn)
-    if (!cols.length) return 'No correction in any column: TWS is not changed.'
-    const c = cols.reduce((a, b) => Math.abs(b.v - 10) < Math.abs(a.v - 10) ? b : a)
-    const none = state.behaviour ? state.behaviour.twsNoneBelowDeg : 90
-    const kn = v => `${v > 0 ? '+' : '−'}${Math.abs(v).toFixed(2)} kn`
-    return `For example, at ${c.v} kn TWS: nothing at ${none}° TWA or less, ${kn(c.kn / 2)} at ${fmt((none + c.down) / 2, 0)}°, ` +
-      `the full ${kn(c.kn)} from ${c.down}° to 180°, rising in a straight line between.`
+    try {
+      const kn = v => `${v > 0 ? '+' : v < 0 ? '−' : '±'}${Math.abs(v).toFixed(2)} kn`
+      const at = [45, 70, 90, 120, 150, 180].map(a => `${kn(PPTables.twsCorrection(t, a, 10))} at ${a}°`)
+      return `For example, at 10 kn TWS: ${at.join(', ')}.`
+    } catch (e) {
+      return ''
+    }
   }
 
   // A two-dimensional table: fixed row and column headings, editable cells, and blank
-  // cells allowed (null = not measured). Heel rows are either side, as on the H5000.
+  // cells allowed (null = not measured). Heel rows each side: − port, + starboard down.
   function grid2d (title, corner, base, t) {
     const head = `<tr><th scope="col" class="muted">${esc(corner)}</th>${t.stw.map(v => `<th scope="col" class="axis">${esc(v)}</th>`).join('')}</tr>`
-    const rows = t.heel.map((h, i) => `<tr><th scope="row" class="axis">${esc(h)}°</th>` +
+    const rows = t.heel.map((h, i) => `<tr><th scope="row" class="axis">${esc(h > 0 ? `${h}° stbd` : h < 0 ? `${-h}° port` : '0°')}</th>` +
       t.add[i].map((v, j) => `<td><input type="number" step="any" data-nullable="1" data-path="${base}.add.${i}.${j}" value="${v == null ? '' : esc(v)}" aria-label="heel ${esc(h)} at ${esc(t.stw[j])} kn"></td>`).join('') + '</tr>')
     return `<div><h2>${esc(title)}</h2><div class="table-wrap"><table class="grid">${head}${rows.join('')}</table></div></div>`
   }

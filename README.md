@@ -8,7 +8,7 @@
 
 **What it does.** It works out true wind again in Signal K from raw apparent wind, boat speed and heading, and corrects it as an H5000 does: a boat speed / heel table, then TWA and TWS correction tables, then damping. It publishes corrected TWA, TWS and TWD, with boat speed, leeway, current and ground wind.
 
-**How it is calibrated.** From your own sailing. TWD should not change when the boat tacks or gybes, so every manoeuvre in your logs measures how far TWA is out; boatcal's [`plugincal`](https://github.com/ghotihook/boatcal/tree/main/plugincal) fits the tables from them, and the GPS fits the boat speed table. Paste the result into the webapp, watch each step work live, and run it in **Shadow mode** beside your instruments until you trust it.
+**How it is calibrated.** From your own sailing. TWD should not change when the boat tacks or gybes, so every manoeuvre in your logs measures how far TWA is out; TWS should not change when the boat bears away, so each reaching or downwind leg against the beats either side measures how far TWS is out off the wind. boatcal's [`plugincal`](https://github.com/ghotihook/boatcal/tree/main/plugincal) fits the tables from them, and the GPS fits the boat speed table. Paste the result into the webapp, watch each step work live, and run it in **Shadow mode** beside your instruments until you trust it.
 
 ![The Live page: one row per calculation, each step with its value now, what is sent on the right](docs/screenshots/live.png)
 
@@ -48,7 +48,7 @@
 ## Getting started
 
 1. **Check the inputs.** The Live page lists every input with its source and age. If more than one instrument sends the same thing, choose one under **Settings → Input sources**.
-2. **Calibrate.** Log some sailing since your setup last changed (rig tune, sails, instrument calibration): 10 or more tacks and gybes in steady wind, some reaching and a few roundings. Run `python -m plugincal --since <that date>` ([how](https://github.com/ghotihook/boatcal/tree/main/plugincal)), paste each table it prints into the **Calibration** page, and **Save**. By hand, the H5000 rule works unchanged: if TWD lifts on every tack, take half the error off TWA in that cell.
+2. **Calibrate.** Log some sailing since your setup last changed (rig tune, sails, instrument calibration): 10 or more tacks and gybes in steady wind, some reaching and a few roundings, and windward-leeward laps for the TWS table. Run `python -m plugincal --since <that date>` ([how](https://github.com/ghotihook/boatcal/tree/main/plugincal)), paste each table it prints into the **Calibration** page, and **Save**. By hand, the H5000 rule works unchanged: if TWD lifts on every tack, take half the error off TWA in that cell.
 3. **Compare.** Sail in Shadow mode and compare the `…Corrected` paths with your instruments.
 4. **Go live** with Replace mode once you trust it: rank this plugin first for each output path in **Server → Source Priorities**, and take the instrument's own TWA / TWS tables out so nothing is corrected twice.
 
@@ -68,16 +68,16 @@ One chain per calculation, from its inputs to what it sends. Inputs in *italics*
 
 | Correction | What it does | Default |
 |---|---|---|
-| STW table | Knots added to the paddlewheel, by heel (rows 0, 10, 20°, either side) and boat speed (columns 0, 5 … 30 kn), bilinear. Fades out below 1 kn, so a stopped boat is not given speed | On |
+| STW table | Knots added to the paddlewheel, by heel (rows −20, −10, 0, 10, 20°; + = starboard side down) and boat speed (columns 2.5, 5 … 15 kn), bilinear, the last column held above 15 kn. Below 2.5 kn the correction runs in a straight line to nothing at 0 kn, so a stopped boat is not given speed. **Edit symmetrically** on the Calibration page keeps port and starboard rows the same | On |
 | Leeway | K × heel ÷ STW², capped at 15°, faded in from 1.5 to 3 kn. Used for current, **not** for true wind, as on the H5000 by default: the TWA table takes up its effect | On |
-| TWA table | Degrees added to \|TWA\|, in rows at TWA 40°, 90° and 165° by TWS 0, 5 … 30 kn, linear between. In full from 30° to 170° TWA, fading to none at 0° and 180°, so TWD passes smoothly through tacks and gybes | On |
-| TWS table | Knots added to TWS downwind, by TWS: none at 90° TWA or less, rising in a straight line to the full correction at the down angle (165° by default) | Off |
+| TWA table | Degrees added to \|TWA\|, in rows at TWA 40° (upwind), 90° (reaching) and 165° (downwind) by TWS 2.5, 5 … 15 kn, linear between, and from nothing at 0 kn below 2.5 kn. In full from 30° to 170° TWA, fading to none at 0° and 180°, so TWD passes smoothly through tacks and gybes | On |
+| TWS table | Knots added to TWS by TWS 5, 10 … 30 kn, in three rows: the upwind correction in full up to the up angle, the reaching correction at 90°, the downwind correction in full from the down angle, linear between, so it never steps. Up and down angles are rows too, by TWS. The up angle must be under 90° and the down angle over it. (An H5000 with an up angle past 90°, such as 165°, would step at 90°: set the up angle to where upwind sailing ends instead.) Masthead units read high off the wind (the sails speed the air up over the rig), so this mostly takes off | On |
 
 **Damping**, in seconds (0 = none), as on the H5000:
 
 | Value | Default | |
 |---|---|---|
-| Heading | 2 s | Heading, before true wind |
+| Heading | 0 s | Heading, before true wind. Keep it at apparent wind's lag: 0 for raw apparent wind, or a yaw swings TWD |
 | Heel | 2 s | Heel, before the STW table and leeway: takes most of the roll out |
 | True wind | 3 s | TWD, TWS and ground wind. TWA is the damped TWD less the heading, so it answers the helm at once |
 | STW | 1 s | The published STW |
@@ -103,7 +103,8 @@ More true wind damping gives a steadier TWD but shows a real shift later.
 | | |
 |---|---|
 | ![Calibration: the TWA table, in the H5000 layout](docs/screenshots/calibration-twa.png) | ![Calibration: the boat speed / heel table](docs/screenshots/calibration-stw.png) |
-| ![Settings: output mode, damping, input sources](docs/screenshots/settings.png) | ![The Live page in dark mode](docs/screenshots/live-dark.png) |
+| ![Calibration: the TWS table, upwind, reaching and downwind rows with their angles](docs/screenshots/calibration-tws.png) | ![Settings: output mode, damping, input sources](docs/screenshots/settings.png) |
+| ![The Live page in dark mode](docs/screenshots/live-dark.png) | |
 
 On a phone each row stacks: ![The Live page on a phone](docs/screenshots/live-phone.png)
 
@@ -129,31 +130,30 @@ Everything is set in the webapp and saved to `config.json` in the plugin's data 
 
 ```json
 {
-  "schema": 3,
+  "schema": 4,
   "mode": "shadow",
   "variation": 12.8,
-  "damping": { "heelS": 2, "headingS": 2, "trueWindS": 3, "stwS": 1, "currentS": 10 },
+  "damping": { "heelS": 2, "headingS": 0, "trueWindS": 3, "stwS": 1, "currentS": 10 },
   "sources": { "apparentWind": "", "stw": "", "heading": "", "attitude": "", "gps": "", "variation": "" },
   "corrections": {
-    "stw": { "enabled": true, "heel": [0, 10, 20], "stw": [0, 5, …, 30], "add": [[…], […], […]] },
+    "stw": { "enabled": true, "heel": [-20, -10, 0, 10, 20], "stw": [2.5, 5, …, 15], "add": [[…], […], […], […], […]] },
     "leeway": { "enabled": true, "k": 8.568 },
-    "twa": { "enabled": true, "tws": [0, 5, …, 30], "upwind": […], "reach": […], "downwind": […] },
-    "tws": { "enabled": false, "tws": [0, 5, …, 30], "correction": […], "downAngle": […] }
+    "twa": { "enabled": true, "tws": [2.5, 5, …, 15], "upwind": […], "reach": […], "downwind": […] },
+    "tws": { "enabled": true, "tws": [5, 10, …, 30], "upwind": […], "reach": […], "downwind": […], "upAngle": […], "downAngle": […] }
   }
 }
 ```
 
-Blank table cells are `null`; the plugin uses the nearest value in the row. The table axes are fixed: a file with any other layout is refused with the reason, and so is a file from a newer release, which is never overwritten.
+Blank table cells are `null`; the plugin uses the nearest value in the row, and a row with none takes the nearest row. The table axes are fixed (the H5000's 2018 layout): a file from 0.1.0 to 0.2.5 keeps its settings and leeway K, but its tables are reset to the defaults and the plugin runs in Shadow mode until you refit them with `plugincal` and Save (the status says so). A file with any other layout is refused with the reason, and so is a file from a newer release, which is never overwritten.
 
 **The defaults are the author's boat** (before its 2026 rig tune), fitted by `plugincal`. They will be wrong for yours: refit, or use **Reset to defaults** and enter your own.
 
 ## Limitations
 
 - **Your instrument displays show the instrument's numbers.** The plugin publishes into Signal K only. To see its values on the boat's displays, forward them to NMEA 2000 (for example with `signalk-to-nmea2000`). If you forward STW, choose your paddlewheel as the STW source in Settings: corrected STW coming back from the bus would otherwise look like a sensor and be corrected again.
-- **The damping defaults were chosen on instrument-damped apparent wind.** With raw apparent wind, heading damping in particular may need to come down; set it so a yaw does not swing TWD on the Live page.
+- **Damped apparent wind needs damped heading.** If your apparent wind arrives damped by the instrument, damp heading to the same lag, so a yaw does not swing TWD on the Live page.
 - **Current is a trend, not a live number.** It is the small difference between two vectors of about boat speed, so 1% of boat speed or 1° of heading makes 0.1 kn of current, and a paddlewheel's error changes from day to day. Read it averaged over both tacks of a beat.
-- **Heel rows are shared by both sides**, as on the H5000, so a paddlewheel that reads differently on port and starboard keeps that difference.
-- **Absolute TWS and TWD** (a masthead offset, an AWS scale error) are the same on both tacks, so they cannot be fitted from tacks and gybes: set them in the instrument.
+- **Absolute TWS and TWD** (a masthead offset, an AWS scale error) are the same on both tacks, so they cannot be fitted from tacks and gybes: set them in the instrument. The TWS table corrects TWS off the wind *relative to upwind*; it cannot tell whether the upwind reading itself is right.
 
 ## Troubleshooting
 
@@ -169,6 +169,7 @@ The plugin's status line (in the admin UI and at the top of the webapp) says wha
 | … no heel / no heading | Running without that input: no heel correction or leeway / no TWD, current or ground wind |
 | Rate limited … | Something is updating faster than 20 Hz, usually a loop with another plugin; the status names its source |
 | Configuration: … | The saved configuration is invalid; the message says why. Fix it in the webapp |
+| Upgraded from an earlier release … | A configuration saved by 0.1.0 to 0.2.5: its settings and leeway K are kept, its tables reset to the defaults, and Shadow mode on. Refit the tables with `plugincal` and Save |
 
 ## API
 

@@ -4,7 +4,7 @@ const fs = require('fs')
 const path = require('path')
 const { DEFAULTS } = require('./lib/defaults')
 const { Smooth, SmoothAngle, SmoothVector } = require('./lib/damping')
-const { process, correctInputs, normalizeConfig, CORRECTIONS, CONFIG_SCHEMA, AXES, MAX_LEEWAY_DEG, LEEWAY_FADE_KN, TWA_TAPER_UP_DEG, TWA_TAPER_DOWN_DEG, STW_FADE_KN, TWS_NONE_BELOW_DEG } = require('./lib/processor')
+const { process, correctInputs, normalizeConfig, CORRECTIONS, CONFIG_SCHEMA, AXES, MAX_LEEWAY_DEG, LEEWAY_FADE_KN, TWA_TAPER_UP_DEG, TWA_TAPER_DOWN_DEG } = require('./lib/processor')
 
 const MS_TO_KN = 1.94384
 const RAD_TO_DEG = 180 / Math.PI
@@ -152,11 +152,13 @@ module.exports = function (app) {
   let statusAt = 0
   let statusKind = null
   let statusText = ''
+  let notice = '' // shown ahead of every status until the config is saved (an upgraded file)
   function status (kind, text) {
     const now = Date.now()
     if (kind === statusKind && now - statusAt < STATUS_INTERVAL_MS) return
     statusKind = kind
-    statusText = text
+    statusText = notice ? `${notice} · ${text}` : text
+    text = statusText
     text += rateNote(now)
     lastStatus = text
     statusAt = now
@@ -333,6 +335,7 @@ module.exports = function (app) {
     lightAir = false
     resetDamping()
     lastResult = null
+    statusKind = null // so the next status shows at once (and a cleared notice goes with it)
     running = true
 
     // Paths not in the Signal K schema (every shadow path, and ground wind direction in
@@ -422,7 +425,9 @@ module.exports = function (app) {
   }
 
   plugin.start = function () {
-    const { config: cfg, errors } = normalizeConfig(loadStored())
+    const { config: cfg, errors, notices } = normalizeConfig(loadStored())
+    notice = notices.join('; ')
+    if (notice) app.error(notice)
     if (errors.length) {
       app.setPluginError(`Configuration: ${errors.join('; ')} — fix it in the webapp`)
       config = normalizeConfig({}).config // so the webapp can still load and repair it
@@ -482,6 +487,7 @@ module.exports = function (app) {
       } catch (e) {
         return res.status(500).json({ errors: [`could not save: ${e.message}`] })
       }
+      notice = '' // saved in this release's layout
       startWith(cfg)
       res.json({ config: cfg })
     })
@@ -497,9 +503,9 @@ module.exports = function (app) {
 
 // Fixed behaviour the webapp describes, sent from here so its text always matches the code.
 const BEHAVIOUR = {
-  stwFadeKn: STW_FADE_KN,
+  axes: AXES,
   twaRows: AXES.twaRows,
-  twsNoneBelowDeg: TWS_NONE_BELOW_DEG,
+  reachDeg: require('./public/tables').REACH_DEG,
   maxLeewayDeg: MAX_LEEWAY_DEG,
   leewayFadeKn: LEEWAY_FADE_KN,
   twaTaperUpDeg: TWA_TAPER_UP_DEG,

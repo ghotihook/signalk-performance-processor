@@ -90,7 +90,7 @@
       </div>
       <div class="panel">
         <h2>Damping</h2>
-        <p class="muted sub">Seconds; 0 is none. Like the H5000's damping: each value follows its input with this time constant, reaching about two thirds of a change after that many seconds. Heading and apparent wind need the same lag, or a yaw swings TWD: with raw, undamped apparent wind, keep heading damping low, and check on the Live page that TWD stays put through a yaw.</p>
+        <p class="muted sub">Seconds; 0 is none. Like the H5000's damping: each value follows its input with this time constant, reaching about two thirds of a change after that many seconds. Heading and apparent wind need the same lag, or a yaw swings TWD: with raw, undamped apparent wind, leave heading undamped (0), and check on the Live page that TWD stays put through a yaw.</p>
         <div class="fields" id="damping">
           <label class="field">True wind (TWD, TWS)<input id="damp-trueWindS" type="number" step="0.5" min="0" max="30" data-path="damping.trueWindS"></label>
           <label class="field">Heading<input id="damp-headingS" type="number" step="0.5" min="0" max="30" data-path="damping.headingS"></label>

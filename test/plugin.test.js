@@ -79,6 +79,17 @@ const wind = [
 const close = (a, b, tol, msg) => assert.ok(Math.abs(a - b) <= tol, `${msg || ''} expected ${b} ± ${tol}, got ${a}`)
 const paths = out => Object.fromEntries(out.flatMap(o => o.values).map(v => [v.path, v.value]))
 
+// Tables with something in them, so a test can tell corrected from uncorrected whatever
+// the defaults hold; and what the processor makes of the boat and wind above with them.
+const TABLES = {
+  stw: { add: [[0.4, 0.2, 0, -0.1, -0.1, -0.2], [0.3, 0.1, 0, 0, 0, 0], [0.3, 0.05, 0, 0, 0, 0], [0.3, 0.1, 0, 0, 0, 0], [0.35, 0.15, -0.05, -0.1, -0.1, -0.1]] },
+  twa: { upwind: [-9, -7, -5, -2, -4, -6], reach: [-3, -2, -1, 0, 1, 2], downwind: [2, 1, 0, -1, -2, -3] }
+}
+function model (stored = {}) {
+  const { process, normalizeConfig } = require('../lib/processor')
+  return process({ awa: 32, aws: 16.9, stw: 5.6, heel: -23, headingMagnetic: 110, sog: 5.4, cog: 119 }, normalizeConfig(stored).config).out
+}
+
 test('subscribes to every input with sourcePolicy all', () => {
   let sub = null
   const app = { debug () {}, error () {}, setPluginError () {}, setPluginStatus () {}, handleMessage () {}, getDataDirPath: () => fs.mkdtempSync(path.join(os.tmpdir(), 'spp-')),
@@ -92,11 +103,12 @@ test('subscribes to every input with sourcePolicy all', () => {
 })
 
 test('shadow mode publishes …Corrected paths with units', () => {
-  const h = harness()
+  const h = harness({ corrections: TABLES })
   h.feed(boat)
   const out = paths(h.feed(wind))
-  assert.ok(Math.abs(Math.abs(out['environment.wind.angleTrueWaterCorrected']) / RAD - 36.73) < 0.05)
-  assert.ok(Math.abs(out['environment.wind.speedTrueCorrected'] * MS_TO_KN - 12.64) < 0.1)
+  const m = model({ corrections: TABLES })
+  close(out['environment.wind.angleTrueWaterCorrected'] / RAD, m.twa, 1e-6)
+  close(out['environment.wind.speedTrueCorrected'] * MS_TO_KN, m.tws, 1e-4)
   assert.ok('environment.wind.directionTrueCorrected' in out)
   assert.ok('navigation.leewayAngleCorrected' in out)
   assert.ok(out['environment.currentCorrected'].drift >= 0)
@@ -116,9 +128,10 @@ test('replace mode publishes the standard paths', () => {
 })
 
 test('corrected STW goes out when the paddlewheel reports', () => {
-  const h = harness({ mode: 'replace' })
+  const h = harness({ mode: 'replace', corrections: TABLES })
   const out = paths(h.feed([{ path: 'navigation.attitude', value: { roll: -20 * RAD } }, { path: 'navigation.speedThroughWater', value: 6 / MS_TO_KN }]))
-  assert.ok(Math.abs(out['navigation.speedThroughWater'] * MS_TO_KN - (6 - 0.2 + 0.2 * 0.05)) < 1e-6)
+  // Heel -20 (port side down): the -20 row, 6 kn between its 5 (0.2) and 7.5 (0) columns.
+  close(out['navigation.speedThroughWater'] * MS_TO_KN, 6 + 0.2 - 0.2 * 1 / 2.5, 1e-6)
 })
 
 test('ignores its own output, however the source is spelled', () => {
@@ -134,7 +147,7 @@ test('reads only the chosen source when one is set', () => {
   h.feed(boat)
   h.feed([{ path: 'navigation.speedThroughWater', value: 1 / MS_TO_KN }], 'signalk-stw-heel-correction')
   const out = paths(h.feed(wind))
-  assert.ok(Math.abs(out['environment.wind.speedTrueCorrected'] * MS_TO_KN - 12.64) < 0.1)
+  close(out['environment.wind.speedTrueCorrected'] * MS_TO_KN, model().tws, 1e-4, 'true wind on the sensor STW, not 1 kn')
 })
 
 test('without a chosen STW source, ignores STW from other plugins', () => {
@@ -143,7 +156,7 @@ test('without a chosen STW source, ignores STW from other plugins', () => {
   const out = h.feed([{ path: 'navigation.speedThroughWater', value: 1 / MS_TO_KN }], 'signalk-stw-heel-correction')
   assert.deepStrictEqual(out, [])
   const tw = paths(h.feed(wind))
-  assert.ok(Math.abs(tw['environment.wind.speedTrueCorrected'] * MS_TO_KN - 12.64) < 0.1)
+  close(tw['environment.wind.speedTrueCorrected'] * MS_TO_KN, model().tws, 1e-4)
 })
 
 test('reads STW from a plugin when it is chosen in Settings', () => {
@@ -313,8 +326,8 @@ test('damping: published STW is smoothed; 0 means none', () => {
 
 test('config: damping times must be sensible', () => {
   const { normalizeConfig } = require('../lib/processor')
-  assert.ok(normalizeConfig({ schema: 3, damping: { trueWindS: -1 } }).errors.some(e => /True wind damping/.test(e)))
-  assert.ok(normalizeConfig({ schema: 3, damping: { headingS: -1 } }).errors.some(e => /Heading damping/.test(e)))
+  assert.ok(normalizeConfig({ damping: { trueWindS: -1 } }).errors.some(e => /True wind damping/.test(e)))
+  assert.ok(normalizeConfig({ damping: { headingS: -1 } }).errors.some(e => /Heading damping/.test(e)))
 })
 
 test('no true wind without STW, and the status says why', () => {
@@ -331,7 +344,7 @@ test('rejects implausible input rather than publishing it', () => {
 })
 
 test('reports a bad stored config instead of starting', () => {
-  const h = harness({ schema: 3, corrections: { twa: { upwind: [1] } } })
+  const h = harness({ schema: 4, corrections: { twa: { upwind: [1] } } })
   assert.ok(h.errors.some(e => e.includes('TWA table 40° row')))
 })
 
@@ -346,7 +359,8 @@ test('GET /calibration sends the built-in limits the webapp describes', async ()
   const h = harness()
   const { json } = await h.call('GET', '/calibration')
   assert.deepStrictEqual(json.behaviour, {
-    stwFadeKn: 1, twaRows: { upwind: 40, reach: 90, downwind: 165 }, twsNoneBelowDeg: 90,
+    axes: { stwHeel: [-20, -10, 0, 10, 20], stwSpeed: [2.5, 5, 7.5, 10, 12.5, 15], twaTws: [2.5, 5, 7.5, 10, 12.5, 15], twaRows: { upwind: 40, reach: 90, downwind: 165 }, twsTws: [5, 10, 15, 20, 25, 30] },
+    twaRows: { upwind: 40, reach: 90, downwind: 165 }, reachDeg: 90,
     maxLeewayDeg: 15, leewayFadeKn: [1.5, 3], twaTaperUpDeg: 30, twaTaperDownDeg: 10,
     lightAirOffKn: 1.5, lightAirOnKn: 2, staleS: 3, maxPublishHz: 20
   })
@@ -391,10 +405,27 @@ test('saved config survives a restart, and the plugin options are ignored', asyn
   assert.strictEqual(r.json.config.corrections.leeway.k, 6.5)
 })
 
+test('a 0.2.5 config keeps running after the upgrade, in Shadow mode, saying so until saved', async () => {
+  const h = harness({ schema: 3, mode: 'replace', sources: { stw: 'h2000.II' }, corrections: { leeway: { k: 6.2 } } })
+  assert.deepStrictEqual(h.errors.filter(e => !/Upgraded/.test(e)), [], 'not refused')
+  h.feed(boat)
+  const out = paths(h.feed(wind))
+  assert.ok('environment.wind.speedTrueCorrected' in out && !('environment.wind.speedTrue' in out), 'Shadow paths only')
+  assert.match(h.statuses[h.statuses.length - 1], /^Upgraded from an earlier release.*Save · /)
+  const r = await h.call('GET', '/calibration')
+  assert.strictEqual(r.json.config.corrections.leeway.k, 6.2)
+  assert.strictEqual(r.json.config.sources.stw, 'h2000.II')
+  assert.strictEqual(h.saved().schema, 3, 'the file is left as it was until Save')
+  await h.call('PUT', '/calibration', r.json.config)
+  assert.strictEqual(h.saved().schema, 4)
+  h.feed(boat)
+  assert.doesNotMatch(h.statuses[h.statuses.length - 1], /Upgraded/, 'the notice goes once saved')
+})
+
 test('the saved file records its schema version', async () => {
   const h = harness()
   await h.call('PUT', '/calibration', { corrections: { leeway: { k: 6.5 } } })
-  assert.strictEqual(h.saved().schema, 3)
+  assert.strictEqual(h.saved().schema, 4)
 })
 
 test('a broken config file is reported, and the webapp can still load and fix it', async () => {
@@ -443,12 +474,15 @@ test('registers no route the Signal K server already owns on a plugin router', (
 })
 
 test('publishes one TWA per update: the corrected one, never the working value', () => {
-  const h = harness()
+  const h = harness({ corrections: TABLES })
   h.feed(boat)
   const values = h.feed(wind).flatMap(o => o.values)
   const twa = values.filter(v => v.path.startsWith('environment.wind.angleTrueWater'))
   assert.strictEqual(twa.length, 1, 'exactly one TWA value')
   assert.strictEqual(twa[0].path, 'environment.wind.angleTrueWaterCorrected')
-  // Before the table the TWA is ~45°; after it ~36.7°. Only the latter goes out.
-  assert.ok(Math.abs(Math.abs(twa[0].value) / RAD - 36.73) < 0.05)
+  // Only the TWA after the table goes out, not the one before it.
+  const m = model({ corrections: TABLES })
+  const before = model({ corrections: { ...TABLES, twa: { enabled: false } } })
+  assert.ok(Math.abs(m.twa - before.twa) > 1, 'the table moves this TWA')
+  close(twa[0].value / RAD, m.twa, 1e-6)
 })

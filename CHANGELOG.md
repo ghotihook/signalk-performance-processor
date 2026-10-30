@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.6 — 2026-10-31
+
+**The tables now use the H5000's 2018 layout (config schema 4). A config saved by 0.1.0 to 0.2.5 is moved forward: its settings (mode aside), input sources, damping, fallback variation and leeway K are kept, but its boat speed, TWA and TWS tables are reset to the defaults and the plugin runs in Shadow mode, saying so in its status, until you refit the tables with boatcal `plugincal` 1.3.1 and Save. The file is left as it was until then.**
+
+- **Boat speed / heel**: heel rows −20, −10, 0, 10, 20° (+ = starboard side down), so port and starboard can differ; boat speed columns 2.5, 5, 7.5, 10, 12.5, 15 kn, the last held above. Below 2.5 kn the correction runs to nothing at 0 kn (there is no 0 kn column, and no fade below 1 kn). **Edit symmetrically** on the Calibration page mirrors each edit to the other side.
+- **TWA**: columns TWS 2.5, 5 … 15 kn, each row from nothing at 0 kn below 2.5 kn; rows still at 40°, 90° (now labelled Reaching) and 165°.
+- **TWS**: columns 5, 10 … 30 kn, with upwind, reach and downwind rows and up and down angle rows: the upwind correction in full up to the up angle, the reaching correction at 90°, the downwind correction in full from the down angle, linear between; from nothing at 0 kn. The up angle must be under 90° and the down angle over it; an H5000-style up angle past 90° is refused, since the correction would step at 90°.
+- **The TWS table is on by default**: fitted, it takes about 2 kn off downwind (in full from 150°) and, above 10 kn, up to 2.8 kn on a reach, where the masthead reads high (the sails speed the air up over the rig). Held out by day, TWS off the wind is 1.45 kn RMS from upwind TWS against 2.3 kn with no table.
+- **The defaults are refitted in the new layout** (boatcal `plugincal` 1.3.1, 2025 to March 2026). Against 0.2.5's, held out by day: TWD step across tacks 6.3° against 6.8°, gybes 3.9° against 4.4°.
+- **Heading is no longer damped by default** (was 2 s). True wind is damped after it is worked out, as TWD and TWS; heading must keep apparent wind's lag, and with raw apparent wind (as the README asks for) that is none, so 2 s made each yaw swing TWD. Damp heading only to match apparent wind that arrives damped. A saved config keeps its own value: with raw apparent wind, set Settings → Damping → Heading to 0.
+- The pasted-table format follows the new layout; `GET /calibration`'s behaviour list sends the table axes and drops `stwFadeKn` and `twsNoneBelowDeg`.
+- **README and screenshots**: how the TWS table is fitted (each reaching or downwind leg against the beats either side), what it can't correct (the upwind reading itself), and a screenshot of the TWS table; every screenshot shows the new layout and defaults.
+
 ## 0.2.5 — 2026-10-30
 
 - **The README, rewritten for someone new to it**: what it is for, features, requirements (including raw apparent wind and which paths are needed for what), installation, getting started, how it works, the webapp, outputs, configuration, limitations and a troubleshooting table of the status messages. The one-boat evidence (results tables, the STW table comparison, the full default tables) is gone; the defaults are described as the author's boat, to be refitted.
