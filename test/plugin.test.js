@@ -99,7 +99,7 @@ test('subscribes to every input with sourcePolicy all', () => {
   assert.strictEqual(sub.sourcePolicy, 'all')
   const want = ['environment.wind.angleApparent', 'environment.wind.speedApparent', 'navigation.speedThroughWater',
     'navigation.headingMagnetic', 'navigation.headingTrue', 'navigation.attitude',
-    'navigation.speedOverGround', 'navigation.courseOverGroundTrue', 'navigation.magneticVariation']
+    'navigation.speedOverGround', 'navigation.courseOverGroundTrue', 'navigation.courseOverGroundMagnetic', 'navigation.magneticVariation']
   assert.deepStrictEqual(sub.subscribe.map(s => s.path).sort(), want.sort())
 })
 
@@ -509,6 +509,19 @@ test('true heading goes out with each compass update: magnetic heading + variati
   close(deg2(gps['navigation.headingTrueCorrected']), 5, 1e-9, 'variation from Signal K, wrapped past 360')
   const r = harness({ mode: 'replace' })
   assert.ok('navigation.headingTrue' in paths(r.feed([{ path: 'navigation.headingMagnetic', value: 110 * RAD }])), 'standard path in Replace mode')
+})
+
+test('COG magnetic is used when there is no COG true, turned true with the variation', () => {
+  const run = cog => {
+    const h = harness()
+    h.feed(boat.filter(v => v.path !== 'navigation.courseOverGroundTrue').concat(cog))
+    return paths(h.feed(wind))['environment.currentCorrected']
+  }
+  const want = paths((() => { const h = harness(); h.feed(boat); return h.feed(wind) })())['environment.currentCorrected']
+  assert.strictEqual(run([]), undefined, 'no COG, no current')
+  const mag = run([{ path: 'navigation.courseOverGroundMagnetic', value: (119 - 12.8) * RAD }])
+  close(mag.drift, want.drift, 1e-9, 'drift')
+  close(mag.setTrue, want.setTrue, 1e-9, 'set')
 })
 
 test('no true heading is sent when the heading sensor sends true heading itself', () => {

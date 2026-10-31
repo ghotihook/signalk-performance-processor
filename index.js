@@ -61,7 +61,7 @@ const INPUTS = {
   stw: ['navigation.speedThroughWater'],
   heading: ['navigation.headingMagnetic', 'navigation.headingTrue'],
   attitude: ['navigation.attitude'],
-  gps: ['navigation.speedOverGround', 'navigation.courseOverGroundTrue'],
+  gps: ['navigation.speedOverGround', 'navigation.courseOverGroundTrue', 'navigation.courseOverGroundMagnetic'],
   variation: ['navigation.magneticVariation']
 }
 const INPUT_OF = Object.fromEntries(Object.entries(INPUTS).flatMap(([k, ps]) => ps.map(p => [p, k])))
@@ -297,6 +297,21 @@ module.exports = function (app) {
     publish([{ path: outPath('stw'), value: ms }], timestamp, from)
   }
 
+  // Variation in degrees: from Signal K (the GPS) when fresh, else the configured fallback.
+  function variationDeg (now) {
+    const vr = fresh('navigation.magneticVariation', now, VARIATION_MAX_AGE_MS)
+    return vr != null ? vr * RAD_TO_DEG : config.variation
+  }
+
+  // COG true in degrees. Many GPSs send COG magnetic only (PGN 129026 referenced to
+  // magnetic); that is turned true with the same variation as the heading.
+  function cogTrue (now) {
+    const t = fresh('navigation.courseOverGroundTrue', now)
+    if (t != null) return t * RAD_TO_DEG
+    const m = fresh('navigation.courseOverGroundMagnetic', now)
+    return m == null ? undefined : ((m * RAD_TO_DEG + variationDeg(now)) % 360 + 360) % 360
+  }
+
   // True heading goes out with each magnetic heading, as heading + variation: the heading
   // true wind uses, at the compass's own rate. Not when the heading sensor sends true
   // heading itself, so a better source (a GPS compass) is never displaced.
@@ -304,8 +319,7 @@ module.exports = function (app) {
     if (fresh('navigation.headingTrue', now) != null) return
     const mag = dampedHeading('navigation.headingMagnetic', now)
     if (mag == null) return
-    const vr = fresh('navigation.magneticVariation', now, VARIATION_MAX_AGE_MS)
-    const hdt = mag + (vr != null ? vr * RAD_TO_DEG : config.variation)
+    const hdt = mag + variationDeg(now)
     publish([{ path: outPath('hdt'), value: ((hdt % 360) + 360) % 360 / RAD_TO_DEG }], timestamp, from)
   }
 
@@ -338,7 +352,7 @@ module.exports = function (app) {
       headingTrue: dampedHeading('navigation.headingTrue', now),
       variation: deg(fresh('navigation.magneticVariation', now, VARIATION_MAX_AGE_MS)),
       sog: (v => v == null ? undefined : v * MS_TO_KN)(fresh('navigation.speedOverGround', now)),
-      cog: deg(fresh('navigation.courseOverGroundTrue', now))
+      cog: cogTrue(now)
     }
     const result = process(input, config)
     lastResult = { input, ...result }

@@ -33,7 +33,7 @@
 | Boat speed | `navigation.speedThroughWater` | everything |
 | Heading | `navigation.headingTrue`, or `headingMagnetic` with `navigation.magneticVariation` | TWD, current, ground wind |
 | Heel | `navigation.attitude` (roll) | the STW table's heel rows, leeway |
-| SOG, COG | `navigation.speedOverGround`, `courseOverGroundTrue` | current, ground wind |
+| SOG, COG | `navigation.speedOverGround`, `courseOverGroundTrue` (or `courseOverGroundMagnetic` + variation) | current, ground wind |
 
 > **Apparent wind must be raw: AWA and AWS as the masthead measures them, uncorrected and undamped.** The plugin applies the calibration and the damping itself. Wind that an instrument has already corrected gets corrected twice, and wind it has already damped lags heading and boat speed, so TWD swings with every yaw. In the instrument, take the wind tables out and set wind damping to 0, or read apparent wind from a source ahead of it. Masthead alignment (an offset fixed on the sensor) is the exception: keep it in the instrument.
 >

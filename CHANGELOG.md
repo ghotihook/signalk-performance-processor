@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.9 — 2026-10-31
+
+- **COG magnetic is used when there is no COG true**, turned true with the same variation as the heading. Many GPSs send COG referenced to magnetic only (PGN 129026), which Signal K puts on `navigation.courseOverGroundMagnetic`; until now current and ground wind needed something else, such as derived-data, to make COG true.
+
 ## 0.2.8 — 2026-10-31
 
 - **True heading is sent**, as compass heading plus variation, with each compass update: `navigation.headingTrueCorrected` in Shadow mode, `navigation.headingTrue` in Replace mode. It is the heading true wind uses, at the compass's own rate, so the whole boat shares one heading. Not sent when the heading sensor sends true heading itself. In Replace mode, rank this plugin first for `navigation.headingTrue` and turn off any other plugin that works it out (such as derived-data's true heading).
