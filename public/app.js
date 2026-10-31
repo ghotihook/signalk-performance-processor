@@ -67,7 +67,6 @@
     selected: 'twa',
     symmetric: false, // STW table: edit the same heel on both sides at once
     live: null,
-    liveAt: 0,
     saving: false
   }
 
@@ -76,6 +75,8 @@
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
   const fmt = (v, d = 1) => v == null || !Number.isFinite(v) ? '--' : v.toFixed(d)
   const dirty = () => JSON.stringify(state.saved) !== JSON.stringify(state.draft)
+  const side = v => v < 0 ? 'port' : 'stbd'
+  const on = id => !!(state.saved && state.saved.corrections[id] && state.saved.corrections[id].enabled) // a saved correction is enabled
 
   // ---- data ----------------------------------------------------------------
 
@@ -105,7 +106,6 @@
   async function pollLive () {
     try {
       state.live = await getJson('/live')
-      state.liveAt = Date.now()
       $('conn').hidden = true
     } catch (e) {
       $('conn').textContent = `Lost contact with the plugin (${e.message})`
@@ -225,9 +225,7 @@
     const p = r.published || o
     const i = r.input
     const dm = (state.saved && state.saved.damping) || {}
-    const on = id => !!(state.saved && state.saved.corrections[id] && state.saved.corrections[id].enabled)
     const step = id => r.steps.find(s => s.id === id) || {}
-    const side = v => v < 0 ? 'port' : 'stbd'
     const angle = v => `${fmt(Math.abs(v))}° ${side(v)}`
     const change = (v, d) => (v > 0 ? '+' : v < 0 ? '−' : '±') + Math.abs(v).toFixed(d)
     const damping = s => ({ label: 'Damping', value: s ? `${s} s` : 'none', cls: 'damp' })
@@ -364,7 +362,6 @@
       const o = r.out
       const p = r.published || o // what is sent: damped
       const u = trueWind(r.input, r.input.stw)
-      const side = v => v < 0 ? 'port' : 'stbd'
       $('tiles').innerHTML = [
         tile('TWA', fmt(Math.abs(p.twa)), `° ${side(p.twa)}`, `undamped ${fmt(Math.abs(o.twa))}° · uncorrected ${fmt(Math.abs(u.twa))}°`),
         tile('TWS', fmt(p.tws), 'kn', `undamped ${fmt(o.tws)} · uncorrected ${fmt(u.tws)} kn`),
@@ -404,8 +401,6 @@
 
   // The values the plugin actually sends, one per path, matching what index.js publishes.
   function renderPublished (o, paths, lightAir) {
-    const on = id => !!(state.saved && state.saved.corrections[id] && state.saved.corrections[id].enabled)
-    const side = v => v < 0 ? 'port' : 'stbd'
     const held = 'not sent: light air'
     const rows = [
       ['TWA', `${fmt(Math.abs(o.twa))}° ${side(o.twa)}`, paths.twa],

@@ -44,6 +44,7 @@ const DISAGREE_TAU_S = 10
 const LOCK_WINDOW_MS = 2000
 const RATE_WINDOW_MS = 10000 // each source's update rate, shown in Settings, over this long
 const wrap180 = d => ((d + 180) % 360 + 360) % 360 - 180
+const norm360 = d => (d % 360 + 360) % 360
 const COMPARE = {
   'environment.wind.angleApparent': { limit: 5, unit: '°', diff: (a, b) => wrap180((a - b) * RAD_TO_DEG) },
   'environment.wind.speedApparent': { limit: 1, unit: ' kn', diff: (a, b) => (a - b) * MS_TO_KN },
@@ -340,7 +341,7 @@ module.exports = function (app) {
     const t = fresh('navigation.courseOverGroundTrue', now)
     if (t != null) return t * RAD_TO_DEG
     const m = fresh('navigation.courseOverGroundMagnetic', now)
-    return m == null ? undefined : ((m * RAD_TO_DEG + variationDeg(now)) % 360 + 360) % 360
+    return m == null ? undefined : norm360(m * RAD_TO_DEG + variationDeg(now))
   }
 
   // True heading in degrees, as true wind uses it: from a true-heading sensor, else the
@@ -349,7 +350,7 @@ module.exports = function (app) {
     const t = dampedHeading('navigation.headingTrue', now)
     if (t != null) return t
     const m = dampedHeading('navigation.headingMagnetic', now)
-    return m == null ? undefined : ((m + variationDeg(now)) % 360 + 360) % 360
+    return m == null ? undefined : norm360(m + variationDeg(now))
   }
 
   // With each heading update, at the compass's own rate (10 Hz where apparent wind comes at
@@ -415,16 +416,16 @@ module.exports = function (app) {
     let twd = null; let twa
     if (o.twd != null) {
       twd = damp.twd.update(o.twd, now, dm.trueWindS)
-      twa = ((twd - o.heading) % 360 + 540) % 360 - 180
+      twa = wrap180(twd - o.heading)
     } else {
-      twa = ((damp.twa.update(o.twa, now, dm.trueWindS) + 180) % 360) - 180
+      twa = wrap180(damp.twa.update(o.twa, now, dm.trueWindS))
     }
     const cur = o.current ? damp.current.update(o.current.drift, o.current.set, now, dm.currentS) : null
     // Ground wind is damped as true wind is, its angle following from the heading now.
     let gw = null
     if (o.groundWind) {
       const gwd = damp.gwd.update(o.groundWind.direction, now, dm.trueWindS)
-      gw = { direction: gwd, speed: damp.gws.update(o.groundWind.speed, now, dm.trueWindS), angle: ((gwd - o.heading) % 360 + 540) % 360 - 180 }
+      gw = { direction: gwd, speed: damp.gws.update(o.groundWind.speed, now, dm.trueWindS), angle: wrap180(gwd - o.heading) }
     }
     lastResult.published = { twa, tws, twd, stw: config.corrections.stw.enabled ? damp.stw.v : null, current: cur && { drift: cur.speed, set: cur.deg }, groundWind: gw }
 
@@ -708,5 +709,5 @@ const BEHAVIOUR = {
   maxPublishHz: 1000 / MIN_PUBLISH_INTERVAL_MS
 }
 
-// Exposed for the test suite only; not part of the Signal K plugin API.
-module.exports._internals = { OUTPUTS, INPUTS, SHADOW_SUFFIX, CONFIG_FILE, BEHAVIOUR }
+// For tooling (the README's screenshots); not part of the Signal K plugin API.
+module.exports._internals = { OUTPUTS, SHADOW_SUFFIX, BEHAVIOUR }

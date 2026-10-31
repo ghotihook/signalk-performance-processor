@@ -505,23 +505,21 @@ test('publishes one TWA per update: the corrected one, never the working value',
 
 // ---- input sources and true heading (0.2.8) ----
 
-const deg2 = v => v * 180 / Math.PI
-
 test('heading from another plugin is ignored by default: derived-data true heading lags the compass', () => {
   const h = harness()
   h.feed([{ path: 'navigation.headingTrue', value: 200 * RAD }], 'signalk-derived-data')
   h.feed(boat)
   const out = paths(h.feed(wind))
   const m = model()
-  close(deg2(out['environment.wind.directionTrueCorrected']), m.twd, 1e-6, 'TWD from the compass, magnetic + variation, not 200°')
+  close(deg(out['environment.wind.directionTrueCorrected']), m.twd, 1e-6, 'TWD from the compass, magnetic + variation, not 200°')
 })
 
 test('true heading goes out with each compass update: magnetic heading + variation', () => {
   const h = harness()
   const out = paths(h.feed([{ path: 'navigation.headingMagnetic', value: 110 * RAD }]))
-  close(deg2(out['navigation.headingTrueCorrected']), 122.8, 1e-9, 'fallback variation 12.8')
+  close(deg(out['navigation.headingTrueCorrected']), 122.8, 1e-9, 'fallback variation 12.8')
   const gps = paths(h.feed([{ path: 'navigation.magneticVariation', value: 10 * RAD }, { path: 'navigation.headingMagnetic', value: 355 * RAD }]))
-  close(deg2(gps['navigation.headingTrueCorrected']), 5, 1e-9, 'variation from Signal K, wrapped past 360')
+  close(deg(gps['navigation.headingTrueCorrected']), 5, 1e-9, 'variation from Signal K, wrapped past 360')
   const r = harness({ mode: 'replace' })
   assert.ok('navigation.headingTrue' in paths(r.feed([{ path: 'navigation.headingMagnetic', value: 110 * RAD }])), 'standard path in Replace mode')
 })
@@ -716,14 +714,14 @@ test('TWA and ground wind angle go out with each compass update: the damped TWD 
   const h = harness()
   h.feed(boat)
   const w = paths(h.feed(wind))
-  const twd = deg2(w['environment.wind.directionTrueCorrected'])
-  const gwd = deg2(w['environment.wind.directionGroundCorrected'])
+  const twd = deg(w['environment.wind.directionTrueCorrected'])
+  const gwd = deg(w['environment.wind.directionGroundCorrected'])
   // The bow swings 20° before the next apparent wind: TWA follows each compass update.
   for (const mag of [115, 120, 125, 130]) {
     const out = paths(h.feed([{ path: 'navigation.headingMagnetic', value: mag * RAD }]))
     const hdg = mag + 12.8
-    close(deg2(out['environment.wind.angleTrueWaterCorrected']), ((twd - hdg) % 360 + 540) % 360 - 180, 1e-9, `TWA at ${mag}° M`)
-    close(deg2(out['environment.wind.angleTrueGroundCorrected']), ((gwd - hdg) % 360 + 540) % 360 - 180, 1e-9, 'ground wind angle')
+    close(deg(out['environment.wind.angleTrueWaterCorrected']), ((twd - hdg) % 360 + 540) % 360 - 180, 1e-9, `TWA at ${mag}° M`)
+    close(deg(out['environment.wind.angleTrueGroundCorrected']), ((gwd - hdg) % 360 + 540) % 360 - 180, 1e-9, 'ground wind angle')
     assert.ok(!('environment.wind.directionTrueCorrected' in out) && !('environment.wind.speedTrueCorrected' in out), 'TWD and TWS only with apparent wind')
   }
 })
