@@ -374,8 +374,6 @@ test('GET /calibration sends the built-in limits the webapp describes', async ()
   const h = harness()
   const { json } = await h.call('GET', '/calibration')
   assert.deepStrictEqual(json.behaviour, {
-    axes: { stwHeel: [-20, -10, 0, 10, 20], stwSpeed: [1, 2.5, 5, 7.5, 10, 12.5, 15], twaTws: [5, 10, 15, 20, 25, 30], twaRows: { upwind: 40, reach: 90, downwind: 165 }, twsTws: [5, 10, 15, 20, 25, 30] },
-    twaRows: { upwind: 40, reach: 90, downwind: 165 }, reachDeg: 90,
     maxLeewayDeg: 15, leewayFadeKn: [1.5, 3], twaTaperUpDeg: 30, twaTaperDownDeg: 10,
     lightAirOffKn: 1.5, lightAirOnKn: 2, staleS: 3, maxPublishHz: 20
   })

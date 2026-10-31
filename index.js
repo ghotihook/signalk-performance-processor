@@ -4,7 +4,7 @@ const fs = require('fs')
 const path = require('path')
 const { DEFAULTS } = require('./lib/defaults')
 const { Smooth, SmoothAngle, SmoothVector } = require('./lib/damping')
-const { process, correctInputs, normalizeConfig, CORRECTIONS, CONFIG_SCHEMA, AXES, MAX_LEEWAY_DEG, LEEWAY_FADE_KN, TWA_TAPER_UP_DEG, TWA_TAPER_DOWN_DEG } = require('./lib/processor')
+const { process, correctInputs, normalizeConfig, CORRECTIONS, CONFIG_SCHEMA, MAX_LEEWAY_DEG, LEEWAY_FADE_KN, TWA_TAPER_UP_DEG, TWA_TAPER_DOWN_DEG } = require('./lib/processor')
 
 const MS_TO_KN = 1.94384
 const RAD_TO_DEG = 180 / Math.PI
@@ -200,11 +200,9 @@ module.exports = function (app) {
     if (kind === statusKind && now - statusAt < STATUS_INTERVAL_MS) return
     statusKind = kind
     statusText = (notice ? `${notice} · ${text}` : text) + disagreeNote(now)
-    text = statusText
-    text += rateNote(now)
-    lastStatus = text
+    lastStatus = statusText + rateNote(now)
     statusAt = now
-    app.setPluginStatus(text)
+    app.setPluginStatus(lastStatus)
   }
 
   // A source's record. One message counts once even when it arrives as several deltas
@@ -391,16 +389,16 @@ module.exports = function (app) {
     if (awsKn < 0 || awsKn > MAX_PLAUSIBLE_AWS_KN) return status('badaws', `Not publishing — AWS of ${awsKn.toFixed(1)} kn is not plausible`)
     if (stwKn < 0 || stwKn > MAX_PLAUSIBLE_STW_KN) return status('badstw', `Not publishing — STW of ${stwKn.toFixed(1)} kn is not plausible`)
 
-    const deg = v => v == null ? undefined : v * RAD_TO_DEG
+    const scaled = (v, k) => v == null ? undefined : v * k
     const input = {
-      awa: deg(Math.atan2(Math.sin(awa), Math.cos(awa))),
+      awa: wrap180(awa * RAD_TO_DEG),
       aws: awsKn,
       stw: stwKn,
       heel: heelDeg(now),
       headingMagnetic: dampedHeading('navigation.headingMagnetic', now),
       headingTrue: dampedHeading('navigation.headingTrue', now),
-      variation: deg(fresh('navigation.magneticVariation', now, VARIATION_MAX_AGE_MS)),
-      sog: (v => v == null ? undefined : v * MS_TO_KN)(fresh('navigation.speedOverGround', now)),
+      variation: scaled(fresh('navigation.magneticVariation', now, VARIATION_MAX_AGE_MS), RAD_TO_DEG),
+      sog: scaled(fresh('navigation.speedOverGround', now), MS_TO_KN),
       cog: cogTrue(now),
       cogFrom: fresh('navigation.courseOverGroundTrue', now) != null ? 'true' : 'magnetic' // for the Live page
     }
@@ -468,10 +466,8 @@ module.exports = function (app) {
 
   function onDelta (delta) {
     const now = Date.now()
-    let windChanged = false
-    let windTimestamp = null
-    let windFrom = ''
-    let heading = null // the heading update in this delta, sent after the loop
+    let wind = null // the apparent wind message completed in this delta, worked out after the loop
+    let heading = null // likewise the heading update
     for (const update of (delta.updates || [])) {
       if (isOwnSource(update.$source)) continue
       for (const v of (update.values || [])) {
@@ -483,9 +479,9 @@ module.exports = function (app) {
         const sensor = fromSensor(update)
         const record = noteSource(group, src, sensor, update.timestamp, now)
         // The chosen source; or, with none chosen, the sensor sending it most often
-        // (chooseSensor). Another plugin's output is never used unless chosen: it is a copy, later and slower than the sensor
-        // (derived-data's true heading), or already corrected (another STW plugin, which
-        // would feed this one, and this one it, without end).
+        // (chooseSensor). Another plugin's output is never used unless chosen: it is a copy,
+        // later and slower than the sensor (derived-data's true heading), or already
+        // corrected (another STW plugin, which would feed this one, and this one it, without end).
         const wanted = config.sources[group]
         if (!wanted && sensor) chooseSensor(group, src, now)
         if (src !== inUse(group)) { compareOther(record, v.path, v.value, now); continue }
@@ -494,12 +490,12 @@ module.exports = function (app) {
         if (v.path === 'navigation.attitude') { const h = rollDeg(v.value); if (h != null) damp.heel.update(h, now, config.damping.heelS) }
         if (v.path === 'navigation.headingTrue' || v.path === 'navigation.headingMagnetic') damp[v.path.split('.')[1]].update(v.value * RAD_TO_DEG, now, config.damping.headingS)
         if (group === 'heading') heading = { timestamp: update.timestamp, from: src }
-        if (group === 'apparentWind' && windPairComplete(v.path, update.timestamp)) { windChanged = true; windTimestamp = update.timestamp; windFrom = src }
+        if (group === 'apparentWind' && windPairComplete(v.path, update.timestamp)) wind = { timestamp: update.timestamp, from: src }
         if (group === 'stw') onStw(v.value, update.timestamp, now, src)
       }
     }
-    if (heading) onHeading(heading.timestamp, now, heading.from, windChanged)
-    if (windChanged) onWind(windTimestamp, now, windFrom)
+    if (heading) onHeading(heading.timestamp, now, heading.from, wind != null)
+    if (wind) onWind(wind.timestamp, now, wind.from)
     else checkWind(now)
   }
 
@@ -695,10 +691,8 @@ module.exports = function (app) {
 }
 
 // Fixed behaviour the webapp describes, sent from here so its text always matches the code.
+// (The tables' layout it reads from tables.js, which it loads from this plugin.)
 const BEHAVIOUR = {
-  axes: AXES,
-  twaRows: AXES.twaRows,
-  reachDeg: require('./public/tables').REACH_DEG,
   maxLeewayDeg: MAX_LEEWAY_DEG,
   leewayFadeKn: LEEWAY_FADE_KN,
   twaTaperUpDeg: TWA_TAPER_UP_DEG,

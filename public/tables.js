@@ -185,7 +185,7 @@
     throw new Error(`no table "${kind}"`)
   }
 
-  const api = { AXES, TWA_ROW_KEYS, TWS_ROWS, REACH_DEG, interp, fromZero, blendRows, fillGaps, twsCorrection, parseStw, parseTwa, parseTws, format }
+  const api = { AXES, TWA_ROW_KEYS, REACH_DEG, interp, fromZero, blendRows, fillGaps, twsCorrection, parseStw, parseTwa, parseTws, format }
   if (typeof module !== 'undefined' && module.exports) module.exports = api
   else root.PPTables = api
 })(typeof self !== 'undefined' ? self : this)

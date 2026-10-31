@@ -3,14 +3,14 @@
 
   const API = '/plugins/signalk-performance-processor'
   const LIVE_MS = 1000
-  const AXES = PPTables.AXES // the tables' fixed rows and columns (tables.js)
+  const AXES = PPTables.AXES // the tables' fixed rows and columns (tables.js, from the plugin)
   const list = xs => `${xs[0]}, ${xs[1]} … ${xs[xs.length - 1]}`
 
   // Fixed behaviour of each correction, written from the numbers the plugin sends (b), so
   // the description always matches the code.
   const LIMITS = {
     stw: b => [
-      `Below the first column (${b.axes.stwSpeed[0]} kn) the correction runs in a straight line to nothing at 0 kn, so a stopped boat is never given speed. (The H5000 has no 1 kn column and runs the line from 2.5 kn, which misses a paddlewheel's stall.) Beyond the last column (${b.axes.stwSpeed[b.axes.stwSpeed.length - 1]} kn) that column is held.`,
+      `Below the first column (${AXES.stwSpeed[0]} kn) the correction runs in a straight line to nothing at 0 kn, so a stopped boat is never given speed. (The H5000 has no 1 kn column and runs the line from 2.5 kn, which misses a paddlewheel's stall.) Beyond the last column (${AXES.stwSpeed[AXES.stwSpeed.length - 1]} kn) that column is held.`,
       'Rows are heel each side (− = port side down, + = starboard side down), linear between rows; more heel than the last row uses the last row. Edit symmetrically copies each value to the same heel on the other side.',
       'Most paddlewheels read low when slow, so positive values at low speed are normal.'
     ],
@@ -20,15 +20,15 @@
       'Needs heel; without it leeway is 0.'
     ],
     twa: b => [
-      `Rows at TWA ${b.twaRows.upwind}°, ${b.twaRows.reach}° and ${b.twaRows.downwind}°, as on the H5000: the ${b.twaRows.upwind}° row applies in full below ${b.twaRows.upwind}°, the ${b.twaRows.downwind}° row beyond ${b.twaRows.downwind}°, linear between rows and between TWS columns.`,
+      `Rows at TWA ${AXES.twaRows.upwind}°, ${AXES.twaRows.reach}° and ${AXES.twaRows.downwind}°, as on the H5000: the ${AXES.twaRows.upwind}° row applies in full below ${AXES.twaRows.upwind}°, the ${AXES.twaRows.downwind}° row beyond ${AXES.twaRows.downwind}°, linear between rows and between TWS columns.`,
       `Fades out towards head to wind and dead downwind: in full from ${b.twaTaperUpDeg}° to ${180 - b.twaTaperDownDeg}° TWA, none at 0° and 180°. TWA and TWD then pass smoothly through tacks and gybes instead of TWD following the bow. Upwind the boat is inside the fade only while tacking; downwind, sailing deeper than ${180 - b.twaTaperDownDeg}° gets part of the correction.`,
-      `To keep that smooth, the ${b.twaRows.upwind}° row must be within ±${b.twaTaperUpDeg}° and the ${b.twaRows.downwind}° row within ±${b.twaTaperDownDeg}°.`,
-      `Below the first TWS column (${b.axes.twaTws[0]} kn) the correction runs in a straight line to nothing at 0 kn; beyond the last (${b.axes.twaTws[b.axes.twaTws.length - 1]} kn) that column is held.`
+      `To keep that smooth, the ${AXES.twaRows.upwind}° row must be within ±${b.twaTaperUpDeg}° and the ${AXES.twaRows.downwind}° row within ±${b.twaTaperDownDeg}°.`,
+      `Below the first TWS column (${AXES.twaTws[0]} kn) the correction runs in a straight line to nothing at 0 kn; beyond the last (${AXES.twaTws[AXES.twaTws.length - 1]} kn) that column is held.`
     ],
     tws: b => [
-      `Blends with TWA, never a step: the upwind correction in full up to the up angle, the reaching correction in full at ${b.reachDeg}°, the downwind correction in full from the down angle, a straight line between.`,
-      `The up angle must be below ${b.reachDeg}° and the down angle above it.`,
-      `Below the first TWS column (${b.axes.twsTws[0]} kn) each correction runs in a straight line to nothing at 0 kn; between columns, corrections and angles are interpolated in a straight line; beyond the last column it is held.`,
+      `Blends with TWA, never a step: the upwind correction in full up to the up angle, the reaching correction in full at ${PPTables.REACH_DEG}°, the downwind correction in full from the down angle, a straight line between.`,
+      `The up angle must be below ${PPTables.REACH_DEG}° and the down angle above it.`,
+      `Below the first TWS column (${AXES.twsTws[0]} kn) each correction runs in a straight line to nothing at 0 kn; between columns, corrections and angles are interpolated in a straight line; beyond the last column it is held.`,
       'Never takes TWS below 0.'
     ]
   }
