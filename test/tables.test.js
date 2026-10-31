@@ -19,7 +19,7 @@ test('a pasted table is a valid plugin table', () => {
 })
 
 test('spreadsheet damage: tabs, padding, quotes, Unicode minus, degree signs, rows in any order', () => {
-  const text = '﻿"TWA\\TWS"\t5\t10\t15\t20\t25\t30\n' +
+  const text = '\uFEFF"TWA\\TWS"\t5\t10\t15\t20\t25\t30\n' +
     '165º TWA\t0.5\t1.2\t−3.5\t1\t\t\n' +
     '  40°  \t−9\t−7.6\t-12.6\t-5.8\t-5.7\t\n' +
     'Reaching\t-1\t-2.4\t-4.4\t-5.4\t1.4\t3.9\n'

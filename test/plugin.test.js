@@ -50,7 +50,7 @@ function harness (stored = null, options = {}) {
     if (!onDelta) return []
     clock += afterMs
     const before = published.length
-    const update = { $source: source, timestamp: '2026-01-01T00:00:00.000Z', values }
+    const update = { $source: source, timestamp: new Date(clock).toISOString(), values }
     if (!source.startsWith('signalk-')) update.source = { label: source.split('.')[0], type: 'NMEA0183', talker: 'II' }
     onDelta({ updates: [update] })
     return published.slice(before)
@@ -62,7 +62,8 @@ function harness (stored = null, options = {}) {
     return { status, json }
   }
   const saved = () => { try { return JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8')) } catch (e) { return null } }
-  return { plugin, app, dir, published, meta, statuses, errors, feed, call, saved }
+  const deliver = d => { clock += 100; if (onDelta) onDelta(d) }
+  return { plugin, app, dir, published, meta, statuses, errors, feed, call, saved, deliver }
 }
 
 const boat = [
@@ -386,7 +387,7 @@ test('GET /live reports the last result, inputs and sources seen', async () => {
   const r = await h.call('GET', '/live')
   assert.ok(r.json.running)
   assert.ok(r.json.result.steps.some(s => s.id === 'twa'))
-  assert.deepStrictEqual(r.json.sourcesSeen.apparentWind, ['h2000.II'])
+  assert.deepStrictEqual(r.json.sources.apparentWind.map(s => s.source), ['h2000.II'])
   assert.strictEqual(r.json.outputPaths.tws, 'environment.wind.speedTrueCorrected')
 })
 
@@ -485,4 +486,148 @@ test('publishes one TWA per update: the corrected one, never the working value',
   const before = model({ corrections: { ...TABLES, twa: { enabled: false } } })
   assert.ok(Math.abs(m.twa - before.twa) > 1, 'the table moves this TWA')
   close(twa[0].value / RAD, m.twa, 1e-6)
+})
+
+// ---- input sources and true heading (0.2.8) ----
+
+const deg2 = v => v * 180 / Math.PI
+
+test('heading from another plugin is ignored by default: derived-data true heading lags the compass', () => {
+  const h = harness()
+  h.feed([{ path: 'navigation.headingTrue', value: 200 * RAD }], 'signalk-derived-data')
+  h.feed(boat)
+  const out = paths(h.feed(wind))
+  const m = model()
+  close(deg2(out['environment.wind.directionTrueCorrected']), m.twd, 1e-6, 'TWD from the compass, magnetic + variation, not 200°')
+})
+
+test('true heading goes out with each compass update: magnetic heading + variation', () => {
+  const h = harness()
+  const out = paths(h.feed([{ path: 'navigation.headingMagnetic', value: 110 * RAD }]))
+  close(deg2(out['navigation.headingTrueCorrected']), 122.8, 1e-9, 'fallback variation 12.8')
+  const gps = paths(h.feed([{ path: 'navigation.magneticVariation', value: 10 * RAD }, { path: 'navigation.headingMagnetic', value: 355 * RAD }]))
+  close(deg2(gps['navigation.headingTrueCorrected']), 5, 1e-9, 'variation from Signal K, wrapped past 360')
+  const r = harness({ mode: 'replace' })
+  assert.ok('navigation.headingTrue' in paths(r.feed([{ path: 'navigation.headingMagnetic', value: 110 * RAD }])), 'standard path in Replace mode')
+})
+
+test('no true heading is sent when the heading sensor sends true heading itself', () => {
+  const h = harness()
+  h.feed([{ path: 'navigation.headingTrue', value: 120 * RAD }], 'gpscompass.II')
+  assert.ok(!('navigation.headingTrueCorrected' in paths(h.feed([{ path: 'navigation.headingMagnetic', value: 110 * RAD }], 'gpscompass.II'))))
+})
+
+test('two heel sensors: the one sending most often is used, the other is compared and flagged, never mixed', () => {
+  const h = harness({ mode: 'replace' })
+  // The compass sends roll once a second, 4.6° off; the IMU ten times a second. The compass
+  // happens to arrive first.
+  const compass = { path: 'navigation.attitude', value: { roll: 4.43 * RAD } }
+  const imu = { path: 'navigation.attitude', value: { roll: -0.15 * RAD } }
+  h.feed([compass], 'compass.II', 100)
+  for (let t = 0; t < 40; t++) {
+    h.feed([imu], 'imu.II', 100)
+    if (t % 10 === 9) h.feed([compass], 'compass.II', 0)
+  }
+  h.feed(boat.filter(v => v.path !== 'navigation.attitude'))
+  h.feed([imu], 'imu.II', 100)
+  h.feed(wind)
+  return h.call('GET', '/live').then(({ json }) => {
+    assert.strictEqual(json.inUse.attitude, 'imu.II')
+    assert.strictEqual(json.inputs['navigation.attitude'].source, 'imu.II')
+    close(json.result.input.heel, -0.15, 0.05, 'the IMU heel, with no compass steps in it')
+    const d = json.disagreements.find(x => x.input === 'attitude')
+    assert.ok(d && d.other === 'compass.II' && Math.abs(d.diff - 4.58) < 0.3, JSON.stringify(json.disagreements))
+    assert.match(h.statuses[h.statuses.length - 1], /heel: compass\.II reads \+4\.\d° of heel from imu\.II/)
+  })
+})
+
+test('a sensor that agrees is not flagged', async () => {
+  const h = harness()
+  for (let t = 0; t < 30; t++) {
+    h.feed([{ path: 'navigation.headingMagnetic', value: 110 * RAD }], 'compass.II', 100)
+    if (t % 5 === 4) h.feed([{ path: 'navigation.headingMagnetic', value: 110.5 * RAD }], 'other.II', 0)
+  }
+  h.feed(boat.filter(v => v.path !== 'navigation.headingMagnetic'))
+  h.feed(wind)
+  const { json } = await h.call('GET', '/live')
+  assert.deepStrictEqual(json.disagreements, [])
+})
+
+test('a chosen source overrides the automatic choice', async () => {
+  const h = harness({ sources: { attitude: 'compass.II' } })
+  for (let t = 0; t < 30; t++) h.feed([{ path: 'navigation.attitude', value: { roll: -0.15 * RAD } }], 'imu.II', 100)
+  h.feed([{ path: 'navigation.attitude', value: { roll: 4.43 * RAD } }], 'compass.II', 100)
+  h.feed(boat.filter(v => v.path !== 'navigation.attitude'))
+  h.feed(wind)
+  const { json } = await h.call('GET', '/live')
+  assert.strictEqual(json.inUse.attitude, 'compass.II')
+  close(json.result.input.heel, 4.43, 0.01)
+})
+
+test('when the sensor in use goes quiet, the input is missing and the status names the other', () => {
+  const h = harness()
+  for (let t = 0; t < 30; t++) h.feed([{ path: 'navigation.attitude', value: { roll: -0.15 * RAD } }], 'imu.II', 100)
+  h.feed([{ path: 'navigation.attitude', value: { roll: 4.43 * RAD } }], 'compass.II', 4000) // the IMU is now 4 s old
+  h.feed(boat.filter(v => v.path !== 'navigation.attitude'))
+  h.feed(wind)
+  assert.match(h.statuses[h.statuses.length - 1], /no heel \(compass\.II sends it: choose it in Settings\)/)
+})
+
+test('apparent wind arriving as two deltas, as the server delivers it: one true wind per message, with both halves', () => {
+  const h = harness()
+  h.feed(boat)
+  const at = ts => ({ $source: 'h2000.II', source: { label: 'h2000', type: 'NMEA2000' }, timestamp: ts })
+  // The server hands a plugin one delta per path; both carry the sensor message's timestamp.
+  const send = (path, value, ts) => {
+    const before = h.published.length
+    h.deliver({ updates: [{ ...at(ts), values: [{ path, value }] }] })
+    return h.published.slice(before)
+  }
+  assert.deepStrictEqual(send('environment.wind.angleApparent', 32 * RAD, 't1'), [], 'waits for the speed')
+  const out = paths(send('environment.wind.speedApparent', 16.9 / MS_TO_KN, 't1'))
+  close(out['environment.wind.speedTrueCorrected'] * MS_TO_KN, model().tws, 1e-4, 'the new AWS, not the last one')
+  // The next message: the angle alone does not go out with the old speed.
+  assert.deepStrictEqual(send('environment.wind.angleApparent', 40 * RAD, 't2'), [])
+  assert.ok(paths(send('environment.wind.speedApparent', 16.9 / MS_TO_KN, 't2'))['environment.wind.speedTrueCorrected'] != null)
+  assert.doesNotMatch(h.statuses[h.statuses.length - 1], /Rate limited/)
+})
+
+test('a wind source whose angle and speed never share a timestamp is still worked out', () => {
+  const h = harness()
+  h.feed(boat)
+  const send = (path, value, ts) => { const n = h.published.length; h.deliver({ updates: [{ $source: 'h2000.II', source: { label: 'h2000' }, timestamp: ts, values: [{ path, value }] }] }); return h.published.slice(n) }
+  send('environment.wind.angleApparent', 32 * RAD, 'a1')
+  send('environment.wind.speedApparent', 16.9 / MS_TO_KN, 'b1')
+  assert.ok(send('environment.wind.angleApparent', 32 * RAD, 'a2').length, 'on its second value')
+})
+
+test('an occasional update inside 50 ms (sensor timing) is dropped without flagging a loop', () => {
+  const h = harness()
+  h.feed(boat)
+  h.feed([{ path: 'navigation.headingMagnetic', value: 110 * RAD }], 'h2000.II', 100)
+  h.feed([{ path: 'navigation.headingMagnetic', value: 110.1 * RAD }], 'h2000.II', 20) // CAN jitter
+  h.feed(wind)
+  assert.doesNotMatch(h.statuses[h.statuses.length - 1], /Rate limited/)
+  assert.deepStrictEqual(h.errors.filter(e => /Rate limited/.test(e)), [])
+})
+
+test('Settings can show each source of an input with its message rate; one message in two deltas counts once', async () => {
+  const h = harness()
+  const att = (src, ts) => ({ updates: [{ $source: src, source: { label: src }, timestamp: ts, values: [{ path: 'navigation.attitude', value: { roll: 0 } }] }] })
+  for (let t = 0; t < 30; t++) {
+    h.deliver(att('imu.II', `i${t}`))
+    if (t % 10 === 9) { clock -= 100; h.deliver(att('compass.II', `c${t}`)) }
+  }
+  for (let t = 0; t < 10; t++) {
+    const ts = `w${t}`
+    h.deliver({ updates: [{ $source: 'h2000.II', source: { label: 'h2000' }, timestamp: ts, values: [{ path: 'environment.wind.angleApparent', value: 0.5 }] }] })
+    h.deliver({ updates: [{ $source: 'h2000.II', source: { label: 'h2000' }, timestamp: ts, values: [{ path: 'environment.wind.speedApparent', value: 5 }] }] })
+  }
+  h.feed([{ path: 'navigation.headingTrue', value: 1 }], 'signalk-derived-data')
+  const { json } = await h.call('GET', '/live')
+  const hz = (input, src) => json.sources[input].find(s => s.source === src).hz
+  close(hz('attitude', 'imu.II'), 10, 0.5)
+  close(hz('attitude', 'compass.II'), 1, 0.2)
+  close(hz('apparentWind', 'h2000.II'), 5, 0.3, 'messages every 200 ms (two deltas 100 ms apart each), not values')
+  assert.deepStrictEqual(json.sources.heading, [{ source: 'signalk-derived-data', hz: 0, plugin: true }])
 })

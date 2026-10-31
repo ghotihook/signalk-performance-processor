@@ -4,8 +4,9 @@ const { process, correctInputs, normalizeConfig, _internals } = require('../lib/
 const { DEFAULTS } = require('../lib/defaults')
 const K = DEFAULTS.corrections.leeway.k
 
-const { interp, fromZero, blendRows, fillGaps, stwGridLookup } = _internals
+const { stwGridLookup } = _internals
 const T = require('../public/tables')
+const { interp, fromZero, blendRows, fillGaps } = T
 
 // Tables for the tests, in the H5000 layout, so the tests do not move when the defaults are
 // refitted. The STW table is deliberately not symmetric: port and starboard rows differ.
@@ -303,6 +304,7 @@ test('config: bad tables are reported, not accepted', () => {
   bad({ corrections: { twa: { upwind: [1, 2] } } }, 'needs 6 values')
   bad({ corrections: { stw: { heel: [0, 10, 20] } } }, 'H5000 layout')
   bad({ corrections: { stw: { add: [[0, 0, 0, 0, 0, 0]] } } }, 'one row per heel')
+  bad({ corrections: { stw: { add: STW.add.map((r, i) => i === 2 ? [0, 0] : r) } } }, 'heel 0° row: needs 6 values')
   bad({ corrections: { stw: { add: STW.add.map(r => r.map(() => null)) } } }, 'no values')
   bad({ corrections: { twa: { upwind: [0, 'x', 0, 0, 0, 0] } } }, 'number or blank')
   bad({ corrections: { tws: { reach: [0, 0, 0] } } }, 'needs 6 values')

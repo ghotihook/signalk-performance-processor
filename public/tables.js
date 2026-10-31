@@ -99,7 +99,7 @@
   // Rows of cells; the first row is the header. Tolerates spreadsheet damage: quotes, a
   // byte-order mark, Unicode minus signs, degree signs and padding.
   function cells (text) {
-    const lines = String(text || '').replace(/^﻿/, '').trim().split(/\r?\n/).filter(l => l.trim())
+    const lines = String(text || '').replace(/^\uFEFF/, '').trim().split(/\r?\n/).filter(l => l.trim())
     if (lines.length < 2) throw new Error('needs a header row and at least one table row')
     const sep = lines[0].includes(',') ? ',' : lines[0].includes('\t') ? '\t' : lines[0].includes(';') ? ';' : /\s+/
     return lines.map(l => l.trim().split(sep).map(cleanCell))

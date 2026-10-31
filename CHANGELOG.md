@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.8 — 2026-10-31
+
+- **True heading is sent**, as compass heading plus variation, with each compass update: `navigation.headingTrueCorrected` in Shadow mode, `navigation.headingTrue` in Replace mode. It is the heading true wind uses, at the compass's own rate, so the whole boat shares one heading. Not sent when the heading sensor sends true heading itself. In Replace mode, rank this plugin first for `navigation.headingTrue` and turn off any other plugin that works it out (such as derived-data's true heading).
+- **Every input is read from sensors only, and from one sensor, unless a source is chosen in Settings** (was "Any" for all but STW). Another plugin's value is never used by default: on a test boat derived-data's true heading arrived at 3.5 Hz and about 190 ms behind the compass's own 10 Hz heading, enough to swing TWD by up to 3° in a tack. With two sensors on one input the plugin used whichever arrived last; on the test boat a compass sending heel once a second, 4.6° off the IMU, put a 4.6° step into heel every second. Now the first 2 s pick the sensor sending most often, kept until restart.
+- **Disagreeing sensors are flagged**: another sensor reading differently from the one in use (by more than 5° of AWA, 1 kn of AWS, 0.3 kn of STW or SOG, 3° of heading, 2° of heel or 1° of variation, over 10 s) is shown on the Live page and in the status, with both sources and the difference.
+- **If the sensor in use goes quiet** the input is missing, as before, and the status names any other sensor sending it, rather than switching to a sensor the tables were not fitted to.
+- **Fixed: true wind used the previous message's AWS.** The server hands a plugin each path as its own delta, so a wind message's angle and speed arrive one after the other: true wind was worked out on the angle with the speed from the message before (0.5 s old on a 2 Hz wind sensor), and the result with the new speed was then dropped by the 20 Hz limit, with a false "Rate limited" status. True wind now waits for both halves of a message (the same timestamp). On the test boat's race logs the stale speed put 0.12 kn RMS (0.4 kn at the 99th percentile) into published TWS after damping.
+- **"Rate limited" is flagged only when sustained** (5 updates dropped within 10 s, as a loop does), not for the odd pair of sensor updates inside 50 ms.
+- **Live page**: a Heading row in the pipeline (compass and variation to true heading, and what is sent). **Settings** lists each source with its measured rate (messages a second) and marks another plugin's output, and shows which sensor "Auto (sensors only)" is using.
+- **Tidier code**: one record per input source (rate, sensor or plugin, comparison) instead of four parallel maps; the webapp takes the table axes, labels and staleness limit from the plugin instead of repeating them.
+
 ## 0.2.7 — 2026-10-31
 
 **The TWA table is now by TWS 5, 10, 15, 20, 25 and 30 kn, the same columns as the TWS table (config schema 5). A config saved by 0.2.6 keeps its settings, leeway K and boat speed and TWS tables; its TWA table is reset to the defaults and the plugin runs in Shadow mode, saying so in its status, until you refit the TWA table with boatcal `plugincal` 1.3.2 and Save. A config from 0.1.0 to 0.2.5 moves forward as in 0.2.6.**

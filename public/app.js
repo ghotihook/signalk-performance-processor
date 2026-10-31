@@ -3,7 +3,8 @@
 
   const API = '/plugins/signalk-performance-processor'
   const LIVE_MS = 1000
-  const STALE_MS = 5000
+  const AXES = PPTables.AXES // the tables' fixed rows and columns (tables.js)
+  const list = xs => `${xs[0]}, ${xs[1]} … ${xs[xs.length - 1]}`
 
   // Fixed behaviour of each correction, written from the numbers the plugin sends (b), so
   // the description always matches the code.
@@ -42,9 +43,9 @@
 
   // The tables' text format (tables.js): what Paste a table reads and Copy writes.
   const PASTE = {
-    stw: { parse: t => PPTables.parseStw(t), hint: 'First row <code>heel\\stw</code> then the boat speeds 2.5, 5 … 15; then a row for heel −20, −10, 0, 10 and 20, each its label then its values. This is what boatcal <code>plugincal</code> prints.' },
-    twa: { parse: t => PPTables.parseTwa(t), hint: 'First row <code>TWA\\TWS</code> then the TWS columns 5, 10 … 30; then a row for TWA 40, 90 and 165, each its label then its values. This is what boatcal <code>plugincal</code> prints.' },
-    tws: { parse: t => PPTables.parseTws(t), hint: 'First row <code>TWS</code> then the TWS columns 5, 10 … 30; then rows <code>upwind</code>, <code>reach</code>, <code>downwind</code> (kn), <code>up angle</code> and <code>down angle</code> (°). This is what boatcal <code>plugincal</code> prints.' }
+    stw: { parse: t => PPTables.parseStw(t), hint: `First row <code>heel\\stw</code> then the boat speeds ${list(AXES.stwSpeed)}; then a row for heel ${AXES.stwHeel.join(', ')}, each its label then its values. This is what boatcal <code>plugincal</code> prints.` },
+    twa: { parse: t => PPTables.parseTwa(t), hint: `First row <code>TWA\\TWS</code> then the TWS columns ${list(AXES.twaTws)}; then a row for TWA ${Object.values(AXES.twaRows).join(', ')}, each its label then its values. This is what boatcal <code>plugincal</code> prints.` },
+    tws: { parse: t => PPTables.parseTws(t), hint: `First row <code>TWS</code> then the TWS columns ${list(AXES.twsTws)}; then rows <code>upwind</code>, <code>reach</code>, <code>downwind</code> (kn), <code>up angle</code> and <code>down angle</code> (°). This is what boatcal <code>plugincal</code> prints.` }
   }
 
   const SOURCE_LABELS = {
@@ -61,6 +62,8 @@
     saved: null, // config as stored by the plugin
     draft: null, // config being edited
     defaults: null,
+    behaviour: null, // the plugin's fixed limits (GET /calibration), for the help text
+    configError: null,
     selected: 'twa',
     symmetric: false, // STW table: edit the same heel on both sides at once
     live: null,
@@ -244,11 +247,22 @@
     const notSent = why => ({ lines: ['not sent'], note: why, cls: 'off' })
 
     const heel = i.heel == null ? missing('Heel', 'upright row, no leeway') : sensor('Heel', `${fmt(Math.abs(i.heel), 0)}° ${side(i.heel)}`, `damped ${dm.heelS} s`)
-    const heading = o.heading == null ? missing('Heading', 'no TWD, current or ground wind') : sensor('Heading', `${fmt(o.heading, 0)}° T`, `${headingNote(o)}${dm.headingS ? `, damped ${dm.headingS} s` : ''}`)
+    const heading = o.heading == null ? missing('Heading', 'no TWD, current or ground wind') : from('Heading', `${fmt(o.heading, 0)}° T`, 'heading')
+    const fromCompass = i.headingTrue == null && i.headingMagnetic != null
     const stw = from('STW', `${fmt(o.stw, 2)} kn`, 'boat speed')
     const twdNote = 'damped TWD − heading'
 
     return [
+      {
+        // True heading: the compass plus variation, sent with each compass update unless the
+        // heading sensor sends true heading itself.
+        name: 'Heading',
+        inputs: i.headingTrue != null ? [sensor('True heading', `${fmt(i.headingTrue, 0)}° T`, 'from the heading sensor')]
+          : i.headingMagnetic != null ? [sensor('Compass', `${fmt(i.headingMagnetic, 0)}° M`, 'magnetic'), sensor('Variation', `${fmt(Math.abs(o.variation), 1)}° ${o.variation < 0 ? 'W' : 'E'}`, o.headingFrom === 'magnetic + fallback variation' ? 'fallback, from Settings' : 'from Signal K')]
+            : [missing('Compass', 'no TWD, current or ground wind')],
+        steps: [fromCompass ? { label: 'Add variation', value: `${fmt(o.heading, 0)}° T` } : { label: 'Add variation', value: '--', note: i.headingTrue != null ? 'not needed' : 'no heading', cls: 'off' }, damping(dm.headingS)],
+        out: fromCompass ? { lines: [`Heading ${fmt(o.heading, 0)}° T`], note: 'with each compass update' } : notSent(i.headingTrue != null ? 'the sensor sends true heading' : 'no heading')
+      },
       {
         name: 'Boat speed',
         inputs: [sensor('Paddlewheel', `${fmt(i.stw, 2)} kn`, 'raw'), heel],
@@ -336,7 +350,8 @@
   function renderLive () {
     const live = state.live
     const r = live && live.result
-    const old = !r || live.ageMs > STALE_MS
+    const staleMs = (state.behaviour ? state.behaviour.staleS : 3) * 1000
+    const old = !r || live.ageMs > staleMs
     $('liveAge').textContent = r ? (old ? `last update ${Math.round(live.ageMs / 1000)} s ago` : '') : ''
 
     if (!r) {
@@ -378,8 +393,11 @@
 
     const inputs = live ? Object.entries(live.inputs) : []
     $('inputs').innerHTML = inputs.length
-      ? inputs.sort().map(([path, i]) => `<tr><td>${esc(path)}</td><td>${esc(i.source)}</td><td class="num ${i.ageMs > STALE_MS ? 'warn' : ''}">${fmt(i.ageMs / 1000)} s</td></tr>`).join('')
+      ? inputs.sort().map(([path, i]) => `<tr><td>${esc(path)}</td><td>${esc(i.source)}</td><td class="num ${i.ageMs > staleMs ? 'warn' : ''}">${fmt(i.ageMs / 1000)} s</td></tr>`).join('')
       : '<tr><td colspan="3" class="muted center">Nothing received yet</td></tr>'
+    // Another sensor sending an input, reading differently from the one in use.
+    const dis = (live && live.disagreements) || []
+    $('disagree').innerHTML = dis.map(d => `<p class="warn">${esc(SOURCE_LABELS[d.input] || d.input)}: <span class="mono">${esc(d.other)}</span> reads ${d.diff > 0 ? '+' : '−'}${fmt(Math.abs(d.diff))}${esc(d.unit)} from <span class="mono">${esc(d.used)}</span>, which is in use. The other is not used; if it is the right one, choose it in Settings.</p>`).join('')
   }
 
   // The values the plugin actually sends, one per path, matching what index.js publishes.
@@ -392,6 +410,7 @@
       ['TWS', `${fmt(o.tws)} kn`, paths.tws]
     ]
     if (o.twd != null) rows.push(['TWD', lightAir ? held : `${fmt(o.twd, 0)}° T`, paths.twd])
+    if (o.heading != null && o.headingFrom !== 'true heading') rows.push(['Heading', `${fmt(o.heading, 0)}° T`, paths.hdt])
     if (on('stw')) rows.push(['STW', `${fmt(o.stw, 2)} kn`, paths.stw])
     if (on('leeway')) rows.push(['Leeway', `${fmt(Math.abs(o.leeway))}° ${side(o.leeway)}`, paths.leeway])
     if (o.current) rows.push(['Current', `${fmt(o.current.drift, 2)} kn → ${fmt(o.current.set, 0)}°`, paths.current])
@@ -427,11 +446,11 @@
     } else if (id === 'leeway') {
       body = `<div class="fields">${field('K', 'corrections.leeway.k', c.k, 0.01)}</div>`
     } else if (id === 'twa') {
-      const rows = [['40° TWA', 'upwind', true], ['90° TWA', 'reach', true], ['165° TWA', 'downwind', true]]
+      const rows = PPTables.TWA_ROW_KEYS.map(k => [`${AXES.twaRows[k]}° TWA`, k, true])
       body = grid('Degrees added to |TWA| (blank = not enough data: nearest measured value used)', 'TWS kn', 'corrections.twa', 'tws', rows, c)
     } else if (id === 'tws') {
       const rows = [['Upwind kn', 'upwind', true], ['Reaching kn', 'reach', true], ['Downwind kn', 'downwind', true], ['Up angle °', 'upAngle', false], ['Down angle °', 'downAngle', false]]
-      body = grid('Knots added to TWS: upwind in full up to the up angle, reaching at 90°, downwind in full from the down angle', 'TWS kn', 'corrections.tws', 'tws', rows, c) +
+      body = grid(`Knots added to TWS: upwind in full up to the up angle, reaching at ${PPTables.REACH_DEG}°, downwind in full from the down angle`, 'TWS kn', 'corrections.tws', 'tws', rows, c) +
         `<p id="twsExample" class="muted sub">${esc(twsExample(c))}</p>`
     }
     if (PASTE[id]) body += pasteBox(id)
@@ -456,16 +475,15 @@
 
   // Paste a whole table as text, or copy it out in the same format (tables.js).
   function pasteBox (id) {
-    return `<details class="paste"><summary>Paste a table</summary>` +
+    return '<details class="paste"><summary>Paste a table</summary>' +
       `<p class="muted sub">${PASTE[id].hint} Commas, tabs, semicolons or spaces between cells; blank cells allowed where the table allows them.</p>` +
       `<textarea id="paste-${esc(id)}" rows="6" spellcheck="false" aria-label="${esc(CORRECTIONS[id].name)} to paste"></textarea>` +
       `<div><button type="button" class="ghost" data-paste="${esc(id)}">Replace the table</button> ` +
       `<button type="button" class="ghost" data-copy="${esc(id)}">Copy this table</button> <span id="paste-msg-${esc(id)}" class="warn"></span></div></details>`
   }
 
-  // A worked example of the TWS table's ramp, from the values being edited, so it is plain
-  // that the correction blends in with TWA instead of switching on. Uses the column nearest
-  // 10 kn that has a correction.
+  // A worked example of the TWS table's ramp at 10 kn of TWS, from the values being edited,
+  // so it is plain that the correction blends in with TWA instead of switching on.
   function twsExample (t) {
     try {
       const kn = v => `${v > 0 ? '+' : v < 0 ? '−' : '±'}${Math.abs(v).toFixed(2)} kn`
@@ -511,20 +529,28 @@
     $('behaviour').innerHTML = b ? [
       `<b>Light air:</b> below ${b.lightAirOffKn} kn of TWS, wind direction is noise, so TWA, TWD and the ground wind direction and angle are not published (TWS and ground wind speed still are). They come back once TWS reaches ${b.lightAirOnKn} kn; the gap stops them flickering on and off.`,
       `<b>Stale inputs:</b> an input older than ${b.staleS} s is not used. Without STW or apparent wind nothing is published; without heading, no TWD, current or ground wind; without SOG and COG, no current or ground wind; without heel, no heel correction or leeway.`,
-      `<b>Rate limit:</b> no path is published more often than ${b.maxPublishHz} Hz. Faster updates are dropped and the status says so; that usually means a feedback loop with another plugin.`,
+      `<b>Rate limit:</b> no path is published more often than ${b.maxPublishHz} Hz. Faster updates are dropped; when that keeps happening the status says so, as it usually means a feedback loop with another plugin.`,
       '<b>Implausible input</b> (apparent wind over 120 kn, STW over 60 kn, heel beyond ±90°, or negative speeds) is not used, and the status says why.'
     ].map(t => `<li>${t}</li>`).join('') : '<li>Update the plugin to see these.</li>'
     renderSources()
   }
 
   function renderSources () {
-    const seen = (state.live && state.live.sourcesSeen) || {}
+    const live = state.live || {}
+    // Each source with its measured rate, and whether it is another plugin's output (used
+    // only if chosen): the rate is what Auto chooses by.
+    const seen = key => (live.sources && live.sources[key]) || []
+    const describe = (key, src) => {
+      const s = seen(key).find(x => x.source === src)
+      return s ? [src, `${s.hz} Hz`, s.plugin ? 'another plugin' : null].filter(Boolean).join(' · ') : src
+    }
     $('sources').innerHTML = Object.entries(SOURCE_LABELS).map(([key, label]) => {
       const chosen = state.draft.sources[key] || ''
-      const opts = Array.from(new Set([...(seen[key] || []), chosen].filter(Boolean)))
+      const opts = Array.from(new Set([...seen(key).map(x => x.source), chosen].filter(Boolean)))
+      const auto = live.inUse && live.inUse[key] && !chosen ? `: ${describe(key, live.inUse[key])}` : ''
       return `<label>${esc(label)}<select data-path="sources.${key}">` +
-        `<option value="">${key === 'stw' ? 'Auto (sensors only)' : 'Any'}</option>` +
-        opts.map(s => `<option value="${esc(s)}" ${s === chosen ? 'selected' : ''}>${esc(s)}${(seen[key] || []).includes(s) ? '' : ' (not seen)'}</option>`).join('') +
+        `<option value="">Auto (sensors only)${esc(auto)}</option>` +
+        opts.map(s => `<option value="${esc(s)}" ${s === chosen ? 'selected' : ''}>${esc(describe(key, s))}${seen(key).some(x => x.source === s) ? '' : ' (not seen)'}</option>`).join('') +
         '</select></label>'
     }).join('')
   }
