@@ -307,6 +307,19 @@ test('damping: heading is smoothed before true wind', () => {
   close(twd(10) - before, 10, 0.01, 'all of it after many time constants')
 })
 
+test('damping: heel takes every attitude message, not only those before an STW or wind update', async () => {
+  // Roll swinging ±10° at 10 Hz, with wind always arriving just after a +10° sample. Damping
+  // only the samples that came before a wind update would see +10° every time.
+  const h = harness({ damping: { heelS: 2, headingS: 0, trueWindS: 0, stwS: 0, currentS: 0 } })
+  const rest = boat.filter(v => v.path !== 'navigation.attitude')
+  for (let t = 0; t < 60; t++) {
+    h.feed([{ path: 'navigation.attitude', value: { roll: (t % 2 ? 10 : -10) * RAD } }], 'h2000.II', 100)
+    if (t % 2) h.feed(rest.concat(wind), 'h2000.II', 0)
+  }
+  const { json } = await h.call('GET', '/live')
+  assert.ok(Math.abs(json.result.input.heel) < 1.5, `heel ${json.result.input.heel.toFixed(2)}°: the average of the swing, near 0`)
+})
+
 test('damping: published STW is smoothed; 0 means none', () => {
   const run = stwS => {
     const h = harness({ mode: 'replace', damping: { heelS: 0, headingS: 0, trueWindS: 0, stwS, currentS: 0 } })

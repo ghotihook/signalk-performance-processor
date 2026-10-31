@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.11 — 2026-10-31
+
+- **Heel damping takes every attitude message**, at the sensor's own rate (10 Hz from the test boat's IMU). It used to take only the latest heel when boat speed or apparent wind arrived, about 5–6 of the IMU's 10 samples a second, so heel came out noisier than its damping setting promised, and a roll in step with those updates could bias it. The time constant is unchanged.
+- **When Auto switches an input to the sensor sending most often** (2 s after start), heel or heading damping starts afresh, so the first sensor's reading (on the test boat, a compass reading heel 4.6° off) does not linger in it.
+
 ## 0.2.10 — 2026-10-31
 
 - **TWA goes out in light air.** Below 1.5 kn of TWS only TWD and ground wind direction and angle are held back now; TWA, which the crew sails by in light air, is always sent.

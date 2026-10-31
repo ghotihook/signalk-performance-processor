@@ -130,6 +130,7 @@ module.exports = function (app) {
     gws: new Smooth()
   }
   const resetDamping = () => Object.values(damp).forEach(d => d.reset())
+  const DAMPED_INPUTS = { attitude: ['heel'], heading: ['headingTrue', 'headingMagnetic'] } // input group -> its damping
   let lastResult = null
   let lastResultAt = 0
   let lastStatus = ''
@@ -225,7 +226,11 @@ module.exports = function (app) {
     if (!locked[group]) { locked[group] = src; lockFrom[group] = now; return }
     if (lockFrom[group] == null || now - lockFrom[group] < LOCK_WINDOW_MS) return
     const best = sourcesOf(group).filter(s => s.sensor).reduce((a, b) => b.times.length > a.times.length ? b : a)
-    if (best.src !== locked[group]) app.debug(`${INPUT_LABELS[group]}: using ${best.src}, the sensor sending it most often`)
+    if (best.src !== locked[group]) {
+      app.debug(`${INPUT_LABELS[group]}: using ${best.src}, the sensor sending it most often`)
+      // Start the damping afresh, so the first sensor's reading does not linger in it.
+      for (const d of DAMPED_INPUTS[group] || []) damp[d].reset()
+    }
     locked[group] = best.src
     lockFrom[group] = null
   }
@@ -270,13 +275,19 @@ module.exports = function (app) {
     status('nowind', (last > -Infinity ? `No apparent wind for ${Math.round((now - last) / 1000)} s: nothing published` : 'Waiting for apparent wind') + alternatives('apparentWind', now))
   }
 
-  function heelDeg (now) {
-    const att = fresh('navigation.attitude', now)
+  // Heel in degrees from an attitude value, or null when it has none or is implausible.
+  function rollDeg (att) {
     const roll = att && typeof att === 'object' ? att.roll : null
     if (roll == null || !Number.isFinite(roll)) return null
     const h = roll * RAD_TO_DEG
-    if (Math.abs(h) > MAX_PLAUSIBLE_HEEL_DEG) return null
-    return damp.heel.update(h, latest['navigation.attitude'].at, config.damping.heelS)
+    return Math.abs(h) > MAX_PLAUSIBLE_HEEL_DEG ? null : h
+  }
+
+  // Damped heel, when the attitude in use is fresh and plausible. The damping takes every
+  // attitude message (onDelta), at the sensor's own rate, not only those that happen to come
+  // before an STW or wind update.
+  function heelDeg (now) {
+    return rollDeg(fresh('navigation.attitude', now)) == null ? null : damp.heel.v
   }
 
   // Damped heading in degrees, when it is fresh at all.
@@ -479,6 +490,7 @@ module.exports = function (app) {
         if (src !== inUse(group)) { compareOther(record, v.path, v.value, now); continue }
 
         latest[v.path] = { value: v.value, source: src, at: now }
+        if (v.path === 'navigation.attitude') { const h = rollDeg(v.value); if (h != null) damp.heel.update(h, now, config.damping.heelS) }
         if (v.path === 'navigation.headingTrue' || v.path === 'navigation.headingMagnetic') damp[v.path.split('.')[1]].update(v.value * RAD_TO_DEG, now, config.damping.headingS)
         if (group === 'heading') heading = { timestamp: update.timestamp, from: src }
         if (group === 'apparentWind' && windPairComplete(v.path, update.timestamp)) { windChanged = true; windTimestamp = update.timestamp; windFrom = src }

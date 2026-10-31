@@ -79,7 +79,7 @@ One chain per calculation, from its inputs to what it sends. Inputs in *italics*
 | Value | Default | |
 |---|---|---|
 | Heading | 0 s | Heading, before true wind. Keep it at apparent wind's lag: 0 for raw apparent wind, or a yaw swings TWD |
-| Heel | 2 s | Heel, before the STW table and leeway: takes most of the roll out |
+| Heel | 2 s | Heel, before the STW table and leeway, from every attitude message at the sensor's rate: takes most of the roll out |
 | True wind | 3 s | TWD, TWS and ground wind. TWA is the damped TWD less the heading now, sent with each heading update, so it answers the helm at once |
 | STW | 1 s | The published STW |
 | Current | 10 s | Current, as a vector |
