@@ -6,11 +6,14 @@ const K = DEFAULTS.corrections.leeway.k
 
 const { stwGridLookup } = _internals
 const T = require('../public/tables')
-const { fromZero } = T
+const { fromZero, fillGaps } = T
 
-// Tables for the tests, in the H5000 layout, so the tests do not move when the defaults are
+// Tables for the tests, in the plugin's layout, so the tests do not move when the defaults are
 // refitted. The STW table is deliberately not symmetric: port and starboard rows differ.
-const STW = { heel: [-20, -10, 0, 10, 20], stw: [2.5, 5, 7.5, 10, 12.5, 15], add: [[0.4, 0.2, 0, -0.1, -0.1, -0.2], [0.3, 0.1, 0, 0, 0, 0], [0.3, 0.05, 0, 0, 0, 0], [0.3, 0.1, 0, 0, 0, 0], [0.35, 0.15, -0.05, -0.1, -0.1, -0.1]] }
+// STW6: the 0.2.11 layout (2.5 kn first); STW: the same table with the 1 kn column a
+// schema 5 file is given, so it gives the same corrections.
+const STW6 = { heel: [-20, -10, 0, 10, 20], stw: [2.5, 5, 7.5, 10, 12.5, 15], add: [[0.4, 0.2, 0, -0.1, -0.1, -0.2], [0.3, 0.1, 0, 0, 0, 0], [0.3, 0.05, 0, 0, 0, 0], [0.3, 0.1, 0, 0, 0, 0], [0.35, 0.15, -0.05, -0.1, -0.1, -0.1]] }
+const STW = { heel: [-20, -10, 0, 10, 20], stw: [1, 2.5, 5, 7.5, 10, 12.5, 15], add: [[0.16, 0.4, 0.2, 0, -0.1, -0.1, -0.2], [0.12, 0.3, 0.1, 0, 0, 0, 0], [0.12, 0.3, 0.05, 0, 0, 0, 0], [0.12, 0.3, 0.1, 0, 0, 0, 0], [0.14, 0.35, 0.15, -0.05, -0.1, -0.1, -0.1]] }
 const TWA = { tws: [5, 10, 15, 20, 25, 30], upwind: [-9, -7, -5, -2, 3, 6], reach: [-3, -2, -1, 0, 1, 2], downwind: [2, 1, 0, -1, -2, -3] }
 const TWS = { tws: [5, 10, 15, 20, 25, 30], upwind: [0, 0, 0, 0, 0, 0], reach: [-0.2, -0.4, -0.6, -0.8, -1, -1.2], downwind: [-0.8, -1.5, -2.3, -3, -3.8, -4.5], upAngle: [50, 50, 50, 50, 50, 50], downAngle: [110, 110, 110, 110, 110, 110] }
 function withTables (over = {}) {
@@ -54,7 +57,7 @@ test('port and starboard are mirror images when the STW table is', () => {
   close(p.stw, s.stw, 1e-9)
 })
 
-test('STW: H5000 layout, signed heel x boat speed, exact at its cells, bilinear between', () => {
+test('STW: signed heel x boat speed, exact at its cells, bilinear between', () => {
   const t = STW
   const config = { corrections: { stw: { enabled: true, ...t } } }
   close(stwGridLookup(t, 0, 5), 0.05, 1e-9, 'cell heel 0, 5 kn')
@@ -68,8 +71,10 @@ test('STW: H5000 layout, signed heel x boat speed, exact at its cells, bilinear 
   close(correctInputs({ stw: 6, heel: -20 }, config).c.stw, 6 + 0.2 + (0 - 0.2) * 1 / 2.5, 1e-9)
 })
 
-test('STW: from zero at 0 kn to the 2.5 kn column, so a stopped boat is not given speed', () => {
+test('STW: from zero at 0 kn to the first column (1 kn), so a stopped boat is not given speed', () => {
   close(stwGridLookup(STW, 0, 0), 0, 1e-9)
+  close(stwGridLookup(STW, 0, 0.5), 0.06, 1e-9, 'half the 1 kn cell')
+  close(stwGridLookup(STW, 0, 1), 0.12, 1e-9)
   close(stwGridLookup(STW, 0, 1.25), 0.15, 1e-9)
   close(stwGridLookup(STW, 0, 2.5), 0.3, 1e-9)
 })
@@ -286,22 +291,22 @@ test('config: bad tables are reported, not accepted', () => {
   bad({ corrections: { twa: { upwind: [1, 2] } } }, 'needs 6 values')
   bad({ corrections: { stw: { heel: [0, 10, 20] } } }, 'H5000 layout')
   bad({ corrections: { stw: { add: [[0, 0, 0, 0, 0, 0]] } } }, 'one row per heel')
-  bad({ corrections: { stw: { add: STW.add.map((r, i) => i === 2 ? [0, 0] : r) } } }, 'heel 0° row: needs 6 values')
+  bad({ corrections: { stw: { add: STW.add.map((r, i) => i === 2 ? [0, 0] : r) } } }, 'heel 0° row: needs 7 values')
   bad({ corrections: { stw: { add: STW.add.map(r => r.map(() => null)) } } }, 'no values')
   bad({ corrections: { twa: { upwind: [0, 'x', 0, 0, 0, 0] } } }, 'number or blank')
   bad({ corrections: { tws: { reach: [0, 0, 0] } } }, 'needs 6 values')
   bad({ corrections: { leeway: { k: 'x' } } }, 'Leeway K')
 })
 
-test('config carries its schema version, now 5', () => {
+test('config carries its schema version, now 6', () => {
   const { CONFIG_SCHEMA } = require('../lib/processor')
-  assert.strictEqual(CONFIG_SCHEMA, 5)
-  assert.strictEqual(normalizeConfig({}).config.schema, 5)
-  assert.strictEqual(normalizeConfig({ schema: 5, variation: 11 }).config.variation, 11)
+  assert.strictEqual(CONFIG_SCHEMA, 6)
+  assert.strictEqual(normalizeConfig({}).config.schema, 6)
+  assert.strictEqual(normalizeConfig({ schema: 6, variation: 11 }).config.variation, 11)
 })
 
 test('a config from a newer release is refused, not guessed at', () => {
-  const { config, errors } = normalizeConfig({ schema: 6, corrections: { leeway: { k: 6 } } })
+  const { config, errors } = normalizeConfig({ schema: 7, corrections: { leeway: { k: 6 } } })
   assert.ok(errors[0].includes('newer version'))
   assert.strictEqual(config.corrections.leeway.k, DEFAULTS.corrections.leeway.k, 'falls back to defaults')
 })
@@ -315,7 +320,7 @@ test('a schema 3 config (0.1.0 to 0.2.5) moves forward: settings and K kept, tab
   const { config, errors, notices } = normalizeConfig(old)
   assert.deepStrictEqual(errors, [])
   assert.match(notices[0], /settings kept; the boat speed, TWA and TWS tables reset.*Shadow mode/)
-  assert.strictEqual(config.schema, 5)
+  assert.strictEqual(config.schema, 6)
   assert.strictEqual(config.mode, 'shadow', 'never Replace with tables from another boat')
   assert.strictEqual(config.variation, 11.5)
   assert.deepStrictEqual(config.damping, old.damping)
@@ -327,7 +332,7 @@ test('a schema 3 config (0.1.0 to 0.2.5) moves forward: settings and K kept, tab
 })
 
 test('a schema 4 config (0.2.6) moves forward: only the TWA table, whose columns changed, is reset', () => {
-  const stw = { ...STW, enabled: true }
+  const stw = { ...STW6, enabled: true }
   const tws = { ...TWS, enabled: true }
   const old = { schema: 4, mode: 'replace', damping: { heelS: 2, headingS: 2, trueWindS: 3, stwS: 1, currentS: 10 },
     corrections: { stw, leeway: { enabled: true, k: 7 }, twa: { enabled: true, tws: [2.5, 5, 7.5, 10, 12.5, 15], upwind: [1, 1, 1, 1, 1, 1], reach: [0, 0, 0, 0, 0, 0], downwind: [0, 0, 0, 0, 0, 0] }, tws } }
@@ -336,7 +341,7 @@ test('a schema 4 config (0.2.6) moves forward: only the TWA table, whose columns
   assert.match(notices[0], /settings kept; the TWA table reset to the defaults.*Shadow mode/)
   assert.strictEqual(config.mode, 'shadow')
   assert.strictEqual(config.damping.headingS, 2, 'settings kept as saved')
-  assert.deepStrictEqual(config.corrections.stw, stw)
+  assert.deepStrictEqual(config.corrections.stw, { ...STW, enabled: true }, 'with the 1 kn column, working as before')
   assert.deepStrictEqual(config.corrections.tws, tws)
   assert.strictEqual(config.corrections.leeway.k, 7)
   assert.deepStrictEqual(config.corrections.twa, DEFAULTS.corrections.twa)
@@ -361,4 +366,34 @@ test('each step declares what its result replaces, so the webapp can tell publis
   const last = {}
   steps.forEach((s, i) => { if (s.enabled) (s.produces || []).forEach(q => { last[q] = s.id }) })
   assert.deepStrictEqual(last, { stw: 'stw', leeway: 'leeway', twa: 'twa', tws: 'tws', current: 'current', groundWind: 'groundwind' })
+})
+
+test('a schema 5 config (0.2.7 to 0.2.11) moves forward: its boat speed table gains a 1 kn column and works exactly as before', () => {
+  const t = { ...STW6, add: STW6.add.map(r => r.slice()) }
+  t.add[1][0] = null // a blank first cell, filled from its row
+  t.add[4] = [null, null, null, null, null, null] // a blank row, filled from its neighbour
+  const { config, errors, notices } = normalizeConfig({ schema: 5, mode: 'replace', variation: 11, corrections: { stw: { ...t, enabled: true } } })
+  assert.deepStrictEqual(errors, [])
+  assert.strictEqual(config.schema, 6)
+  assert.strictEqual(config.mode, 'replace', 'nothing is reset, so the mode stays')
+  assert.strictEqual(config.variation, 11)
+  assert.match(notices[0], /new 1 kn column, set so it works as before. Refit/)
+  assert.deepStrictEqual(config.corrections.stw.stw, [1, 2.5, 5, 7.5, 10, 12.5, 15])
+  // The 0.2.11 lookup on the same table: rows filled, each from zero at 0 kn to 2.5 kn.
+  const rows = fillGaps(t.add)
+  for (const h of [-25, -20, -15, -10, -3, 0, 7, 10, 20]) {
+    const hb = Math.max(-20, Math.min(20, h)); const lo = Math.min(3, Math.floor((hb + 20) / 10)); const f = (hb + 20) / 10 - lo
+    for (let v = 0; v <= 16; v += 0.25) {
+      const was = fromZero(STW6.stw, rows[lo], v) * (1 - f) + fromZero(STW6.stw, rows[lo + 1], v) * f
+      close(stwGridLookup(config.corrections.stw, h, v), was, 6e-4, `heel ${h}, ${v} kn`) // the 1 kn cell is rounded to 0.001
+    }
+  }
+})
+
+test("STW: the 1 kn column takes the paddlewheel's stall: from zero at 0 kn to the 1 kn cell, then to the 2.5 kn cell", () => {
+  const t = { heel: STW.heel, stw: STW.stw, add: STW.add.map(r => [0.6].concat(r.slice(1))) }
+  close(stwGridLookup(t, 0, 0.5), 0.3, 1e-9, 'half way to the 1 kn cell')
+  close(stwGridLookup(t, 0, 1), 0.6, 1e-9)
+  close(stwGridLookup(t, 0, 1.75), (0.6 + 0.3) / 2, 1e-9, 'half way from 1 to 2.5 kn')
+  close(stwGridLookup(t, 0, 2.5), 0.3, 1e-9)
 })

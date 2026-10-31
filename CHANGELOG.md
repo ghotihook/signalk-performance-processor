@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.12 — 2026-10-31
+
+- **The boat speed table has a 1 kn column** (1, 2.5, 5 … 15 kn; config schema 6). A paddlewheel stalls below about 2 kn: on the test boat it read 0.6 kn low at 1 kn. With the H5000's first column at 2.5 kn, the correction ran in a straight line from nothing at 0 kn and left STW 0.3–0.4 kn low between 0.5 and 1.5 kn, held out by day (worth about 9° of TWA at 1 kn in 3 kn of wind). Below 1 kn it now runs from nothing at 0 kn to the 1 kn cell, so a stopped boat is still never given speed.
+- **A table saved by 0.2.7 to 0.2.11 keeps working exactly as before**: its 1 kn cell is set to what its straight line already gave at 1 kn. Nothing else changes, Replace mode stays on, and the status asks for a refit with boatcal plugincal (1.3.3) until you Save.
+- **New defaults**, refitted by plugincal 1.3.3 with the 1 kn column: upright +0.62 kn at 1 kn and +0.29 at 2.5, as before from 5 kn up. Leeway K 8.32 (was 8.57); the TWA and TWS tables moved by under 0.1° and 0.03 kn. Held out by day on race legs, STW from 1 to 2.5 kn is now within 0.06 kn on average (0.2.11's defaults: 0.07–0.39 kn low), and below 1 kn, where races hardly go, 0.3 kn low (was 0.67), with no change from 2.5 kn up. plugincal now fits the boat speed table on race legs plus the sailing under 2.5 kn from all the days.
+
 ## 0.2.11 — 2026-10-31
 
 - **Heel damping takes every attitude message**, at the sensor's own rate (10 Hz from the test boat's IMU). It used to take only the latest heel when boat speed or apparent wind arrived, about 5–6 of the IMU's 10 samples a second, so heel came out noisier than its damping setting promised, and a roll in step with those updates could bias it. The time constant is unchanged.

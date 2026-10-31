@@ -14,7 +14,7 @@
 
 ## Features
 
-- **The H5000's tables, in the H5000's layout**: boat speed / heel, TWA and TWS. An H5000 calibration can be typed or pasted in cell for cell.
+- **The H5000's tables, in the H5000's layout**: boat speed / heel, TWA and TWS. An H5000 calibration can be typed or pasted in cell for cell. The boat speed table adds a 1 kn column, where a paddlewheel stalls (for an H5000 table, fill it with 0.4 × the 2.5 kn value to keep it as it was).
 - **Fitted from your own logs** by `plugincal`, and pasted straight into the webapp.
 - **Every step visible live**: what each calculation uses, what each correction changed, and what is sent.
 - **Damping as on the H5000**, set separately for heading, heel, true wind, boat speed and current.
@@ -69,7 +69,7 @@ One chain per calculation, from its inputs to what it sends. Inputs in *italics*
 
 | Correction | What it does | Default |
 |---|---|---|
-| STW table | Knots added to the paddlewheel, by heel (rows −20, −10, 0, 10, 20°; + = starboard side down) and boat speed (columns 2.5, 5 … 15 kn), bilinear, the last column held above 15 kn. Below 2.5 kn the correction runs in a straight line to nothing at 0 kn, so a stopped boat is not given speed. **Edit symmetrically** on the Calibration page keeps port and starboard rows the same | On |
+| STW table | Knots added to the paddlewheel, by heel (rows −20, −10, 0, 10, 20°; + = starboard side down) and boat speed (columns 1, 2.5, 5 … 15 kn), bilinear, the last column held above 15 kn. Below 1 kn the correction runs in a straight line to nothing at 0 kn, so a stopped boat is not given speed. The 1 kn column is not on the H5000: a paddlewheel stalls below about 2 kn and reads up to 0.6 kn low there, which a straight line from 2.5 kn misses, and in light air that is several degrees of TWA. **Edit symmetrically** on the Calibration page keeps port and starboard rows the same | On |
 | Leeway | K × heel ÷ STW², capped at 15°, faded in from 1.5 to 3 kn. Used for current, **not** for true wind, as on the H5000 by default: the TWA table takes up its effect | On |
 | TWA table | Degrees added to \|TWA\|, in rows at TWA 40° (upwind), 90° (reaching) and 165° (downwind) by TWS 5, 10 … 30 kn, linear between, and from nothing at 0 kn below 5 kn. In full from 30° to 170° TWA, fading to none at 0° and 180°, so TWD passes smoothly through tacks and gybes | On |
 | TWS table | Knots added to TWS by TWS 5, 10 … 30 kn, in three rows: the upwind correction in full up to the up angle, the reaching correction at 90°, the downwind correction in full from the down angle, linear between, so it never steps. Up and down angles are rows too, by TWS. The up angle must be under 90° and the down angle over it. (An H5000 with an up angle past 90°, such as 165°, would step at 90°: set the up angle to where upwind sailing ends instead.) Masthead units read high off the wind (the sails speed the air up over the rig), so this mostly takes off | On |
@@ -133,13 +133,13 @@ Everything is set in the webapp and saved to `config.json` in the plugin's data 
 
 ```json
 {
-  "schema": 5,
+  "schema": 6,
   "mode": "shadow",
   "variation": 12.8,
   "damping": { "heelS": 2, "headingS": 0, "trueWindS": 3, "stwS": 1, "currentS": 10 },
   "sources": { "apparentWind": "", "stw": "", "heading": "", "attitude": "", "gps": "", "variation": "" },
   "corrections": {
-    "stw": { "enabled": true, "heel": [-20, -10, 0, 10, 20], "stw": [2.5, 5, …, 15], "add": [[…], […], […], […], […]] },
+    "stw": { "enabled": true, "heel": [-20, -10, 0, 10, 20], "stw": [1, 2.5, 5, …, 15], "add": [[…], […], […], […], […]] },
     "leeway": { "enabled": true, "k": 8.568 },
     "twa": { "enabled": true, "tws": [5, 10, …, 30], "upwind": […], "reach": […], "downwind": […] },
     "tws": { "enabled": true, "tws": [5, 10, …, 30], "upwind": […], "reach": […], "downwind": […], "upAngle": […], "downAngle": […] }
@@ -147,7 +147,7 @@ Everything is set in the webapp and saved to `config.json` in the plugin's data 
 }
 ```
 
-Blank table cells are `null`; the plugin uses the nearest value in the row, and a row with none takes the nearest row. The table axes are fixed (the H5000's 2018 layout): a file from an earlier release keeps its settings, leeway K and any table whose layout is unchanged; the other tables are reset to the defaults (from 0.2.6, the TWA table; from 0.1.0 to 0.2.5, all three), and the plugin runs in Shadow mode until you refit them with `plugincal` and Save (the status says so). A file with any other layout is refused with the reason, and so is a file from a newer release, which is never overwritten.
+Blank table cells are `null`; the plugin uses the nearest value in the row, and a row with none takes the nearest row. The table axes are fixed (the H5000's 2018 layout, with a 1 kn boat speed column): a file from an earlier release keeps its settings, leeway K and any table whose layout still fits. From 0.2.7 to 0.2.11 that is every table: the boat speed table gets a 1 kn column set so it works exactly as before, and the status asks for a refit until you Save. From 0.2.6 the TWA table, and from 0.1.0 to 0.2.5 all three, are reset to the defaults and the plugin runs in Shadow mode until you refit them with `plugincal` and Save (the status says so). A file with any other layout is refused with the reason, and so is a file from a newer release, which is never overwritten.
 
 **The defaults are the author's boat** (before its 2026 rig tune), fitted by `plugincal`. They will be wrong for yours: refit, or use **Reset to defaults** and enter your own.
 

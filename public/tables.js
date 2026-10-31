@@ -9,8 +9,8 @@
 // blank cells allowed where the table allows them (a blank takes the nearest value in its
 // row).
 //
-//   heel\stw, 2.5, 5, 7.5, 10, 12.5, 15             rows at heel -20, -10, 0, 10, 20
-//   -20,      0.65, 0.29, 0.35, 0.21, 0.06, -0.08     (+ = starboard side down)
+//   heel\stw, 1, 2.5, 5, 7.5, 10, 12.5, 15          rows at heel -20, -10, 0, 10, 20
+//   -20,      0.5, 0.65, 0.29, 0.35, 0.21, 0.06, -0.08 (+ = starboard side down)
 //
 //   TWA\TWS, 5, 10, 15, 20, 25, 30                  rows at TWA 40, 90, 165
 //   40,      -9, -7, -5, -2, 3, 6
@@ -22,7 +22,7 @@
 
   const AXES = {
     stwHeel: [-20, -10, 0, 10, 20], // STW table rows, deg of heel, + = starboard side down
-    stwSpeed: [2.5, 5, 7.5, 10, 12.5, 15], // STW table columns, boat speed kn
+    stwSpeed: [1, 2.5, 5, 7.5, 10, 12.5, 15], // STW table columns, boat speed kn (the H5000's, and 1 kn where a paddlewheel stalls)
     twaTws: [5, 10, 15, 20, 25, 30], // TWA table columns, TWS kn
     twaRows: { upwind: 40, reach: 90, downwind: 165 }, // TWA table rows, deg TWA
     twsTws: [5, 10, 15, 20, 25, 30] // TWS table columns, TWS kn

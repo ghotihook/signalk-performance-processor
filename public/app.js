@@ -10,7 +10,7 @@
   // the description always matches the code.
   const LIMITS = {
     stw: b => [
-      `Below the first column (${b.axes.stwSpeed[0]} kn) the correction runs in a straight line to nothing at 0 kn, as on the H5000, so a stopped boat is never given speed. Beyond the last column (${b.axes.stwSpeed[b.axes.stwSpeed.length - 1]} kn) that column is held.`,
+      `Below the first column (${b.axes.stwSpeed[0]} kn) the correction runs in a straight line to nothing at 0 kn, so a stopped boat is never given speed. (The H5000 has no 1 kn column and runs the line from 2.5 kn, which misses a paddlewheel's stall.) Beyond the last column (${b.axes.stwSpeed[b.axes.stwSpeed.length - 1]} kn) that column is held.`,
       'Rows are heel each side (− = port side down, + = starboard side down), linear between rows; more heel than the last row uses the last row. Edit symmetrically copies each value to the same heel on the other side.',
       'Most paddlewheels read low when slow, so positive values at low speed are normal.'
     ],
@@ -35,7 +35,7 @@
 
   // Display names and help for each correction, in pipeline order.
   const CORRECTIONS = {
-    stw: { name: 'Boat speed (STW)', what: 'Knots added to the paddlewheel by heel (rows, port − and starboard +) and boat speed (columns): the H5000 boat speed / heel table. Blank cells are filled from the nearest value in their row. Applied before anything else uses STW.' },
+    stw: { name: 'Boat speed (STW)', what: 'Knots added to the paddlewheel by heel (rows, port − and starboard +) and boat speed (columns): the H5000 boat speed / heel table, with a 1 kn column where a paddlewheel stalls. Blank cells are filled from the nearest value in their row. Applied before anything else uses STW.' },
     leeway: { name: 'Leeway', what: 'Sideways slip: leeway = K × heel ÷ STW². Published, and used for current. Not used in true wind: the TWA table takes up its effect.' },
     twa: { name: 'TWA table', what: 'Degrees added to |TWA| by TWS, in rows at TWA 40°, 90° and 165°: the H5000 TWA correction table. Negative = TWA was reading too wide.' },
     tws: { name: 'TWS table', what: 'Knots added to TWS by TWS, as upwind, reaching and downwind corrections blended by TWA: the H5000 TWS correction table. Masthead units read high downwind (the sails speed the air up over the top of the rig), so the downwind correction is usually negative. Blank cells take the nearest value in their row.' }
@@ -43,7 +43,7 @@
 
   // The tables' text format (tables.js): what Paste a table reads and Copy writes.
   const PASTE = {
-    stw: { parse: t => PPTables.parseStw(t), hint: `First row <code>heel\\stw</code> then the boat speeds ${list(AXES.stwSpeed)}; then a row for heel ${AXES.stwHeel.join(', ')}, each its label then its values. This is what boatcal <code>plugincal</code> prints.` },
+    stw: { parse: t => PPTables.parseStw(t), hint: `First row <code>heel\\stw</code> then the boat speeds ${list(AXES.stwSpeed)}; then a row for heel ${AXES.stwHeel.join(', ')}, each its label then its values. This is what boatcal <code>plugincal</code> prints. An H5000 table has no 1 kn column: give it 0.4 × the 2.5 kn value to keep the table as it was.` },
     twa: { parse: t => PPTables.parseTwa(t), hint: `First row <code>TWA\\TWS</code> then the TWS columns ${list(AXES.twaTws)}; then a row for TWA ${Object.values(AXES.twaRows).join(', ')}, each its label then its values. This is what boatcal <code>plugincal</code> prints.` },
     tws: { parse: t => PPTables.parseTws(t), hint: `First row <code>TWS</code> then the TWS columns ${list(AXES.twsTws)}; then rows <code>upwind</code>, <code>reach</code>, <code>downwind</code> (kn), <code>up angle</code> and <code>down angle</code> (°). This is what boatcal <code>plugincal</code> prints.` }
   }

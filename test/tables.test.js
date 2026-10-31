@@ -6,7 +6,7 @@ const { interp, blendRows, fillGaps } = T
 const close = (a, b, tol) => assert.ok(Math.abs(a - b) <= tol, `expected ${b} ± ${tol}, got ${a}`)
 
 const twa = { tws: [5, 10, 15, 20, 25, 30], upwind: [-9, -7.6, -12.6, -5.8, -5.7, null], reach: [-1, -2.4, -4.4, -5.4, 1.4, 3.9], downwind: [0.5, 1.2, -3.5, 1, null, null] }
-const stw = { heel: [-20, -10, 0, 10, 20], stw: [2.5, 5, 7.5, 10, 12.5, 15], add: [[0.4, 0.2, 0, -0.1, -0.1, -0.2], [0.3, 0.1, 0, 0, 0, 0], [0.3, 0.05, 0, 0, 0, null], [0.3, 0.1, 0, 0, 0, 0], [0.35, 0.15, -0.05, -0.1, -0.1, -0.1]] }
+const stw = { heel: [-20, -10, 0, 10, 20], stw: [1, 2.5, 5, 7.5, 10, 12.5, 15], add: [[0.16, 0.4, 0.2, 0, -0.1, -0.1, -0.2], [0.12, 0.3, 0.1, 0, 0, 0, 0], [0.12, 0.3, 0.05, 0, 0, 0, null], [0.12, 0.3, 0.1, 0, 0, 0, 0], [0.14, 0.35, 0.15, -0.05, -0.1, -0.1, -0.1]] }
 const tws = { tws: [5, 10, 15, 20, 25, 30], upwind: [0, 0, 0, 0, 0, 0], reach: [-0.2, -0.4, -0.6, -0.8, null, null], downwind: [-0.8, -1.5, -2.3, -3, -3.8, -4.5], upAngle: [50, 50, 50, 50, 50, 50], downAngle: [110, 110, 110, 115, 120, 120] }
 
 test('every table survives format -> paste unchanged', () => {
@@ -37,12 +37,13 @@ test('the wrong layout is refused with the reason', () => {
   assert.throws(() => T.parseTwa('TWA\\TWS,5,10,15,20,25,30\n40,1,1,1,1,1,1\n90,1,1,1,1,1,1'), /missing row 165/)
   assert.throws(() => T.parseTwa('TWA\\TWS,5,10,15,20,25,30\n45,1,1,1,1,1,1'), /expected 40, 90 or 165/)
   assert.throws(() => T.parseTwa('TWA\\TWS,5,10,15,20,25,30\n40,x,1,1,1,1,1'), /not a number: "x"/)
-  assert.throws(() => T.parseStw('heel\\stw,2.5,5,7.5,10,12.5,15\n0,0,0,0,0,0,0'), /missing heel rows -20, -10, 10, 20/)
-  assert.throws(() => T.parseStw('heel\\stw,2.5,5,7.5,10,12.5,15\n15,0,0,0,0,0,0'), /expected heel -20, -10, 0, 10, 20/)
+  assert.throws(() => T.parseStw('heel\\stw,1,2.5,5,7.5,10,12.5,15\n0,0,0,0,0,0,0,0'), /missing heel rows -20, -10, 10, 20/)
+  assert.throws(() => T.parseStw('heel\\stw,1,2.5,5,7.5,10,12.5,15\n15,0,0,0,0,0,0,0'), /expected heel -20, -10, 0, 10, 20/)
   assert.throws(() => T.parseTws('TWS,5,10,15,20,25,30\ncorrection,1,1,1,1,1,1'), /expected "upwind"/)
   assert.throws(() => T.parseTws(T.format('tws', tws).split('\n').slice(0, 4).join('\n')), /missing rows "up angle", "down angle"/)
   assert.throws(() => T.parseTws(T.format('tws', { ...tws, upAngle: [50, null, 50, 50, 50, 50] })), /needs a value in column 2/)
   assert.throws(() => T.parseStw('heel\\stw,2.5'), /needs a header row and at least one table row/)
+  assert.throws(() => T.parseStw('heel\\stw,2.5,5,7.5,10,12.5,15\n0,0,0,0,0,0,0'), /header must be boat speed columns 1, 2.5, 5/, 'a 0.2.11 table without the 1 kn column')
 })
 
 test('along a row: from zero at 0 kn to the first column, linear between, the last held', () => {
