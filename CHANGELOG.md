@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.10 — 2026-10-31
+
+- **TWA goes out in light air.** Below 1.5 kn of TWS only TWD and ground wind direction and angle are held back now; TWA, which the crew sails by in light air, is always sent.
+- **TWA and ground wind angle go out with each heading update**, at the compass's rate (10 Hz on the test boat) instead of apparent wind's (2 Hz from its H2000): the damped TWD and ground wind direction from the last apparent wind, less the heading now, as before. The wind is steady between its updates and the bow is not, so TWA now follows a tack smoothly instead of in half-second steps. TWD, TWS and the rest still go out with apparent wind. When heading and wind come in one delta, the wind's TWA is sent; the two triggers are rate-limited apart, so neither crowds the other out or looks like a loop.
+- **When apparent wind stops, the status says so** ("No apparent wind for 12 s: nothing published"), checked every second. Before, the status went on showing the last TWA and TWS. Signal K keeps the last published values, so displays can too: the Live page now greys out its numbers once they are older than 3 s.
+- **The status names a missing SOG/COG**, as it does heel and heading: "no SOG/COG, so no current or ground wind". **For any missing input it names another plugin that sends it** ("only from signalk-derived-data, another plugin: choose it in Settings to use it"), as it did for STW alone. On the test boat that would have shown at once why current and ground wind had gone.
+- **The webapp says why the plugin is not running** ("Plugin not running: Configuration: …"), from a new `error` field in `/live`.
+- **The Live page says where COG came from**: true, or magnetic plus variation.
+- **A config with a null or non-object section** (`sources`, `damping`, `corrections` or a table) is refused with a reason. Before, a PUT with `sources: null` was saved and then broke every update, and a null table broke the request. Variation must be within ±180°, and each source a name.
+- **Settings says how Auto chooses**: the sensor with the highest data rate in the first 2 s, kept until restart or Save, which is not necessarily the most accurate. The choice reads **Auto (highest-rate sensor)**.
+
 ## 0.2.9 — 2026-10-31
 
 - **COG magnetic is used when there is no COG true**, turned true with the same variation as the heading. Many GPSs send COG referenced to magnetic only (PGN 129026), which Signal K puts on `navigation.courseOverGroundMagnetic`; until now current and ground wind needed something else, such as derived-data, to make COG true.

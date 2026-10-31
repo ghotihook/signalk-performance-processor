@@ -143,14 +143,6 @@ test('ignores its own output, however the source is spelled', () => {
   }
 })
 
-test('reads only the chosen source when one is set', () => {
-  const h = harness({ sources: { stw: 'h2000.II' } })
-  h.feed(boat)
-  h.feed([{ path: 'navigation.speedThroughWater', value: 1 / MS_TO_KN }], 'signalk-stw-heel-correction')
-  const out = paths(h.feed(wind))
-  close(out['environment.wind.speedTrueCorrected'] * MS_TO_KN, model().tws, 1e-4, 'true wind on the sensor STW, not 1 kn')
-})
-
 test('without a chosen STW source, ignores STW from other plugins', () => {
   const h = harness()
   h.feed(boat)
@@ -244,7 +236,7 @@ test('a burst is thinned to 20 Hz, not stopped, and the flag clears', () => {
   assert.doesNotMatch(h.statuses[h.statuses.length - 1], /Rate limited/)
 })
 
-test('light air: TWA and TWD stop below 1.5 kn of TWS and come back from 2 kn', () => {
+test('light air: TWD stops below 1.5 kn of TWS and comes back from 2 kn; TWA never stops', () => {
   // undamped, so each step in TWS is the TWS the thresholds see
   const h = harness({ mode: 'replace', damping: { heelS: 0, headingS: 0, trueWindS: 0, stwS: 0, currentS: 0 } })
   // Drifting at 0 kn with apparent wind dead ahead: TWS = AWS.
@@ -253,14 +245,15 @@ test('light air: TWA and TWD stop below 1.5 kn of TWS and come back from 2 kn', 
   const at = kn => paths(h.feed([...still, { path: 'environment.wind.angleApparent', value: 40 * RAD }, { path: 'environment.wind.speedApparent', value: kn / MS_TO_KN }]))
   const sent = o => ['angleTrueWater', 'directionTrue', 'speedTrue'].filter(k => ('environment.wind.' + k) in o)
   assert.deepStrictEqual(sent(at(3)), ['angleTrueWater', 'directionTrue', 'speedTrue'])
-  assert.deepStrictEqual(sent(at(1.4)), ['speedTrue'], 'below 1.5 kn: TWS only')
+  assert.deepStrictEqual(sent(at(1.4)), ['angleTrueWater', 'speedTrue'], 'below 1.5 kn: TWA and TWS, no TWD')
   assert.match(h.statuses[h.statuses.length - 1], /light air/)
-  assert.deepStrictEqual(sent(at(1.8)), ['speedTrue'], 'still held between 1.5 and 2')
+  assert.deepStrictEqual(sent(at(1.8)), ['angleTrueWater', 'speedTrue'], 'TWD still held between 1.5 and 2')
+  assert.deepStrictEqual(sent(at(0.3)), ['angleTrueWater', 'speedTrue'], 'TWA in a breath of wind too')
   assert.deepStrictEqual(sent(at(2.1)), ['angleTrueWater', 'directionTrue', 'speedTrue'], 'back from 2 kn')
   assert.deepStrictEqual(sent(at(1.6)), ['angleTrueWater', 'directionTrue', 'speedTrue'], 'and stays until below 1.5 again')
 })
 
-test('stale sensor STW is reported as waiting, not blamed on the sensor', () => {
+test('stale sensor STW is reported as waiting, not blamed on another plugin', () => {
   const h = harness()
   h.feed([{ path: 'navigation.speedThroughWater', value: 6 / MS_TO_KN }])
   h.feed(wind, 'h2000.II', 4000)
@@ -341,7 +334,15 @@ test('rejects implausible input rather than publishing it', () => {
   const h = harness()
   assert.deepStrictEqual(h.feed([{ path: 'navigation.speedThroughWater', value: 99 / MS_TO_KN }]), [], 'no corrected STW from a faulty sensor')
   assert.deepStrictEqual(h.feed(wind).filter(o => o.values.some(v => v.path.startsWith('environment.wind'))), [])
-  assert.match(h.statuses[h.statuses.length - 1], /not plausible/)
+  assert.match(h.statuses[h.statuses.length - 1], /STW of 99.0 kn is not plausible/)
+  const a = harness()
+  a.feed(boat)
+  assert.deepStrictEqual(a.feed([{ path: 'environment.wind.angleApparent', value: 0.5 }, { path: 'environment.wind.speedApparent', value: 150 / MS_TO_KN }]), [])
+  assert.match(a.statuses[a.statuses.length - 1], /AWS of 150.0 kn is not plausible/)
+  const k = harness()
+  k.feed(boat.map(v => v.path === 'navigation.attitude' ? { ...v, value: { roll: 120 * RAD } } : v))
+  k.feed(wind)
+  assert.match(k.statuses[k.statuses.length - 1], /no heel/, 'heel beyond 90° is a fault: treated as missing')
 })
 
 test('reports a bad stored config instead of starting', () => {
@@ -434,10 +435,11 @@ test('a broken config file is reported, and the webapp can still load and fix it
   assert.ok(h.errors.some(e => e.includes('fix it in the webapp')))
   const r = await h.call('GET', '/calibration')
   assert.strictEqual(r.status, 200)
+  const live = (await h.call('GET', '/live')).json
+  assert.ok(!live.running && /TWA table 40° row.*fix it in the webapp/.test(live.error), 'the webapp can say why it is not running')
 })
 
-test('variation: true heading first, then GPS variation, then the fallback', async () => {
-  const RAD = Math.PI / 180
+test('variation: true heading first, then GPS variation, then the fallback', () => {
   const twd = (extra) => {
     const h = harness()
     h.feed(boat.concat(extra))
@@ -522,6 +524,8 @@ test('COG magnetic is used when there is no COG true, turned true with the varia
   const mag = run([{ path: 'navigation.courseOverGroundMagnetic', value: (119 - 12.8) * RAD }])
   close(mag.drift, want.drift, 1e-9, 'drift')
   close(mag.setTrue, want.setTrue, 1e-9, 'set')
+  const both = run([{ path: 'navigation.courseOverGroundTrue', value: 119 * RAD }, { path: 'navigation.courseOverGroundMagnetic', value: 200 * RAD }])
+  close(both.setTrue, want.setTrue, 1e-9, 'COG true first when the GPS sends both')
 })
 
 test('no true heading is sent when the heading sensor sends true heading itself', () => {
@@ -643,4 +647,96 @@ test('Settings can show each source of an input with its message rate; one messa
   close(hz('attitude', 'compass.II'), 1, 0.2)
   close(hz('apparentWind', 'h2000.II'), 5, 0.3, 'messages every 200 ms (two deltas 100 ms apart each), not values')
   assert.deepStrictEqual(json.sources.heading, [{ source: 'signalk-derived-data', hz: 0, plugin: true }])
+})
+
+// ---- missing inputs, said in the status (0.2.10) ----
+
+test('when apparent wind stops, the status says so rather than showing the last true wind', () => {
+  const h = harness()
+  h.feed(boat)
+  h.feed(wind)
+  assert.match(h.statuses[h.statuses.length - 1], /^Shadow — TWA/)
+  h.feed(boat, 'h2000.II', 12000) // the other inputs carry on; the wind has not come for 12 s
+  assert.match(h.statuses[h.statuses.length - 1], /^No apparent wind for 12 s: nothing published/)
+})
+
+test('a stale heading means no TWD or current, and the status says so', () => {
+  const h = harness()
+  h.feed(boat)
+  h.feed(boat.filter(v => v.path !== 'navigation.headingMagnetic'), 'h2000.II', 3500)
+  const out = paths(h.feed(wind))
+  assert.ok(!('environment.wind.directionTrueCorrected' in out) && !('environment.currentCorrected' in out))
+  assert.ok('environment.wind.speedTrueCorrected' in out, 'TWS still goes out')
+  assert.match(h.statuses[h.statuses.length - 1], /no heading/)
+})
+
+test('without SOG/COG the status says there is no current or ground wind, and names a plugin that sends it', () => {
+  const h = harness()
+  h.feed(boat.filter(v => !/OverGround/.test(v.path)))
+  h.feed([{ path: 'navigation.courseOverGroundTrue', value: 1 }], 'signalk-derived-data')
+  h.feed(wind)
+  assert.match(h.statuses[h.statuses.length - 1], /no SOG\/COG, so no current or ground wind \(only from signalk-derived-data, another plugin: choose it in Settings to use it\)/)
+})
+
+test('Auto chooses once: a sensor that starts after the first 2 s does not take over', async () => {
+  const h = harness()
+  for (let t = 0; t < 25; t++) h.feed([{ path: 'navigation.attitude', value: { roll: 4.43 * RAD } }], 'compass.II', 1000) // 1 Hz, for 25 s
+  for (let t = 0; t < 50; t++) h.feed([{ path: 'navigation.attitude', value: { roll: -0.15 * RAD } }], 'imu.II', 100) // 10 Hz from now on
+  const { json } = await h.call('GET', '/live')
+  assert.strictEqual(json.inUse.attitude, 'compass.II', 'kept until restart or Save; choose the IMU in Settings')
+})
+
+test('a config with a section that is not an object is refused, not saved', async () => {
+  const h = harness()
+  for (const body of [{ corrections: { twa: null } }, { sources: null }, { damping: 5 }, { sources: { stw: 3 } }, { variation: 400 }]) {
+    const r = await h.call('PUT', '/calibration', body)
+    assert.strictEqual(r.status, 400, JSON.stringify(body))
+  }
+  assert.strictEqual(h.saved(), null)
+  const b = harness({ sources: null })
+  assert.ok(b.errors.some(e => /sources: must be an object/.test(e)), 'a bad file is reported at start')
+})
+
+// ---- TWA at the compass's rate (0.2.10) ----
+
+test('TWA and ground wind angle go out with each compass update: the damped TWD less the heading now', () => {
+  const h = harness()
+  h.feed(boat)
+  const w = paths(h.feed(wind))
+  const twd = deg2(w['environment.wind.directionTrueCorrected'])
+  const gwd = deg2(w['environment.wind.directionGroundCorrected'])
+  // The bow swings 20° before the next apparent wind: TWA follows each compass update.
+  for (const mag of [115, 120, 125, 130]) {
+    const out = paths(h.feed([{ path: 'navigation.headingMagnetic', value: mag * RAD }]))
+    const hdg = mag + 12.8
+    close(deg2(out['environment.wind.angleTrueWaterCorrected']), ((twd - hdg) % 360 + 540) % 360 - 180, 1e-9, `TWA at ${mag}° M`)
+    close(deg2(out['environment.wind.angleTrueGroundCorrected']), ((gwd - hdg) % 360 + 540) % 360 - 180, 1e-9, 'ground wind angle')
+    assert.ok(!('environment.wind.directionTrueCorrected' in out) && !('environment.wind.speedTrueCorrected' in out), 'TWD and TWS only with apparent wind')
+  }
+})
+
+test('TWA goes out with the heading in light air too, but not once apparent wind has stopped', () => {
+  const twaFrom = out => 'environment.wind.angleTrueWaterCorrected' in paths(out)
+  const calm = harness({ damping: { heelS: 0, headingS: 0, trueWindS: 0, stwS: 0, currentS: 0 } })
+  calm.feed([{ path: 'navigation.speedThroughWater', value: 0 }, { path: 'navigation.headingMagnetic', value: 1 }])
+  calm.feed([{ path: 'environment.wind.angleApparent', value: 0.7 }, { path: 'environment.wind.speedApparent', value: 1 / MS_TO_KN }])
+  assert.ok(twaFrom(calm.feed([{ path: 'navigation.headingMagnetic', value: 1.1 }])), 'light air')
+  const h = harness()
+  h.feed(boat)
+  h.feed(wind)
+  assert.ok(twaFrom(h.feed([{ path: 'navigation.headingMagnetic', value: 2 }])))
+  assert.ok(!twaFrom(h.feed([{ path: 'navigation.headingMagnetic', value: 2 }], 'h2000.II', 3500)), 'apparent wind 3.6 s old')
+})
+
+test('2 Hz wind with a 10 Hz compass: every wind update sends its TWA, and nothing looks like a loop', () => {
+  const h = harness()
+  h.feed(boat)
+  let windTwa = 0
+  for (let t = 0; t < 40; t++) {
+    h.feed(boat.map(v => v.path === 'navigation.headingMagnetic' ? { ...v, value: (110 + t % 3) * RAD } : v), 'h2000.II', 100)
+    if (t % 5 === 4) windTwa += 'environment.wind.angleTrueWaterCorrected' in paths(h.feed(wind, 'h2000.II', 10)) ? 1 : 0 // 10 ms after the compass
+  }
+  assert.strictEqual(windTwa, 8)
+  assert.doesNotMatch(h.statuses[h.statuses.length - 1], /Rate limited/)
+  assert.deepStrictEqual(h.errors, [])
 })

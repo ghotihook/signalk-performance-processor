@@ -109,7 +109,7 @@
       </div>
       <div class="panel">
         <h2>Input sources</h2>
-        <p class="muted sub">Choose the instrument to read for each input. "Auto (sensors only)" reads from data connections only, never another plugin's output (a copy, later and slower, or already corrected), and from one sensor: the one sending most often, so two sensors that disagree are never mixed. The Live page warns when another sensor reads differently. Choose a source here to override it.</p>
+        <p class="muted sub">Choose the instrument to read for each input. <b>Auto picks the sensor with the highest data rate</b>: in the first 2 s after the plugin starts it counts each sensor's messages and keeps the one sending most often until the next restart or Save. That is not necessarily the most accurate one (a 10 Hz IMU wins over a 1 Hz compass, whichever reads truer). Auto reads data connections only, never another plugin's output (a copy, later and slower, or already corrected), and never mixes two sensors. The Live page warns when another sensor reads differently. Choose a source here to override it.</p>
         <p class="sub warn">Apparent wind must be raw: AWA and AWS as the masthead measures them, uncorrected and undamped. Take the wind tables out of the instrument and set its wind damping to 0, or choose a source ahead of it; this plugin corrects and damps them itself. Keep the masthead alignment in the instrument.</p>
         <div id="sources" class="sources"></div>
       </div>

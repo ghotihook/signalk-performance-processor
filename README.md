@@ -47,7 +47,7 @@
 
 ## Getting started
 
-1. **Check the inputs.** The Live page lists every input with its source and age. Each input is read from one sensor, the one sending it most often, never from another plugin; if another sensor sends the same thing and reads differently, the Live page says so. Choose a different one under **Settings → Input sources** if needed.
+1. **Check the inputs.** The Live page lists every input with its source and age. Each input is read from one sensor, never from another plugin: Auto takes the one with the highest data rate in the first 2 s, not necessarily the most accurate; if another sensor sends the same thing and reads differently, the Live page says so. Choose a different one under **Settings → Input sources** if needed.
 2. **Calibrate.** Log some sailing since your setup last changed (rig tune, sails, instrument calibration): 10 or more tacks and gybes in steady wind, some reaching and a few roundings, and windward-leeward laps for the TWS table. Run `python -m plugincal --since <that date>` ([how](https://github.com/ghotihook/boatcal/tree/main/plugincal)), paste each table it prints into the **Calibration** page, and **Save**. By hand, the H5000 rule works unchanged: if TWD lifts on every tack, take half the error off TWA in that cell.
 3. **Compare.** Sail in Shadow mode and compare the `…Corrected` paths with your instruments.
 4. **Go live** with Replace mode once you trust it: rank this plugin first for each output path in **Server → Source Priorities**, and take the instrument's own TWA / TWS tables out so nothing is corrected twice. This plugin sends true heading too: turn off any other plugin that works it out (such as derived-data's true heading), so one value goes to the whole boat.
@@ -63,9 +63,9 @@ One chain per calculation, from its inputs to what it sends. Inputs in *italics*
 | Heading | compass, variation | magnetic + variation → damping | true heading, with each compass update (not when the heading sensor sends true heading itself) |
 | Boat speed | paddlewheel, heel | STW table → damping | STW |
 | Leeway | heel, *STW* | K × heel ÷ STW² | leeway |
-| True wind | apparent wind, *STW*, heading | apparent wind − STW along the heading → TWA table → TWS table → heading + TWA → damping | TWD, TWS, and TWA as the damped TWD less the heading |
+| True wind | apparent wind, *STW*, heading | apparent wind − STW along the heading → TWA table → TWS table → heading + TWA → damping | TWD, TWS, and TWA as the damped TWD less the heading. TWA goes out with each heading update too, so it follows a tack at the compass's rate |
 | Current | SOG, COG, heading, *STW*, *leeway* | ground velocity − water velocity → damping | current |
-| Ground wind | *TWD*, *TWS*, *current* | true wind + current → damping | ground wind speed, direction and angle |
+| Ground wind | *TWD*, *TWS*, *current* | true wind + current → damping | ground wind speed, direction and angle (the angle with each heading update too) |
 
 | Correction | What it does | Default |
 |---|---|---|
@@ -80,7 +80,7 @@ One chain per calculation, from its inputs to what it sends. Inputs in *italics*
 |---|---|---|
 | Heading | 0 s | Heading, before true wind. Keep it at apparent wind's lag: 0 for raw apparent wind, or a yaw swings TWD |
 | Heel | 2 s | Heel, before the STW table and leeway: takes most of the roll out |
-| True wind | 3 s | TWD, TWS and ground wind. TWA is the damped TWD less the heading, so it answers the helm at once |
+| True wind | 3 s | TWD, TWS and ground wind. TWA is the damped TWD less the heading now, sent with each heading update, so it answers the helm at once |
 | STW | 1 s | The published STW |
 | Current | 10 s | Current, as a vector |
 
@@ -88,10 +88,10 @@ More true wind damping gives a steadier TWD but shows a real shift later.
 
 **Built in**, with the plugin's own numbers listed in the webapp:
 
-- **Light air.** Below 1.5 kn of TWS, wind direction is noise: TWA, TWD and the ground wind direction and angle are not published (TWS and ground wind speed still are) until TWS is back to 2 kn.
-- **Stale or implausible input.** Inputs older than 3 s are not used. Apparent wind over 120 kn, STW over 60 kn or heel beyond ±90° is ignored, and the status says why.
+- **Light air.** Below 1.5 kn of TWS, wind direction is noise: TWD and the ground wind direction and angle are not published until TWS is back to 2 kn. TWA, TWS and ground wind speed still are: in light air TWA is what you sail by, so it is never held back.
+- **Stale or implausible input.** Inputs older than 3 s are not used. When apparent wind stops nothing is published: Signal K keeps the last values, so the status says so and the Live page greys them out. Apparent wind over 120 kn, STW over 60 kn or heel beyond ±90° is ignored, and the status says why.
 - **Heading.** `navigation.headingTrue` from the heading sensor if it sends it; otherwise magnetic heading plus `navigation.magneticVariation` (normally from the GPS); otherwise the fallback variation in Settings.
-- **Inputs from sensors, one each.** Unless you choose a source in Settings, every input is read from data connections only, never from another plugin (its value is a copy, later and slower, or already corrected, and in Replace mode it may be this plugin's own output fed back), and from one sensor: for its first 2 s the first seen, then the one sending most often, kept until restart. Two sensors that disagree are never mixed; another sensor reading differently from the one in use is shown on the Live page and in the status. If the sensor in use goes quiet, the input is missing (the status names any other sensor sending it) rather than silently replaced by a sensor the tables were not fitted to.
+- **Inputs from sensors, one each.** Unless you choose a source in Settings, every input is read from data connections only, never from another plugin (its value is a copy, later and slower, or already corrected, and in Replace mode it may be this plugin's own output fed back), and from one sensor: for its first 2 s the first seen, then the one sending most often (the highest data rate, not necessarily the most accurate), kept until restart or Save. Two sensors that disagree are never mixed; another sensor reading differently from the one in use is shown on the Live page and in the status. If the sensor in use goes quiet, the input is missing (the status names any other sensor sending it) rather than silently replaced by a sensor the tables were not fitted to.
 - **No loops with other plugins**, as above, and no path is published more often than 20 Hz.
 
 ## The webapp
@@ -100,7 +100,7 @@ More true wind damping gives a steadier TWD but shows a real shift later.
 
 - **Live**: the published values, with the undamped and uncorrected ones under them; the pipeline, one row per calculation; every path sent; each input's source and age.
 - **Calibration**: the corrections in pipeline order, each with an on/off switch, its table, its built-in limits, **Paste a table** (the text `plugincal` prints, or the same from a spreadsheet), **Copy this table** and **Reset to defaults**. **Save** to apply.
-- **Settings**: Shadow or Replace, damping, the fallback variation, and the source for each input: every source seen, with its rate and whether it is another plugin, and which sensor Auto is using.
+- **Settings**: Shadow or Replace, damping, the fallback variation, and the source for each input: every source seen, with its rate and whether it is another plugin, and which sensor Auto (the highest-rate sensor) is using.
 
 | | |
 |---|---|
@@ -125,7 +125,7 @@ On a phone each row stacks: ![The Live page on a phone](docs/screenshots/live-ph
 | Ground wind angle, from the bow | `environment.wind.angleTrueGroundCorrected` | `environment.wind.angleTrueGround` |
 | Ground wind direction | `environment.wind.directionGroundCorrected` | `environment.wind.directionGround` (not in the Signal K schema; sent with `meta`) |
 
-Everything is published under this plugin's own `$source`: STW each time the paddlewheel reports, true heading with each compass update, the rest with each apparent wind update. Shadow paths carry `meta` with their units.
+Everything is published under this plugin's own `$source`: STW each time the paddlewheel reports; true heading, TWA and ground wind angle with each heading update; TWA and everything else with each apparent wind update. Shadow paths carry `meta` with their units.
 
 ## Configuration
 
@@ -164,15 +164,17 @@ The plugin's status line (in the admin UI and at the top of the webapp) says wha
 
 | Status | Meaning |
 |---|---|
-| Waiting for apparent wind | No `angleApparent` / `speedApparent` in the last 3 s from the sensor in use (or the chosen source). "(X sends it: choose it in Settings)" names another sensor that does |
-| No speed through water from a sensor, only from … | STW arrives only from another plugin, which is ignored by default. Choose the STW source in Settings |
+| Waiting for apparent wind | No `angleApparent` / `speedApparent` yet from the sensor in use (or the chosen source) |
+| No apparent wind for N s: nothing published | Apparent wind stopped. Nothing is published, but Signal K keeps the last values, so displays may still show them: the Live page greys them out |
 | Waiting for speed through water | No STW in the last 3 s |
+| (X sends it: choose it in Settings) | After any missing input: another sensor sends it. Auto keeps the sensor it chose at start, so choose X if it is the right one |
+| (only from X, another plugin: …) | After any missing input: only another plugin sends it, which is ignored unless chosen (derived-data's COG true or true heading, another STW corrector). Choose it in Settings, or better, read the sensor it is made from |
 | Not publishing — … is not plausible | An input is out of range (a sensor fault); nothing is published from it |
-| … light air … | TWS is below 1.5 kn: wind direction is held back until 2 kn |
-| … no heel / no heading | Running without that input: no heel correction or leeway / no TWD, current or ground wind. As above, it names any other sensor sending it |
+| … light air … | TWS is below 1.5 kn: TWD and ground wind direction are held back until 2 kn; TWA still goes out |
+| … no heel / no heading / no SOG/COG | Running without that input: no heel correction or leeway / no TWD, current or ground wind / no current or ground wind. As above, it names anything else sending it |
 | … X reads +4.6° … from Y (not used …) | Two sensors send the same input and disagree. Y is in use; check which is right and choose it in Settings |
 | Rate limited … | Something is updating faster than 20 Hz, usually a loop with another plugin; the status names its source |
-| Configuration: … | The saved configuration is invalid; the message says why. Fix it in the webapp |
+| Configuration: … | The saved configuration is invalid; the message says why, in the admin UI and as "Plugin not running: …" in the webapp. Fix it in the webapp |
 | Upgraded from an earlier release … | A configuration saved by an earlier release: its settings are kept, the tables it names are reset to the defaults, and Shadow mode is on. Refit them with `plugincal` and Save |
 
 ## API
@@ -181,7 +183,7 @@ Under `/plugins/signalk-performance-processor`:
 
 - `GET /calibration`: the configuration in use, the defaults, and the built-in limits.
 - `PUT /calibration`: validate, save and restart with a new configuration; 400 with the reasons if it is invalid.
-- `GET /live`: the latest result, each step, input ages and the sources seen.
+- `GET /live`: the latest result, each step, input ages, the sources seen, and `error`: why the plugin is not running, if it is not.
 
 ## Development
 

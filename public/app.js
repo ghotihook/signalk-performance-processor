@@ -195,7 +195,7 @@
     const badge = $('mode')
     badge.textContent = mode === 'replace' ? 'Replace' : mode === 'shadow' ? 'Shadow' : '--'
     badge.classList.toggle('replace', mode === 'replace')
-    $('status').textContent = state.live ? (state.live.running ? state.live.status : 'Plugin not running') : ''
+    $('status').textContent = state.live ? (state.live.running ? state.live.status : `Plugin not running${state.live.error ? ': ' + state.live.error : ''}`) : ''
   }
 
   function renderSaveBar () {
@@ -293,14 +293,14 @@
           damping(dm.trueWindS)
         ],
         out: held
-          ? { lines: [`TWS ${fmt(p.tws)} kn`], note: 'TWA and TWD held: light air' }
+          ? { lines: [`TWA ${angle(p.twa)}`, `TWS ${fmt(p.tws)} kn`], note: 'TWD held: light air' }
           : o.twd == null
             ? { lines: [`TWA ${angle(p.twa)}`, `TWS ${fmt(p.tws)} kn`], note: 'no heading: no TWD' }
-            : { lines: [`TWD ${fmt(p.twd, 0)}° T`, `TWA ${angle(p.twa)}`, `TWS ${fmt(p.tws)} kn`] }
+            : { lines: [`TWD ${fmt(p.twd, 0)}° T`, `TWA ${angle(p.twa)}`, `TWS ${fmt(p.tws)} kn`], note: 'TWA with each heading update too' }
       },
       {
         name: 'Current',
-        inputs: [i.sog == null || i.cog == null ? missing('SOG, COG', 'no current') : sensor('SOG, COG', `${fmt(i.sog, 2)} kn · ${fmt(i.cog, 0)}°`), heading, stw, from('Leeway', angle(o.leeway), 'leeway')],
+        inputs: [i.sog == null || i.cog == null ? missing('SOG, COG', 'no current') : sensor('SOG, COG', `${fmt(i.sog, 2)} kn · ${fmt(i.cog, 0)}° T`, i.cogFrom === 'magnetic' ? 'COG magnetic + variation' : 'COG true'), heading, stw, from('Leeway', angle(o.leeway), 'leeway')],
         steps: o.current
           ? [{ label: 'Ground − water', value: `${fmt(o.current.drift, 2)} kn → ${fmt(o.current.set, 0)}°`, note: 'water: STW along heading + leeway' }, damping(dm.currentS)]
           : [{ label: 'Ground − water', value: '--', note: 'needs heading, SOG and COG', cls: 'off' }],
@@ -352,7 +352,9 @@
     const r = live && live.result
     const staleMs = (state.behaviour ? state.behaviour.staleS : 3) * 1000
     const old = !r || live.ageMs > staleMs
-    $('liveAge').textContent = r ? (old ? `last update ${Math.round(live.ageMs / 1000)} s ago` : '') : ''
+    $('liveAge').textContent = r ? (old ? `last update ${Math.round(live.ageMs / 1000)} s ago: nothing is being published` : '') : ''
+    // Old numbers are greyed out, so a stopped sensor never passes for a steady wind.
+    for (const id of ['tiles', 'flow', 'published']) $(id).classList.toggle('stale', !!r && old)
 
     if (!r) {
       $('tiles').innerHTML = ''
@@ -406,7 +408,7 @@
     const side = v => v < 0 ? 'port' : 'stbd'
     const held = 'not sent: light air'
     const rows = [
-      ['TWA', lightAir ? held : `${fmt(Math.abs(o.twa))}° ${side(o.twa)}`, paths.twa],
+      ['TWA', `${fmt(Math.abs(o.twa))}° ${side(o.twa)}`, paths.twa],
       ['TWS', `${fmt(o.tws)} kn`, paths.tws]
     ]
     if (o.twd != null) rows.push(['TWD', lightAir ? held : `${fmt(o.twd, 0)}° T`, paths.twd])
@@ -527,8 +529,8 @@
     }
     const b = state.behaviour
     $('behaviour').innerHTML = b ? [
-      `<b>Light air:</b> below ${b.lightAirOffKn} kn of TWS, wind direction is noise, so TWA, TWD and the ground wind direction and angle are not published (TWS and ground wind speed still are). They come back once TWS reaches ${b.lightAirOnKn} kn; the gap stops them flickering on and off.`,
-      `<b>Stale inputs:</b> an input older than ${b.staleS} s is not used. Without STW or apparent wind nothing is published; without heading, no TWD, current or ground wind; without SOG and COG, no current or ground wind; without heel, no heel correction or leeway.`,
+      `<b>Light air:</b> below ${b.lightAirOffKn} kn of TWS, wind direction is noise, so TWD and the ground wind direction and angle are not published (TWA, TWS and ground wind speed still are: TWA is what you sail by). They come back once TWS reaches ${b.lightAirOnKn} kn; the gap stops them flickering on and off.`,
+      `<b>Stale inputs:</b> an input older than ${b.staleS} s is not used. Without STW or apparent wind nothing is published (the status says so, and this page greys out the last values, which Signal K keeps); without heading, no TWD, current or ground wind; without SOG and COG, no current or ground wind; without heel, no heel correction or leeway.`,
       `<b>Rate limit:</b> no path is published more often than ${b.maxPublishHz} Hz. Faster updates are dropped; when that keeps happening the status says so, as it usually means a feedback loop with another plugin.`,
       '<b>Implausible input</b> (apparent wind over 120 kn, STW over 60 kn, heel beyond ±90°, or negative speeds) is not used, and the status says why.'
     ].map(t => `<li>${t}</li>`).join('') : '<li>Update the plugin to see these.</li>'
@@ -549,7 +551,7 @@
       const opts = Array.from(new Set([...seen(key).map(x => x.source), chosen].filter(Boolean)))
       const auto = live.inUse && live.inUse[key] && !chosen ? `: ${describe(key, live.inUse[key])}` : ''
       return `<label>${esc(label)}<select data-path="sources.${key}">` +
-        `<option value="">Auto (sensors only)${esc(auto)}</option>` +
+        `<option value="">Auto (highest-rate sensor)${esc(auto)}</option>` +
         opts.map(s => `<option value="${esc(s)}" ${s === chosen ? 'selected' : ''}>${esc(describe(key, s))}${seen(key).some(x => x.source === s) ? '' : ' (not seen)'}</option>`).join('') +
         '</select></label>'
     }).join('')

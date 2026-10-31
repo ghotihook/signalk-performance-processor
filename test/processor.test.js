@@ -6,7 +6,7 @@ const K = DEFAULTS.corrections.leeway.k
 
 const { stwGridLookup } = _internals
 const T = require('../public/tables')
-const { interp, fromZero, blendRows, fillGaps } = T
+const { fromZero } = T
 
 // Tables for the tests, in the H5000 layout, so the tests do not move when the defaults are
 // refitted. The STW table is deliberately not symmetric: port and starboard rows differ.
@@ -30,20 +30,6 @@ function allOff () {
 test('defaults are valid', () => {
   const { errors } = normalizeConfig({})
   assert.deepStrictEqual(errors, [])
-})
-
-test('interp holds the end values and is linear between', () => {
-  assert.strictEqual(interp([5, 10], [1, 3], 0), 1)
-  assert.strictEqual(interp([5, 10], [1, 3], 20), 3)
-  assert.strictEqual(interp([5, 10], [1, 3], 7.5), 2)
-})
-
-test('rows blend by TWA: the first in full to its angle, the second at its angle, the third in full from its angle', () => {
-  assert.strictEqual(blendRows(30, 40, 90, 165, -10, 0, 4), -10)
-  assert.strictEqual(blendRows(65, 40, 90, 165, -10, 0, 4), -5)
-  assert.strictEqual(blendRows(90, 40, 90, 165, -10, 0, 4), 0)
-  close(blendRows(127.5, 40, 90, 165, -10, 0, 4), 2, 1e-9)
-  assert.strictEqual(blendRows(170, 40, 90, 165, -10, 0, 4), 4)
 })
 
 test('with every correction off, true wind is apparent wind minus boat speed', () => {
@@ -92,10 +78,6 @@ test('STW: blank cells take the nearest value in their row', () => {
   const t = { ...STW, add: STW.add.map(r => r.slice()) }
   t.add[2] = [0, 0.1, 0.2, null, null, null]
   close(stwGridLookup(t, 0, 20), 0.2, 1e-9)
-})
-
-test('fillGaps extends rows, then fills an empty row from its neighbour', () => {
-  assert.deepStrictEqual(fillGaps([[null, 1, null], [null, null, null], [2, null, 3]]), [[1, 1, 1], [1, 1, 1], [2, 2, 3]])
 })
 
 test('leeway is K x heel / STW^2, to leeward, and needs heel', () => {

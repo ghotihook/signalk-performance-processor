@@ -25,7 +25,7 @@ test('Smooth: 0 is no damping; a repeat time changes nothing; a long gap restart
 test('SmoothAngle: averages across north, not through south', () => {
   const s = new SmoothAngle()
   s.update(350, 0, 1)
-  const v = s.update(10, 100000 / 100, 0.0001) // a very short time constant: lands on 10
+  const v = s.update(10, 1000, 0.0001) // a very short time constant: lands on 10
   assert.ok(Math.abs(v - 10) < 1e-6)
   const m = new SmoothAngle()
   m.update(350, 0, 1)
@@ -36,6 +36,9 @@ test('SmoothAngle: averages across north, not through south', () => {
 test('SmoothVector: current smoothed as a vector', () => {
   const s = new SmoothVector()
   s.update(1, 90, 0, 10)
-  const v = s.update(1, 270, 10, 10) // reversed: the average heads to slack water, not to 180
-  assert.ok(v.speed < 1)
+  // The current reverses; one time constant later the average has passed through slack
+  // water and is setting the new way (an average of the directions would say 1 kn to 180).
+  const v = s.update(1, 270, 10000, 10)
+  assert.ok(Math.abs(v.speed - (2 * (1 - Math.exp(-1)) - 1)) < 1e-9, `speed ${v.speed}`)
+  assert.ok(Math.abs(v.deg - 270) < 1e-9, `set ${v.deg}`)
 })

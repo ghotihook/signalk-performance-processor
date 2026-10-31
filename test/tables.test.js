@@ -2,6 +2,8 @@ const test = require('node:test')
 const assert = require('node:assert')
 const T = require('../public/tables')
 const { normalizeConfig, CONFIG_SCHEMA } = require('../lib/processor')
+const { interp, blendRows, fillGaps } = T
+const close = (a, b, tol) => assert.ok(Math.abs(a - b) <= tol, `expected ${b} ± ${tol}, got ${a}`)
 
 const twa = { tws: [5, 10, 15, 20, 25, 30], upwind: [-9, -7.6, -12.6, -5.8, -5.7, null], reach: [-1, -2.4, -4.4, -5.4, 1.4, 3.9], downwind: [0.5, 1.2, -3.5, 1, null, null] }
 const stw = { heel: [-20, -10, 0, 10, 20], stw: [2.5, 5, 7.5, 10, 12.5, 15], add: [[0.4, 0.2, 0, -0.1, -0.1, -0.2], [0.3, 0.1, 0, 0, 0, 0], [0.3, 0.05, 0, 0, 0, null], [0.3, 0.1, 0, 0, 0, 0], [0.35, 0.15, -0.05, -0.1, -0.1, -0.1]] }
@@ -43,11 +45,6 @@ test('the wrong layout is refused with the reason', () => {
   assert.throws(() => T.parseStw('heel\\stw,2.5'), /needs a header row and at least one table row/)
 })
 
-test('defaults are valid', () => {
-  const { errors } = normalizeConfig({})
-  assert.deepStrictEqual(errors, [])
-})
-
 test('along a row: from zero at 0 kn to the first column, linear between, the last held', () => {
   const xs = [2.5, 5, 7.5]
   const ys = [0.4, 0.2, -0.1]
@@ -72,4 +69,22 @@ test('TWS table: upwind to the up angle, reaching at 90, downwind from the down 
   assert.strictEqual(c(180, 2.5), -0.5, 'from zero below the first column')
   let prev = c(0, 12)
   for (let a = 0.5; a <= 180; a += 0.5) { const v = c(a, 12); assert.ok(Math.abs(v - prev) < 0.06, `steps at ${a}`); prev = v }
+})
+
+test('interp holds the end values and is linear between', () => {
+  assert.strictEqual(interp([5, 10], [1, 3], 0), 1)
+  assert.strictEqual(interp([5, 10], [1, 3], 20), 3)
+  assert.strictEqual(interp([5, 10], [1, 3], 7.5), 2)
+})
+
+test('rows blend by TWA: the first in full to its angle, the second at its angle, the third in full from its angle', () => {
+  assert.strictEqual(blendRows(30, 40, 90, 165, -10, 0, 4), -10)
+  assert.strictEqual(blendRows(65, 40, 90, 165, -10, 0, 4), -5)
+  assert.strictEqual(blendRows(90, 40, 90, 165, -10, 0, 4), 0)
+  close(blendRows(127.5, 40, 90, 165, -10, 0, 4), 2, 1e-9)
+  assert.strictEqual(blendRows(170, 40, 90, 165, -10, 0, 4), 4)
+})
+
+test('fillGaps extends rows, then fills an empty row from its neighbour', () => {
+  assert.deepStrictEqual(fillGaps([[null, 1, null], [null, null, null], [2, null, 3]]), [[1, 1, 1], [1, 1, 1], [2, 2, 3]])
 })
