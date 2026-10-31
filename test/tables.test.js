@@ -3,7 +3,7 @@ const assert = require('node:assert')
 const T = require('../public/tables')
 const { normalizeConfig, CONFIG_SCHEMA } = require('../lib/processor')
 
-const twa = { tws: [2.5, 5, 7.5, 10, 12.5, 15], upwind: [-9, -7.6, -12.6, -5.8, -5.7, null], reach: [-1, -2.4, -4.4, -5.4, 1.4, 3.9], downwind: [0.5, 1.2, -3.5, 1, null, null] }
+const twa = { tws: [5, 10, 15, 20, 25, 30], upwind: [-9, -7.6, -12.6, -5.8, -5.7, null], reach: [-1, -2.4, -4.4, -5.4, 1.4, 3.9], downwind: [0.5, 1.2, -3.5, 1, null, null] }
 const stw = { heel: [-20, -10, 0, 10, 20], stw: [2.5, 5, 7.5, 10, 12.5, 15], add: [[0.4, 0.2, 0, -0.1, -0.1, -0.2], [0.3, 0.1, 0, 0, 0, 0], [0.3, 0.05, 0, 0, 0, null], [0.3, 0.1, 0, 0, 0, 0], [0.35, 0.15, -0.05, -0.1, -0.1, -0.1]] }
 const tws = { tws: [5, 10, 15, 20, 25, 30], upwind: [0, 0, 0, 0, 0, 0], reach: [-0.2, -0.4, -0.6, -0.8, null, null], downwind: [-0.8, -1.5, -2.3, -3, -3.8, -4.5], upAngle: [50, 50, 50, 50, 50, 50], downAngle: [110, 110, 110, 115, 120, 120] }
 
@@ -19,22 +19,22 @@ test('a pasted table is a valid plugin table', () => {
 })
 
 test('spreadsheet damage: tabs, padding, quotes, Unicode minus, degree signs, rows in any order', () => {
-  const text = '﻿"TWA\\TWS"\t2.5\t5\t7.5\t10\t12.5\t15\n' +
+  const text = '﻿"TWA\\TWS"\t5\t10\t15\t20\t25\t30\n' +
     '165º TWA\t0.5\t1.2\t−3.5\t1\t\t\n' +
     '  40°  \t−9\t−7.6\t-12.6\t-5.8\t-5.7\t\n' +
     'Reaching\t-1\t-2.4\t-4.4\t-5.4\t1.4\t3.9\n'
   assert.deepStrictEqual(T.parseTwa(text), twa)
-  const spaced = 'TWA\\TWS 2.5 5 7.5 10 12.5 15\n40 -1 -1 -1 -1 -1 -1\n90 0 0 0 0 0 0\n165 1 1 1 1 1 1'
+  const spaced = 'TWA\\TWS 5 10 15 20 25 30\n40 -1 -1 -1 -1 -1 -1\n90 0 0 0 0 0 0\n165 1 1 1 1 1 1'
   assert.deepStrictEqual(T.parseTwa(spaced).upwind, [-1, -1, -1, -1, -1, -1])
   const tw = 'TWS,5,10,15,20,25,30\nUpwind correction,0,0,0,0,0,0\nreaching,0,0,0,0,0,0\ndownwind,-1,-1,-1,-1,-1,-1\nUpwind angle,50,50,50,50,50,50\nDown angle,110°,110,110,110,110,110'
   assert.deepStrictEqual(T.parseTws(tw).downAngle, [110, 110, 110, 110, 110, 110])
 })
 
 test('the wrong layout is refused with the reason', () => {
-  assert.throws(() => T.parseTwa('TWA\\TWS,0,5,10,15,20,25,30\n40,0,1,1,1,1,1,1'), /header must be TWS columns 2.5, 5, 7.5/)
-  assert.throws(() => T.parseTwa('TWA\\TWS,2.5,5,7.5,10,12.5,15\n40,1,1,1,1,1,1\n90,1,1,1,1,1,1'), /missing row 165/)
-  assert.throws(() => T.parseTwa('TWA\\TWS,2.5,5,7.5,10,12.5,15\n45,1,1,1,1,1,1'), /expected 40, 90 or 165/)
-  assert.throws(() => T.parseTwa('TWA\\TWS,2.5,5,7.5,10,12.5,15\n40,x,1,1,1,1,1'), /not a number: "x"/)
+  assert.throws(() => T.parseTwa('TWA\\TWS,2.5,5,7.5,10,12.5,15\n40,1,1,1,1,1,1'), /header must be TWS columns 5, 10, 15/)
+  assert.throws(() => T.parseTwa('TWA\\TWS,5,10,15,20,25,30\n40,1,1,1,1,1,1\n90,1,1,1,1,1,1'), /missing row 165/)
+  assert.throws(() => T.parseTwa('TWA\\TWS,5,10,15,20,25,30\n45,1,1,1,1,1,1'), /expected 40, 90 or 165/)
+  assert.throws(() => T.parseTwa('TWA\\TWS,5,10,15,20,25,30\n40,x,1,1,1,1,1'), /not a number: "x"/)
   assert.throws(() => T.parseStw('heel\\stw,2.5,5,7.5,10,12.5,15\n0,0,0,0,0,0,0'), /missing heel rows -20, -10, 10, 20/)
   assert.throws(() => T.parseStw('heel\\stw,2.5,5,7.5,10,12.5,15\n15,0,0,0,0,0,0'), /expected heel -20, -10, 0, 10, 20/)
   assert.throws(() => T.parseTws('TWS,5,10,15,20,25,30\ncorrection,1,1,1,1,1,1'), /expected "upwind"/)

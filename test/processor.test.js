@@ -10,7 +10,7 @@ const T = require('../public/tables')
 // Tables for the tests, in the H5000 layout, so the tests do not move when the defaults are
 // refitted. The STW table is deliberately not symmetric: port and starboard rows differ.
 const STW = { heel: [-20, -10, 0, 10, 20], stw: [2.5, 5, 7.5, 10, 12.5, 15], add: [[0.4, 0.2, 0, -0.1, -0.1, -0.2], [0.3, 0.1, 0, 0, 0, 0], [0.3, 0.05, 0, 0, 0, 0], [0.3, 0.1, 0, 0, 0, 0], [0.35, 0.15, -0.05, -0.1, -0.1, -0.1]] }
-const TWA = { tws: [2.5, 5, 7.5, 10, 12.5, 15], upwind: [-9, -7, -5, -2, 3, 6], reach: [-3, -2, -1, 0, 1, 2], downwind: [2, 1, 0, -1, -2, -3] }
+const TWA = { tws: [5, 10, 15, 20, 25, 30], upwind: [-9, -7, -5, -2, 3, 6], reach: [-3, -2, -1, 0, 1, 2], downwind: [2, 1, 0, -1, -2, -3] }
 const TWS = { tws: [5, 10, 15, 20, 25, 30], upwind: [0, 0, 0, 0, 0, 0], reach: [-0.2, -0.4, -0.6, -0.8, -1, -1.2], downwind: [-0.8, -1.5, -2.3, -3, -3.8, -4.5], upAngle: [50, 50, 50, 50, 50, 50], downAngle: [110, 110, 110, 110, 110, 110] }
 function withTables (over = {}) {
   const { config, errors } = normalizeConfig({ corrections: { stw: STW, twa: TWA, tws: { ...TWS, enabled: true }, leeway: { k: 8 }, ...over } })
@@ -299,7 +299,7 @@ test('config: bad tables are reported, not accepted', () => {
     assert.ok(errors.some(e => e.includes(match)), `expected an error mentioning "${match}", got ${JSON.stringify(errors)}`)
   }
   bad({ mode: 'loud' }, 'mode')
-  bad({ corrections: { twa: { tws: [5, 10, 15, 20, 25, 30] } } }, 'H5000 layout')
+  bad({ corrections: { twa: { tws: [2.5, 5, 7.5, 10, 12.5, 15] } } }, 'H5000 layout')
   bad({ corrections: { twa: { upwind: [1, 2] } } }, 'needs 6 values')
   bad({ corrections: { stw: { heel: [0, 10, 20] } } }, 'H5000 layout')
   bad({ corrections: { stw: { add: [[0, 0, 0, 0, 0, 0]] } } }, 'one row per heel')
@@ -309,15 +309,15 @@ test('config: bad tables are reported, not accepted', () => {
   bad({ corrections: { leeway: { k: 'x' } } }, 'Leeway K')
 })
 
-test('config carries its schema version, now 4', () => {
+test('config carries its schema version, now 5', () => {
   const { CONFIG_SCHEMA } = require('../lib/processor')
-  assert.strictEqual(CONFIG_SCHEMA, 4)
-  assert.strictEqual(normalizeConfig({}).config.schema, 4)
-  assert.strictEqual(normalizeConfig({ schema: 4, variation: 11 }).config.variation, 11)
+  assert.strictEqual(CONFIG_SCHEMA, 5)
+  assert.strictEqual(normalizeConfig({}).config.schema, 5)
+  assert.strictEqual(normalizeConfig({ schema: 5, variation: 11 }).config.variation, 11)
 })
 
 test('a config from a newer release is refused, not guessed at', () => {
-  const { config, errors } = normalizeConfig({ schema: 5, corrections: { leeway: { k: 6 } } })
+  const { config, errors } = normalizeConfig({ schema: 6, corrections: { leeway: { k: 6 } } })
   assert.ok(errors[0].includes('newer version'))
   assert.strictEqual(config.corrections.leeway.k, DEFAULTS.corrections.leeway.k, 'falls back to defaults')
 })
@@ -330,8 +330,8 @@ test('a schema 3 config (0.1.0 to 0.2.5) moves forward: settings and K kept, tab
       tws: { enabled: true, tws: [0, 5, 10, 15, 20, 25, 30], correction: [0, -1, -1, -1, -1, -1, -1], downAngle: [165, 165, 165, 165, 165, 165, 165] } } }
   const { config, errors, notices } = normalizeConfig(old)
   assert.deepStrictEqual(errors, [])
-  assert.match(notices[0], /settings and leeway K kept.*tables reset.*Shadow mode/)
-  assert.strictEqual(config.schema, 4)
+  assert.match(notices[0], /settings kept; the boat speed, TWA and TWS tables reset.*Shadow mode/)
+  assert.strictEqual(config.schema, 5)
   assert.strictEqual(config.mode, 'shadow', 'never Replace with tables from another boat')
   assert.strictEqual(config.variation, 11.5)
   assert.deepStrictEqual(config.damping, old.damping)
@@ -340,6 +340,22 @@ test('a schema 3 config (0.1.0 to 0.2.5) moves forward: settings and K kept, tab
   for (const t of ['stw', 'twa', 'tws']) assert.deepStrictEqual(config.corrections[t], DEFAULTS.corrections[t], t)
   assert.deepStrictEqual(normalizeConfig({ schema: 3 }).errors, [], 'a bare schema 3 file moves forward too')
   assert.deepStrictEqual(normalizeConfig({}).notices, [], 'no notice for a current file')
+})
+
+test('a schema 4 config (0.2.6) moves forward: only the TWA table, whose columns changed, is reset', () => {
+  const stw = { ...STW, enabled: true }
+  const tws = { ...TWS, enabled: true }
+  const old = { schema: 4, mode: 'replace', damping: { heelS: 2, headingS: 2, trueWindS: 3, stwS: 1, currentS: 10 },
+    corrections: { stw, leeway: { enabled: true, k: 7 }, twa: { enabled: true, tws: [2.5, 5, 7.5, 10, 12.5, 15], upwind: [1, 1, 1, 1, 1, 1], reach: [0, 0, 0, 0, 0, 0], downwind: [0, 0, 0, 0, 0, 0] }, tws } }
+  const { config, errors, notices } = normalizeConfig(old)
+  assert.deepStrictEqual(errors, [])
+  assert.match(notices[0], /settings kept; the TWA table reset to the defaults.*Shadow mode/)
+  assert.strictEqual(config.mode, 'shadow')
+  assert.strictEqual(config.damping.headingS, 2, 'settings kept as saved')
+  assert.deepStrictEqual(config.corrections.stw, stw)
+  assert.deepStrictEqual(config.corrections.tws, tws)
+  assert.strictEqual(config.corrections.leeway.k, 7)
+  assert.deepStrictEqual(config.corrections.twa, DEFAULTS.corrections.twa)
 })
 
 test('a config from before 0.1.0 is refused: its tables do not apply', () => {

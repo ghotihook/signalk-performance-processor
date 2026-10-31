@@ -344,7 +344,7 @@ test('rejects implausible input rather than publishing it', () => {
 })
 
 test('reports a bad stored config instead of starting', () => {
-  const h = harness({ schema: 4, corrections: { twa: { upwind: [1] } } })
+  const h = harness({ schema: 5, corrections: { twa: { upwind: [1] } } })
   assert.ok(h.errors.some(e => e.includes('TWA table 40° row')))
 })
 
@@ -359,7 +359,7 @@ test('GET /calibration sends the built-in limits the webapp describes', async ()
   const h = harness()
   const { json } = await h.call('GET', '/calibration')
   assert.deepStrictEqual(json.behaviour, {
-    axes: { stwHeel: [-20, -10, 0, 10, 20], stwSpeed: [2.5, 5, 7.5, 10, 12.5, 15], twaTws: [2.5, 5, 7.5, 10, 12.5, 15], twaRows: { upwind: 40, reach: 90, downwind: 165 }, twsTws: [5, 10, 15, 20, 25, 30] },
+    axes: { stwHeel: [-20, -10, 0, 10, 20], stwSpeed: [2.5, 5, 7.5, 10, 12.5, 15], twaTws: [5, 10, 15, 20, 25, 30], twaRows: { upwind: 40, reach: 90, downwind: 165 }, twsTws: [5, 10, 15, 20, 25, 30] },
     twaRows: { upwind: 40, reach: 90, downwind: 165 }, reachDeg: 90,
     maxLeewayDeg: 15, leewayFadeKn: [1.5, 3], twaTaperUpDeg: 30, twaTaperDownDeg: 10,
     lightAirOffKn: 1.5, lightAirOnKn: 2, staleS: 3, maxPublishHz: 20
@@ -417,7 +417,7 @@ test('a 0.2.5 config keeps running after the upgrade, in Shadow mode, saying so 
   assert.strictEqual(r.json.config.sources.stw, 'h2000.II')
   assert.strictEqual(h.saved().schema, 3, 'the file is left as it was until Save')
   await h.call('PUT', '/calibration', r.json.config)
-  assert.strictEqual(h.saved().schema, 4)
+  assert.strictEqual(h.saved().schema, 5)
   h.feed(boat)
   assert.doesNotMatch(h.statuses[h.statuses.length - 1], /Upgraded/, 'the notice goes once saved')
 })
@@ -425,7 +425,7 @@ test('a 0.2.5 config keeps running after the upgrade, in Shadow mode, saying so 
 test('the saved file records its schema version', async () => {
   const h = harness()
   await h.call('PUT', '/calibration', { corrections: { leeway: { k: 6.5 } } })
-  assert.strictEqual(h.saved().schema, 4)
+  assert.strictEqual(h.saved().schema, 5)
 })
 
 test('a broken config file is reported, and the webapp can still load and fix it', async () => {

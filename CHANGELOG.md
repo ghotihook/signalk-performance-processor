@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.7 — 2026-10-31
+
+**The TWA table is now by TWS 5, 10, 15, 20, 25 and 30 kn, the same columns as the TWS table (config schema 5). A config saved by 0.2.6 keeps its settings, leeway K and boat speed and TWS tables; its TWA table is reset to the defaults and the plugin runs in Shadow mode, saying so in its status, until you refit the TWA table with boatcal `plugincal` 1.3.2 and Save. A config from 0.1.0 to 0.2.5 moves forward as in 0.2.6.**
+
+- **TWA table**: columns TWS 5 … 30 kn (were 2.5 … 15), each row from nothing at 0 kn below 5 kn, so the table now reaches the breeze the boat races in; rows still at 40°, 90° and 165°.
+- **The defaults are refitted** (boatcal `plugincal` 1.3.2, 2025 to March 2026). Held out by day: TWD step across tacks 6.4°, gybes 4.0° (0.2.5: 6.8°, 4.4°); on every race day, the new defaults have the steadier TWD on 20 days, 0.2.5's on 13. TWS off the wind: 1.45 kn RMS held out (0.2.5, table off: 2.35).
+
 ## 0.2.6 — 2026-10-31
 
 **The tables now use the H5000's 2018 layout (config schema 4). A config saved by 0.1.0 to 0.2.5 is moved forward: its settings (mode aside), input sources, damping, fallback variation and leeway K are kept, but its boat speed, TWA and TWS tables are reset to the defaults and the plugin runs in Shadow mode, saying so in its status, until you refit the tables with boatcal `plugincal` 1.3.1 and Save. The file is left as it was until then.**

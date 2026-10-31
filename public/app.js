@@ -43,7 +43,7 @@
   // The tables' text format (tables.js): what Paste a table reads and Copy writes.
   const PASTE = {
     stw: { parse: t => PPTables.parseStw(t), hint: 'First row <code>heel\\stw</code> then the boat speeds 2.5, 5 … 15; then a row for heel −20, −10, 0, 10 and 20, each its label then its values. This is what boatcal <code>plugincal</code> prints.' },
-    twa: { parse: t => PPTables.parseTwa(t), hint: 'First row <code>TWA\\TWS</code> then the TWS columns 2.5, 5 … 15; then a row for TWA 40, 90 and 165, each its label then its values. This is what boatcal <code>plugincal</code> prints.' },
+    twa: { parse: t => PPTables.parseTwa(t), hint: 'First row <code>TWA\\TWS</code> then the TWS columns 5, 10 … 30; then a row for TWA 40, 90 and 165, each its label then its values. This is what boatcal <code>plugincal</code> prints.' },
     tws: { parse: t => PPTables.parseTws(t), hint: 'First row <code>TWS</code> then the TWS columns 5, 10 … 30; then rows <code>upwind</code>, <code>reach</code>, <code>downwind</code> (kn), <code>up angle</code> and <code>down angle</code> (°). This is what boatcal <code>plugincal</code> prints.' }
   }
 
