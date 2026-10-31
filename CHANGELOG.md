@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.13 — 2026-10-31
+
+- **`GET /calibration`'s `behaviour` no longer repeats the tables' layout** (`axes`, `twaRows`, `reachDeg`): the webapp reads it from `tables.js`, which it loads from the plugin, so the two can never disagree. Nothing else changed: the same numbers, the same webapp.
+- README: in Shadow mode, other plugins that use true wind or boat speed (a polar plugin, a display) still read the standard paths; the status table covers the 0.2.12 upgrade notice.
+
 ## 0.2.12 — 2026-10-31
 
 - **The boat speed table has a 1 kn column** (1, 2.5, 5 … 15 kn; config schema 6). A paddlewheel stalls below about 2 kn: on the test boat it read 0.6 kn low at 1 kn. With the H5000's first column at 2.5 kn, the correction ran in a straight line from nothing at 0 kn and left STW 0.3–0.4 kn low between 0.5 and 1.5 kn, held out by day (worth about 9° of TWA at 1 kn in 3 kn of wind). Below 1 kn it now runs from nothing at 0 kn to the 1 kn cell, so a stopped boat is still never given speed.

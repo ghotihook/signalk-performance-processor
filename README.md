@@ -49,7 +49,7 @@
 
 1. **Check the inputs.** The Live page lists every input with its source and age. Each input is read from one sensor, never from another plugin: Auto takes the one with the highest data rate in the first 2 s, not necessarily the most accurate; if another sensor sends the same thing and reads differently, the Live page says so. Choose a different one under **Settings → Input sources** if needed.
 2. **Calibrate.** Log some sailing since your setup last changed (rig tune, sails, instrument calibration): 10 or more tacks and gybes in steady wind, some reaching and a few roundings, and windward-leeward laps for the TWS table. Run `python -m plugincal --since <that date>` ([how](https://github.com/ghotihook/boatcal/tree/main/plugincal)), paste each table it prints into the **Calibration** page, and **Save**. By hand, the H5000 rule works unchanged: if TWD lifts on every tack, take half the error off TWA in that cell.
-3. **Compare.** Sail in Shadow mode and compare the `…Corrected` paths with your instruments.
+3. **Compare.** Sail in Shadow mode and compare the `…Corrected` paths with your instruments. Anything else that uses true wind or boat speed (a polar or performance plugin, a display) still reads the standard paths until you go live: point it at the `…Corrected` paths to see its numbers on the corrected values first.
 4. **Go live** with Replace mode once you trust it: rank this plugin first for each output path in **Server → Source Priorities**, and take the instrument's own TWA / TWS tables out so nothing is corrected twice. This plugin sends true heading too: turn off any other plugin that works it out (such as derived-data's true heading), so one value goes to the whole boat.
 
 Refit after anything that changes the boat or what the instruments read: a rig tune, new sails, a boat speed calibration change, a new masthead unit.
@@ -175,7 +175,7 @@ The plugin's status line (in the admin UI and at the top of the webapp) says wha
 | … X reads +4.6° … from Y (not used …) | Two sensors send the same input and disagree. Y is in use; check which is right and choose it in Settings |
 | Rate limited … | Something is updating faster than 20 Hz, usually a loop with another plugin; the status names its source |
 | Configuration: … | The saved configuration is invalid; the message says why, in the admin UI and as "Plugin not running: …" in the webapp. Fix it in the webapp |
-| Upgraded from an earlier release … | A configuration saved by an earlier release: its settings are kept, the tables it names are reset to the defaults, and Shadow mode is on. Refit them with `plugincal` and Save |
+| Upgraded from an earlier release … | A configuration saved by an earlier release. From 0.2.7–0.2.11: everything is kept, and the boat speed table has a new 1 kn column set so it works as before; refit it with `plugincal` to use it. From earlier: settings are kept, the tables it names are reset to the defaults, and Shadow mode is on; refit them. Save to clear the notice |
 
 ## API
 
@@ -192,7 +192,7 @@ npm test          # node --test
 cd ~/.signalk && npm install /path/to/signalk-performance-processor && sudo systemctl restart signalk
 ```
 
-`lib/processor.js` is the calculation, free of Signal K so it can be tested and replayed (`plugincal` runs it directly). Each correction is an entry in its `CORRECTIONS`, with its defaults in `lib/defaults.js` and its editor in `public/app.js`. `public/tables.js` is the table layout and text format, shared by the plugin, the webapp and `plugincal`. `lib/damping.js` is the damping; `index.js` the Signal K side.
+`lib/processor.js` is the calculation, free of Signal K so it can be tested and replayed (`plugincal` runs it directly, through its exports and `_internals`, and `public/tables.js`: check boatcal's `plugincal/pipeline.js` before changing them). Each correction is an entry in its `CORRECTIONS`, with its defaults in `lib/defaults.js` and its editor in `public/app.js`. `public/tables.js` is the table layout and text format, shared by the plugin, the webapp and `plugincal`. `lib/damping.js` is the damping; `index.js` the Signal K side.
 
 What changed in each release: [CHANGELOG.md](CHANGELOG.md).
 
