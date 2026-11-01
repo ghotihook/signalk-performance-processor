@@ -105,11 +105,6 @@ table { width: 100%; border-collapse: collapse; }
 th, td { padding: 8px; border-bottom: 1px solid var(--line); white-space: nowrap; text-align: left; }
 th { font-size: 0.75em; color: var(--muted); text-transform: uppercase; }
 tr.off td { color: var(--muted); }
-/* Pipeline: published results stand out, working values recede */
-.chip { display: inline-block; font-size: 0.7em; font-weight: 700; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
-.chip.pub { background: var(--active); color: var(--accent); border: 1px solid var(--accent); }
-.chip.work { color: var(--muted); border: 1px dashed var(--line); }
-tr.working .result { color: var(--muted); font-style: italic; }
 td.mono { font-variant-numeric: tabular-nums; }
 /* Pipeline: one chain per value sent, read left to right, the sent value on the far right */
 .flow { display: grid; grid-template-columns: max-content 1fr 13em; column-gap: 10px; font-size: 0.8em; line-height: 1.25; }
@@ -145,8 +140,6 @@ td.mono { font-variant-numeric: tabular-nums; }
   .cin { flex-direction: row; flex-wrap: wrap; justify-content: flex-start; }
   .tail, .csteps > .arrow:first-child { display: none; }
 }
-details.steps { margin-top: 12px; }
-details.steps summary { cursor: pointer; font-size: 0.85em; color: var(--accent); min-height: 32px; }
 
 /* Calibration */
 .cal { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }

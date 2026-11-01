@@ -357,7 +357,6 @@
     if (!r) {
       $('tiles').innerHTML = ''
       $('flow').innerHTML = `<p class="muted center">${esc(live ? live.status || 'Waiting for data…' : 'Waiting for data…')}</p>`
-      $('steps').innerHTML = `<tr><td colspan="5" class="muted center">${esc(live ? live.status || 'Waiting for data…' : 'Waiting for data…')}</td></tr>`
     } else {
       const o = r.out
       const p = r.published || o // what is sent: damped
@@ -371,53 +370,34 @@
         tile('Current', p.current ? fmt(p.current.drift, 2) : '--', p.current ? `kn · ${fmt(p.current.set, 0)}°` : 'kn', p.current ? 'a trend: average it over a beat' : 'no SOG/COG or heading')
       ].join('')
       renderFlow(live)
-      // A step's result is published only if no later enabled step replaces it; otherwise
-      // it is a working value that only feeds the steps after it.
-      const last = {}
-      r.steps.forEach((s, i) => { if (s.enabled && !s.skipped) (s.produces || []).forEach(q => { last[q] = i }) })
-      const NAMES = { stw: 'STW', leeway: 'Leeway', twa: 'TWA', tws: 'TWS', current: 'Current' }
-      $('steps').innerHTML = r.steps.map((s, i) => {
-        if (!s.enabled) return `<tr class="off"><th scope="row">${esc(s.name)}</th><td></td><td>off</td><td></td><td></td></tr>`
-        const sent = (s.produces || []).filter(q => last[q] === i)
-        const working = (s.produces || []).filter(q => last[q] !== i)
-        const tag = s.skipped ? '' : [
-          sent.length ? `<span class="chip pub">Published: ${sent.map(q => NAMES[q]).join(', ')}</span>` : '',
-          working.length ? `<span class="chip work">Working: ${working.map(q => NAMES[q]).join(', ')}</span>` : ''
-        ].join(' ')
-        return `<tr class="${sent.length ? '' : 'working'}"><th scope="row">${esc(s.name)}</th><td class="mono">${esc(s.input || '')}</td>` +
-          `<td>${esc(s.skipped ? 'skipped — ' + s.skipped : s.detail || '')}</td><td class="mono result">${esc(s.output || '')}</td><td>${tag}</td></tr>`
-      }).join('')
-      renderPublished({ ...o, ...p, stw: p.stw == null ? o.stw : p.stw }, live.outputPaths || {}, r.lightAir)
+      renderPublished({ ...o, ...p, stw: p.stw == null ? o.stw : p.stw }, live.outputPaths || {}, live.sent || [])
     }
 
     const inputs = live ? Object.entries(live.inputs) : []
     $('inputs').innerHTML = inputs.length
       ? inputs.sort().map(([path, i]) => `<tr><td>${esc(path)}</td><td>${esc(i.source)}</td><td class="num ${i.ageMs > staleMs ? 'warn' : ''}">${fmt(i.ageMs / 1000)} s</td></tr>`).join('')
       : '<tr><td colspan="3" class="muted center">Nothing received yet</td></tr>'
-    // Another sensor sending an input, reading differently from the one in use.
-    const dis = (live && live.disagreements) || []
-    $('disagree').innerHTML = dis.map(d => `<p class="warn">${esc(SOURCE_LABELS[d.input] || d.input)}: <span class="mono">${esc(d.other)}</span> reads ${d.diff > 0 ? '+' : '−'}${fmt(Math.abs(d.diff))}${esc(d.unit)} from <span class="mono">${esc(d.used)}</span>, which is in use. The other is not used; if it is the right one, choose it in Settings.</p>`).join('')
   }
 
-  // The values the plugin actually sends, one per path, matching what index.js publishes.
-  function renderPublished (o, paths, lightAir) {
-    const held = 'not sent: light air'
+  // What the plugin has sent in the last few seconds (it reports which outputs), each with
+  // its value now: the webapp holds no rules of its own about what is published.
+  function renderPublished (o, paths, sent) {
+    const gw = o.groundWind || {}
     const rows = [
-      ['TWA', `${fmt(Math.abs(o.twa))}° ${side(o.twa)}`, paths.twa],
-      ['TWS', `${fmt(o.tws)} kn`, paths.tws]
-    ]
-    if (o.twd != null) rows.push(['TWD', lightAir ? held : `${fmt(o.twd, 0)}° T`, paths.twd])
-    if (o.heading != null && o.headingFrom !== 'true heading') rows.push(['Heading', `${fmt(o.heading, 0)}° T`, paths.hdt])
-    if (on('stw')) rows.push(['STW', `${fmt(o.stw, 2)} kn`, paths.stw])
-    if (on('leeway')) rows.push(['Leeway', `${fmt(Math.abs(o.leeway))}° ${side(o.leeway)}`, paths.leeway])
-    if (o.current) rows.push(['Current', `${fmt(o.current.drift, 2)} kn → ${fmt(o.current.set, 0)}°`, paths.current])
-    if (o.groundWind) {
-      rows.push(['Ground wind speed', `${fmt(o.groundWind.speed)} kn`, paths.gws])
-      rows.push(['Ground wind direction', lightAir ? held : `${fmt(o.groundWind.direction, 0)}° T`, paths.gwd])
-      rows.push(['Ground wind angle', lightAir ? held : `${fmt(Math.abs(o.groundWind.angle))}° ${side(o.groundWind.angle)}`, paths.gwa])
-    }
-    $('published').innerHTML = rows.map(([label, value, p]) =>
-      `<tr><th scope="row">${esc(label)}</th><td class="num">${esc(value)}</td><td class="mono">${esc(p || '')}</td></tr>`).join('')
+      ['twa', 'TWA', () => `${fmt(Math.abs(o.twa))}° ${side(o.twa)}`],
+      ['tws', 'TWS', () => `${fmt(o.tws)} kn`],
+      ['twd', 'TWD', () => `${fmt(o.twd, 0)}° T`],
+      ['hdt', 'Heading', () => `${fmt(o.heading, 0)}° T`],
+      ['stw', 'STW', () => `${fmt(o.stw, 2)} kn`],
+      ['leeway', 'Leeway', () => `${fmt(Math.abs(o.leeway))}° ${side(o.leeway)}`],
+      ['current', 'Current', () => o.current ? `${fmt(o.current.drift, 2)} kn → ${fmt(o.current.set, 0)}°` : '--'],
+      ['gws', 'Ground wind speed', () => `${fmt(gw.speed)} kn`],
+      ['gwd', 'Ground wind direction', () => `${fmt(gw.direction, 0)}° T`],
+      ['gwa', 'Ground wind angle', () => `${fmt(Math.abs(gw.angle))}° ${side(gw.angle)}`]
+    ].filter(([key]) => sent.includes(key))
+    $('published').innerHTML = rows.map(([key, label, value]) =>
+      `<tr><th scope="row">${esc(label)}</th><td class="num">${esc(value())}</td><td class="mono">${esc(paths[key] || '')}</td></tr>`).join('') ||
+      '<tr><td colspan="3" class="muted center">Nothing sent in the last few seconds</td></tr>'
   }
 
   // -- Calibration

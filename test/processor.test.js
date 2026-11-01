@@ -355,19 +355,6 @@ test('a config from before 0.1.0 is refused: its tables do not apply', () => {
   }
 })
 
-test('each step declares what its result replaces, so the webapp can tell published from working values', () => {
-  const { config } = normalizeConfig({})
-  const steps = process({ awa: 32, aws: 16.9, stw: 5.6, heel: -23, headingMagnetic: 110, sog: 5.4, cog: 119 }, config).steps
-  const produces = Object.fromEntries(steps.map(s => [s.id, s.produces]))
-  assert.deepStrictEqual(produces, {
-    stw: ['stw'], leeway: ['leeway'], truewind: ['twa', 'tws'], twa: ['twa'], tws: ['tws'], current: ['current'], groundwind: ['groundWind']
-  })
-  // With the defaults (every table on) the last enabled producer of each quantity is:
-  const last = {}
-  steps.forEach((s, i) => { if (s.enabled) (s.produces || []).forEach(q => { last[q] = s.id }) })
-  assert.deepStrictEqual(last, { stw: 'stw', leeway: 'leeway', twa: 'twa', tws: 'tws', current: 'current', groundWind: 'groundwind' })
-})
-
 test('a schema 5 config (0.2.7 to 0.2.11) moves forward: its boat speed table gains a 1 kn column and works exactly as before', () => {
   const t = { ...STW6, add: STW6.add.map(r => r.slice()) }
   t.add[1][0] = null // a blank first cell, filled from its row

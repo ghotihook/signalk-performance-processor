@@ -37,16 +37,6 @@
         <div class="panel-head"><h2>Pipeline</h2><span id="liveAge" class="muted sub"></span></div>
         <p class="muted sub intro">One row per calculation, read left to right: what it uses (a dotted box is a value made by another row), each step with its value now, the damping, and on the right what is sent. A dashed box is switched off or has no data.</p>
         <div id="flow" class="flow"><p class="muted center">Waiting for data…</p></div>
-        <details class="steps">
-          <summary>Step by step</summary>
-          <p class="muted sub intro">Each step works on the result of the one before. Only results marked <b>Published</b> are sent to Signal K; <b>Working</b> results feed the next step and go nowhere else.</p>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Step</th><th>In</th><th>Correction</th><th>Result</th><th>Sent to Signal K</th></tr></thead>
-              <tbody id="steps"><tr><td colspan="5" class="muted center">Waiting for data…</td></tr></tbody>
-            </table>
-          </div>
-        </details>
       </div>
       <div class="panel">
         <div class="panel-head"><h2>Published to Signal K</h2><span class="muted sub">only these values are sent; the pipeline above shows the working</span></div>
@@ -65,7 +55,6 @@
             <tbody id="inputs"></tbody>
           </table>
         </div>
-        <div id="disagree"></div>
       </div>
     </section>
 
@@ -109,7 +98,7 @@
       </div>
       <div class="panel">
         <h2>Input sources</h2>
-        <p class="muted sub">Choose the instrument to read for each input. <b>Auto picks the sensor with the highest data rate</b>: in the first 2 s after the plugin starts it counts each sensor's messages and keeps the one sending most often until the next restart or Save. That is not necessarily the most accurate one (a 10 Hz IMU wins over a 1 Hz compass, whichever reads truer). Auto reads data connections only, never another plugin's output (a copy, later and slower, or already corrected), and never mixes two sensors. The Live page warns when another sensor reads differently. Choose a source here to override it.</p>
+        <p class="muted sub">Choose the instrument to read for each input. <b>Auto picks the sensor with the highest data rate</b>: in the first 2 s after the plugin starts it counts each sensor's messages and keeps the one sending most often until the next restart or Save. That is not necessarily the most accurate one (a 10 Hz IMU wins over a 1 Hz compass, whichever reads truer). Auto reads data connections only, never another plugin's output (a copy, later and slower, or already corrected), and never mixes two sensors. Choose a source here to override it.</p>
         <p class="sub warn">Apparent wind must be raw: AWA and AWS as the masthead measures them, uncorrected and undamped. Take the wind tables out of the instrument and set its wind damping to 0, or choose a source ahead of it; this plugin corrects and damps them itself. Keep the masthead alignment in the instrument.</p>
         <div id="sources" class="sources"></div>
       </div>

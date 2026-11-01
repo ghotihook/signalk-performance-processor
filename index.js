@@ -34,10 +34,6 @@ const RATE_FLAG_MIN = 5
 // one value. TWA always goes out: in light air it is what the crew sails by.
 const LIGHT_AIR_OFF_KN = 1.5
 const LIGHT_AIR_ON_KN = 2
-// Another sensor sending an input this plugin does not use is compared with the one it
-// does use: their difference, smoothed over DISAGREE_TAU_S, is flagged past these limits
-// (two sensors that disagree should be looked at; mixing them would step the value).
-const DISAGREE_TAU_S = 10
 // Without a chosen source, each input is read from one sensor: for the first LOCK_WINDOW_MS
 // the first seen, then the one that sent most often in that time (the primary sensor, not
 // a device repeating the value now and then), kept until restart.
@@ -45,16 +41,6 @@ const LOCK_WINDOW_MS = 2000
 const RATE_WINDOW_MS = 10000 // each source's update rate, shown in Settings, over this long
 const wrap180 = d => ((d + 180) % 360 + 360) % 360 - 180
 const norm360 = d => (d % 360 + 360) % 360
-const COMPARE = {
-  'environment.wind.angleApparent': { limit: 5, unit: '°', diff: (a, b) => wrap180((a - b) * RAD_TO_DEG) },
-  'environment.wind.speedApparent': { limit: 1, unit: ' kn', diff: (a, b) => (a - b) * MS_TO_KN },
-  'navigation.speedThroughWater': { limit: 0.3, unit: ' kn', diff: (a, b) => (a - b) * MS_TO_KN },
-  'navigation.headingMagnetic': { limit: 3, unit: '°', diff: (a, b) => wrap180((a - b) * RAD_TO_DEG) },
-  'navigation.headingTrue': { limit: 3, unit: '°', diff: (a, b) => wrap180((a - b) * RAD_TO_DEG) },
-  'navigation.attitude': { limit: 2, unit: '° of heel', diff: (a, b) => (a && b && Number.isFinite(a.roll) && Number.isFinite(b.roll)) ? (a.roll - b.roll) * RAD_TO_DEG : null },
-  'navigation.speedOverGround': { limit: 0.3, unit: ' kn', diff: (a, b) => (a - b) * MS_TO_KN },
-  'navigation.magneticVariation': { limit: 1, unit: '°', diff: (a, b) => wrap180((a - b) * RAD_TO_DEG) }
-}
 const INPUT_LABELS = { apparentWind: 'apparent wind', stw: 'STW', heading: 'heading', attitude: 'heel', gps: 'SOG/COG', variation: 'variation' }
 
 // Inputs, grouped the way they are chosen in Settings.
@@ -102,11 +88,10 @@ module.exports = function (app) {
   // Latest value per input path, from the source in use.
   let latest = {}
   // Every source seen on each input, one record each: whether it is a sensor or another
-  // plugin, when its messages arrived (its rate), and how it compares with the source in
-  // use. Without a source chosen in Settings, each input is read from sensors only (never
-  // another plugin's output) and from one sensor (LOCK_WINDOW_MS), so two sensors that
-  // disagree are never mixed.
-  let sources = {} // `${group}|${src}` -> { group, src, sensor, at, ts, times, smooth, diff, path, used }
+  // plugin, and when its messages arrived (its rate). Without a source chosen in Settings,
+  // each input is read from sensors only (never another plugin's output) and from one
+  // sensor (LOCK_WINDOW_MS), so two sensors that disagree are never mixed.
+  let sources = {} // `${group}|${src}` -> { group, src, sensor, at, ts, times }
   let locked = {} // group -> the sensor in use when none is chosen
   let lockFrom = {} // group -> when its first sensor was seen, until the choice is made
   // Apparent wind's angle and speed come in one sensor message (N2K 130306, NMEA 0183 MWV)
@@ -164,6 +149,7 @@ module.exports = function (app) {
   // Rate limit (see MIN_PUBLISH_INTERVAL_MS): when each path was last published, and
   // when updates were dropped recently, for the status.
   let publishedAt = {}
+  let sentAt = {} // OUTPUTS key -> when it was last sent, for the Live page
   let dropsAt = []
   let dropFrom = ''
   function recentDrops (now) {
@@ -199,7 +185,7 @@ module.exports = function (app) {
     const now = Date.now()
     if (kind === statusKind && now - statusAt < STATUS_INTERVAL_MS) return
     statusKind = kind
-    statusText = (notice ? `${notice} · ${text}` : text) + disagreeNote(now)
+    statusText = notice ? `${notice} · ${text}` : text
     lastStatus = statusText + rateNote(now)
     statusAt = now
     app.setPluginStatus(lastStatus)
@@ -209,11 +195,10 @@ module.exports = function (app) {
   // (apparent wind's angle and speed share a timestamp).
   function noteSource (group, src, sensor, ts, now) {
     const key = `${group}|${src}`
-    const s = sources[key] = sources[key] || { group, src, sensor, times: [], smooth: new Smooth(), diff: null }
+    const s = sources[key] = sources[key] || { group, src, sensor, times: [] }
     s.at = now
     if (ts == null || ts !== s.ts) { s.ts = ts; s.times.push(now) }
     while (s.times.length && now - s.times[0] > RATE_WINDOW_MS) s.times.shift()
-    return s
   }
   const sourcesOf = group => Object.values(sources).filter(s => s.group === group)
   const inUse = group => config.sources[group] || locked[group]
@@ -234,25 +219,6 @@ module.exports = function (app) {
     lockFrom[group] = null
   }
 
-  // A sensor not in use, compared with the value in use for the same path.
-  function compareOther (s, path, value, now) {
-    const mine = latest[path]
-    const c = COMPARE[path]
-    if (!s.sensor || !c || !mine || now - mine.at > STALE_MS) return
-    const d = c.diff(value, mine.value)
-    if (d == null || !Number.isFinite(d)) return
-    s.diff = s.smooth.update(d, now, DISAGREE_TAU_S)
-    s.path = path
-    s.used = mine.source
-  }
-  // Sensors not in use whose readings differ from the one in use by more than its limit.
-  function disagreements (now) {
-    return Object.values(sources).filter(s => s.diff != null && s.src !== inUse(s.group) && now - s.at < STALE_MS && Math.abs(s.diff) > COMPARE[s.path].limit)
-      .map(s => ({ input: s.group, path: s.path, used: s.used, other: s.src, diff: s.diff, unit: COMPARE[s.path].unit }))
-  }
-  function disagreeNote (now) {
-    return disagreements(now).map(w => ` · ${INPUT_LABELS[w.input]}: ${w.other} reads ${w.diff > 0 ? '+' : ''}${w.diff.toFixed(1)}${w.unit} from ${w.used} (not used; choose the right one in Settings)`).join('')
-  }
   // What else sends an input that is missing here: another sensor (the one in use has
   // gone quiet, or another was chosen), or failing that another plugin, which is used only
   // when chosen.
@@ -296,18 +262,20 @@ module.exports = function (app) {
     return v == null ? undefined : v
   }
 
-  // A value sent by a second trigger (TWA with heading as well as with apparent wind) is
-  // limited on its own, so the two never crowd each other out or look like a loop.
+  // values: [{ key (an OUTPUTS key), value, by? }]. A value sent by a second trigger (TWA
+  // with heading as well as with apparent wind) is limited on its own, so the two never
+  // crowd each other out or look like a loop.
   function publish (values, timestamp, from) {
     const now = Date.now()
     const kept = values.filter(v => {
-      const key = v.by ? `${v.path}|${v.by}` : v.path
-      if (now - (publishedAt[key] ?? -Infinity) < MIN_PUBLISH_INTERVAL_MS) return false
-      publishedAt[key] = now
+      const id = v.by ? `${v.key}|${v.by}` : v.key
+      if (now - (publishedAt[id] ?? -Infinity) < MIN_PUBLISH_INTERVAL_MS) return false
+      publishedAt[id] = now
+      sentAt[v.key] = now
       return true
     })
     if (kept.length < values.length) noteDrop(now, from)
-    values = kept.map(({ path, value }) => ({ path, value }))
+    values = kept.map(v => ({ path: outPath(v.key), value: v.value }))
     if (!values.length) return
     // No source object: the server stamps $source with plugin.id, which is what the
     // loop guard and the user's Source Priorities entry match on.
@@ -324,7 +292,7 @@ module.exports = function (app) {
     if (stwKn < 0 || stwKn > MAX_PLAUSIBLE_STW_KN) return
     const { c } = correctInputs({ stw: stwKn, heel: heelDeg(now) }, config)
     const ms = damp.stw.update(c.stw, now, config.damping.stwS) / MS_TO_KN
-    publish([{ path: outPath('stw'), value: ms }], timestamp, from)
+    publish([{ key: 'stw', value: ms }], timestamp, from)
   }
 
   // Variation in degrees: from Signal K (the GPS) when fresh, else the configured fallback.
@@ -363,14 +331,14 @@ module.exports = function (app) {
     const hdg = trueHeading(now)
     if (hdg == null) return
     const values = []
-    if (fresh('navigation.headingTrue', now) == null) values.push({ path: outPath('hdt'), value: hdg / RAD_TO_DEG })
+    if (fresh('navigation.headingTrue', now) == null) values.push({ key: 'hdt', value: hdg / RAD_TO_DEG })
     const p = lastResult && lastResult.published
     if (!withWind && p && p.twd != null && now - lastResultAt < STALE_MS) {
       p.twa = wrap180(p.twd - hdg)
-      values.push({ path: outPath('twa'), value: p.twa / RAD_TO_DEG, by: 'heading' })
+      values.push({ key: 'twa', value: p.twa / RAD_TO_DEG, by: 'heading' })
       if (p.groundWind && !lightAir) {
         p.groundWind.angle = wrap180(p.groundWind.direction - hdg)
-        values.push({ path: outPath('gwa'), value: p.groundWind.angle / RAD_TO_DEG, by: 'heading' })
+        values.push({ key: 'gwa', value: p.groundWind.angle / RAD_TO_DEG, by: 'heading' })
       }
     }
     if (values.length) publish(values, timestamp, from)
@@ -429,17 +397,17 @@ module.exports = function (app) {
 
     lightAir = tws < (lightAir ? LIGHT_AIR_ON_KN : LIGHT_AIR_OFF_KN)
     lastResult.lightAir = lightAir
-    const values = [{ path: outPath('tws'), value: tws / MS_TO_KN }, { path: outPath('twa'), value: twa / RAD_TO_DEG }]
-    if (gw) values.push({ path: outPath('gws'), value: gw.speed / MS_TO_KN })
+    const values = [{ key: 'tws', value: tws / MS_TO_KN }, { key: 'twa', value: twa / RAD_TO_DEG }]
+    if (gw) values.push({ key: 'gws', value: gw.speed / MS_TO_KN })
     if (!lightAir) {
-      if (twd != null) values.push({ path: outPath('twd'), value: twd / RAD_TO_DEG })
+      if (twd != null) values.push({ key: 'twd', value: twd / RAD_TO_DEG })
       if (gw) {
-        values.push({ path: outPath('gwd'), value: gw.direction / RAD_TO_DEG })
-        values.push({ path: outPath('gwa'), value: gw.angle / RAD_TO_DEG })
+        values.push({ key: 'gwd', value: gw.direction / RAD_TO_DEG })
+        values.push({ key: 'gwa', value: gw.angle / RAD_TO_DEG })
       }
     }
-    if (config.corrections.leeway.enabled) values.push({ path: outPath('leeway'), value: o.leeway / RAD_TO_DEG })
-    if (cur) values.push({ path: outPath('current'), value: { drift: cur.speed / MS_TO_KN, setTrue: cur.deg / RAD_TO_DEG } })
+    if (config.corrections.leeway.enabled) values.push({ key: 'leeway', value: o.leeway / RAD_TO_DEG })
+    if (cur) values.push({ key: 'current', value: { drift: cur.speed / MS_TO_KN, setTrue: cur.deg / RAD_TO_DEG } })
     publish(values, timestamp, from)
 
     const missing = []
@@ -477,14 +445,14 @@ module.exports = function (app) {
 
         const src = String(update.$source || '')
         const sensor = fromSensor(update)
-        const record = noteSource(group, src, sensor, update.timestamp, now)
+        noteSource(group, src, sensor, update.timestamp, now)
         // The chosen source; or, with none chosen, the sensor sending it most often
         // (chooseSensor). Another plugin's output is never used unless chosen: it is a copy,
         // later and slower than the sensor (derived-data's true heading), or already
         // corrected (another STW plugin, which would feed this one, and this one it, without end).
         const wanted = config.sources[group]
         if (!wanted && sensor) chooseSensor(group, src, now)
-        if (src !== inUse(group)) { compareOther(record, v.path, v.value, now); continue }
+        if (src !== inUse(group)) continue
 
         latest[v.path] = { value: v.value, source: src, at: now }
         if (v.path === 'navigation.attitude') { const h = rollDeg(v.value); if (h != null) damp.heel.update(h, now, config.damping.heelS) }
@@ -503,6 +471,7 @@ module.exports = function (app) {
     stopEverything()
     config = cfg
     publishedAt = {}
+    sentAt = {}
     dropsAt = []
     latest = {}
     sources = {}
@@ -640,10 +609,11 @@ module.exports = function (app) {
       result: lastResult,
       inputs,
       inUse: Object.fromEntries(Object.keys(INPUTS).map(g => [g, config ? inUse(g) : undefined]).filter(([, v]) => v)),
-      disagreements: disagreements(now),
       // Every source of each input, for Settings: its rate, and whether it is another plugin.
       sources: Object.fromEntries(Object.keys(INPUTS).map(g => [g, sourcesOf(g).sort((a, b) => a.src < b.src ? -1 : 1)
         .map(s => ({ source: s.src, hz: rateHz(s), plugin: !s.sensor }))]).filter(([, l]) => l.length)),
+      // What has gone out in the last few seconds, so the Live page lists exactly that.
+      sent: Object.keys(sentAt).filter(k => now - sentAt[k] < STALE_MS),
       outputPaths: config ? Object.fromEntries(Object.keys(OUTPUTS).map(k => [k, outPath(k)])) : {}
     }
   }

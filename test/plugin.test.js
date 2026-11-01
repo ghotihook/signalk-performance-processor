@@ -236,7 +236,7 @@ test('a burst is thinned to 20 Hz, not stopped, and the flag clears', () => {
   assert.doesNotMatch(h.statuses[h.statuses.length - 1], /Rate limited/)
 })
 
-test('light air: TWD stops below 1.5 kn of TWS and comes back from 2 kn; TWA never stops', () => {
+test('light air: TWD stops below 1.5 kn of TWS and comes back from 2 kn; TWA never stops', async () => {
   // undamped, so each step in TWS is the TWS the thresholds see
   const h = harness({ mode: 'replace', damping: { heelS: 0, headingS: 0, trueWindS: 0, stwS: 0, currentS: 0 } })
   // Drifting at 0 kn with apparent wind dead ahead: TWS = AWS.
@@ -249,6 +249,9 @@ test('light air: TWD stops below 1.5 kn of TWS and comes back from 2 kn; TWA nev
   assert.match(h.statuses[h.statuses.length - 1], /light air/)
   assert.deepStrictEqual(sent(at(1.8)), ['angleTrueWater', 'speedTrue'], 'TWD still held between 1.5 and 2')
   assert.deepStrictEqual(sent(at(0.3)), ['angleTrueWater', 'speedTrue'], 'TWA in a breath of wind too')
+  h.feed([...still, { path: 'environment.wind.angleApparent', value: 40 * RAD }, { path: 'environment.wind.speedApparent', value: 0.3 / MS_TO_KN }], 'h2000.II', 3500)
+  const live = await h.call('GET', '/live')
+  assert.ok(live.json.sent.includes('twa') && !live.json.sent.includes('twd'), 'the Live page lists what is sent: TWD drops out once held for 3 s')
   assert.deepStrictEqual(sent(at(2.1)), ['angleTrueWater', 'directionTrue', 'speedTrue'], 'back from 2 kn')
   assert.deepStrictEqual(sent(at(1.6)), ['angleTrueWater', 'directionTrue', 'speedTrue'], 'and stays until below 1.5 again')
 })
@@ -400,6 +403,7 @@ test('GET /live reports the last result, inputs and sources seen', async () => {
   assert.ok(r.json.running)
   assert.ok(r.json.result.steps.some(s => s.id === 'twa'))
   assert.deepStrictEqual(r.json.sources.apparentWind.map(s => s.source), ['h2000.II'])
+  assert.deepStrictEqual(r.json.sent.sort(), ['current', 'gwa', 'gwd', 'gws', 'hdt', 'leeway', 'stw', 'twa', 'twd', 'tws'], 'what has gone out, for the Live page to list')
   assert.strictEqual(r.json.outputPaths.tws, 'environment.wind.speedTrueCorrected')
 })
 
@@ -543,7 +547,7 @@ test('no true heading is sent when the heading sensor sends true heading itself'
   assert.ok(!('navigation.headingTrueCorrected' in paths(h.feed([{ path: 'navigation.headingMagnetic', value: 110 * RAD }], 'gpscompass.II'))))
 })
 
-test('two heel sensors: the one sending most often is used, the other is compared and flagged, never mixed', () => {
+test('two heel sensors: the one sending most often is used, the other never mixed in', () => {
   const h = harness({ mode: 'replace' })
   // The compass sends roll once a second, 4.6° off; the IMU ten times a second. The compass
   // happens to arrive first.
@@ -561,22 +565,8 @@ test('two heel sensors: the one sending most often is used, the other is compare
     assert.strictEqual(json.inUse.attitude, 'imu.II')
     assert.strictEqual(json.inputs['navigation.attitude'].source, 'imu.II')
     close(json.result.input.heel, -0.15, 0.05, 'the IMU heel, with no compass steps in it')
-    const d = json.disagreements.find(x => x.input === 'attitude')
-    assert.ok(d && d.other === 'compass.II' && Math.abs(d.diff - 4.58) < 0.3, JSON.stringify(json.disagreements))
-    assert.match(h.statuses[h.statuses.length - 1], /heel: compass\.II reads \+4\.\d° of heel from imu\.II/)
+    assert.doesNotMatch(h.statuses[h.statuses.length - 1], /compass/, 'the other sensor is not reported: Settings lists it')
   })
-})
-
-test('a sensor that agrees is not flagged', async () => {
-  const h = harness()
-  for (let t = 0; t < 30; t++) {
-    h.feed([{ path: 'navigation.headingMagnetic', value: 110 * RAD }], 'compass.II', 100)
-    if (t % 5 === 4) h.feed([{ path: 'navigation.headingMagnetic', value: 110.5 * RAD }], 'other.II', 0)
-  }
-  h.feed(boat.filter(v => v.path !== 'navigation.headingMagnetic'))
-  h.feed(wind)
-  const { json } = await h.call('GET', '/live')
-  assert.deepStrictEqual(json.disagreements, [])
 })
 
 test('a chosen source overrides the automatic choice', async () => {

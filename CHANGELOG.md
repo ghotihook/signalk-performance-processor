@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.14 — 2026-11-01
+
+- **The Live page's "Published to Signal K" table lists exactly what the plugin has sent** in the last few seconds: `/live` reports it (`sent`). It used to work out in the webapp, from its own copy of the rules, what the plugin would send; the two had to be kept in step by hand (light-air TWA needed both changed).
+- **The "Step by step" table is gone** from the Live page: the pipeline above it shows the same steps with the same values. The corrections no longer carry the `produces` bookkeeping it needed.
+- **No more disagreement warnings.** Another sensor sending the same input (heel, heading, AWA, STW …) and reading differently from the one in use was flagged in the status and on the Live page. On a boat with several instruments some always differ a little, and a warning that is always on is ignored. Settings still lists every source of each input with its rate: where two instruments send the same thing, choose the right one there. Only one sensor is ever used per input, as before.
+
 ## 0.2.13 — 2026-10-31
 
 - **`GET /calibration`'s `behaviour` no longer repeats the tables' layout** (`axes`, `twaRows`, `reachDeg`): the webapp reads it from `tables.js`, which it loads from the plugin, so the two can never disagree. Nothing else changed: the same numbers, the same webapp.
