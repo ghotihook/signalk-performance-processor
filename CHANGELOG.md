@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.15 — 2026-11-02
+
+- **Fixed: the plugin could stop publishing true wind, STW and leeway about 30 s after a server boot, until restarted, with the Live page greyed out.** Signal K first names an NMEA 2000 device by address (`n2k-tcp.100`) and renames it (`n2k-tcp.c079be00ffd20dcb`) once it learns the CAN name. Auto stayed locked to the old name, so it ignored the same sensor under the new one. On the test boat this took out apparent wind, STW and heel for over 7 hours.
+- **Auto's choice now lasts only while the sensor sends.** If it goes quiet for 3 s (10 minutes for variation) and another sensor is sending the input, the busiest of those takes over at once. **This changes the old rule** that a quiet sensor left the input missing: a real sensor failure now moves to a backup, which may not be the sensor the tables were fitted to. The status names the new sensor for a minute and the server log records it. A source chosen in Settings is never replaced.
+- **A sensor that has stopped shows 0 Hz in Settings**, not its last rate, and no longer counts when Auto chooses.
+- README, specification, the Settings page's text and its screenshot describe the new rule, and the README lists the new status.
+
 ## 0.2.14 — 2026-11-01
 
 - **The Live page's "Published to Signal K" table lists exactly what the plugin has sent** in the last few seconds: `/live` reports it (`sent`). It used to work out in the webapp, from its own copy of the rules, what the plugin would send; the two had to be kept in step by hand (light-air TWA needed both changed).

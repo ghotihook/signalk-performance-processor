@@ -36,9 +36,10 @@ const LIGHT_AIR_OFF_KN = 1.5
 const LIGHT_AIR_ON_KN = 2
 // Without a chosen source, each input is read from one sensor: for the first LOCK_WINDOW_MS
 // the first seen, then the one that sent most often in that time (the primary sensor, not
-// a device repeating the value now and then), kept until restart.
+// a device repeating the value now and then), kept for as long as it keeps sending.
 const LOCK_WINDOW_MS = 2000
 const RATE_WINDOW_MS = 10000 // each source's update rate, shown in Settings, over this long
+const SWITCH_NOTE_MS = 60000 // how long the status names a sensor Auto has moved to
 const wrap180 = d => ((d + 180) % 360 + 360) % 360 - 180
 const norm360 = d => (d % 360 + 360) % 360
 const INPUT_LABELS = { apparentWind: 'apparent wind', stw: 'STW', heading: 'heading', attitude: 'heel', gps: 'SOG/COG', variation: 'variation' }
@@ -94,6 +95,7 @@ module.exports = function (app) {
   let sources = {} // `${group}|${src}` -> { group, src, sensor, at, ts, times }
   let locked = {} // group -> the sensor in use when none is chosen
   let lockFrom = {} // group -> when its first sensor was seen, until the choice is made
+  let switches = [] // { at, text }: recent moves to another sensor, for the status
   // Apparent wind's angle and speed come in one sensor message (N2K 130306, NMEA 0183 MWV)
   // but reach a plugin as separate deltas, one per path. True wind waits for both halves of
   // a message (the same timestamp), so it never pairs a new angle with the last message's
@@ -161,7 +163,7 @@ module.exports = function (app) {
     dropFrom = from
     if (recentDrops(now) !== RATE_FLAG_MIN) return
     app.error(`Rate limited: "${from}" is driving updates faster than ${1000 / MIN_PUBLISH_INTERVAL_MS} Hz. Is another plugin correcting this plugin's output?`)
-    lastStatus = statusText + rateNote(now) // flag it now, not at the next refresh
+    lastStatus = statusText + notes(now) // flag it now, not at the next refresh
     app.setPluginStatus(lastStatus)
   }
   function rateNote (now) {
@@ -169,6 +171,12 @@ module.exports = function (app) {
     return n >= RATE_FLAG_MIN ? ` · Rate limited: ${n} update${n === 1 ? '' : 's'} over ${1000 / MIN_PUBLISH_INTERVAL_MS} Hz not published in the last ${RATE_NOTE_MS / 1000} s, ` +
       `driven by "${dropFrom}". Usually a feedback loop with another STW plugin: check the STW source in Settings` : ''
   }
+
+  function switchNote (now) {
+    switches = switches.filter(s => now - s.at < SWITCH_NOTE_MS)
+    return switches.map(s => ` · ${s.text}`).join('')
+  }
+  const notes = now => switchNote(now) + rateNote(now)
 
   function fresh (p, now, maxAge = STALE_MS) {
     const l = latest[p]
@@ -186,7 +194,7 @@ module.exports = function (app) {
     if (kind === statusKind && now - statusAt < STATUS_INTERVAL_MS) return
     statusKind = kind
     statusText = notice ? `${notice} · ${text}` : text
-    lastStatus = statusText + rateNote(now)
+    lastStatus = statusText + notes(now)
     statusAt = now
     app.setPluginStatus(lastStatus)
   }
@@ -202,26 +210,40 @@ module.exports = function (app) {
   }
   const sourcesOf = group => Object.values(sources).filter(s => s.group === group)
   const inUse = group => config.sources[group] || locked[group]
-  const rateHz = s => s.times.length > 1 ? Math.round((s.times.length - 1) / ((s.times[s.times.length - 1] - s.times[0]) / 1000) * 10) / 10 : 0
+  // Rate over the last RATE_WINDOW_MS: a source that stopped falls to 0.
+  function rateHz (s, now) {
+    const t = s.times.filter(at => now - at <= RATE_WINDOW_MS)
+    return t.length > 1 ? Math.round((t.length - 1) / ((t[t.length - 1] - t[0]) / 1000) * 10) / 10 : 0
+  }
+  const maxAgeOf = group => group === 'variation' ? VARIATION_MAX_AGE_MS : STALE_MS
 
   // With no source chosen: the first sensor seen, then, LOCK_WINDOW_MS later, the one that
-  // sent most often since, kept until restart.
+  // sent most often since, kept while it sends. When it goes quiet another sensor takes
+  // over at once: on NMEA 2000 the server renames a device (n2k-tcp.100 to its CAN name) on
+  // learning its CAN name, so a sensor can "go quiet" with its data still arriving.
   function chooseSensor (group, src, now) {
     if (!locked[group]) { locked[group] = src; lockFrom[group] = now; return }
-    if (lockFrom[group] == null || now - lockFrom[group] < LOCK_WINDOW_MS) return
-    const best = sourcesOf(group).filter(s => s.sensor).reduce((a, b) => b.times.length > a.times.length ? b : a)
-    if (best.src !== locked[group]) {
+    const held = locked[group]
+    const quiet = now - sources[`${group}|${held}`].at >= maxAgeOf(group)
+    if (!quiet && (lockFrom[group] == null || now - lockFrom[group] < LOCK_WINDOW_MS)) return
+    const best = sourcesOf(group).filter(s => s.sensor && now - s.at < maxAgeOf(group)).reduce((a, b) => b.times.length > a.times.length ? b : a)
+    if (best.src !== held) {
       app.debug(`${INPUT_LABELS[group]}: using ${best.src}, the sensor sending it most often`)
       // Start the damping afresh, so the first sensor's reading does not linger in it.
       for (const d of DAMPED_INPUTS[group] || []) damp[d].reset()
+    }
+    if (quiet) {
+      const text = `${INPUT_LABELS[group]} from ${best.src}: ${held} stopped sending`
+      app.error(text)
+      switches.push({ at: now, text })
     }
     locked[group] = best.src
     lockFrom[group] = null
   }
 
-  // What else sends an input that is missing here: another sensor (the one in use has
-  // gone quiet, or another was chosen), or failing that another plugin, which is used only
-  // when chosen.
+  // What else sends an input that is missing here: another sensor (a chosen source has gone
+  // quiet, or it has not yet been replaced), or failing that another plugin, which is used
+  // only when chosen.
   function alternatives (group, now) {
     const others = sourcesOf(group).filter(s => s.src !== inUse(group) && now - s.at < STALE_MS)
     const sensors = others.filter(s => s.sensor).map(s => s.src)
@@ -477,6 +499,7 @@ module.exports = function (app) {
     sources = {}
     locked = {}
     lockFrom = {}
+    switches = []
     windTs = {}
     windWaiting = new Set()
     lightAir = false
@@ -611,7 +634,7 @@ module.exports = function (app) {
       inUse: Object.fromEntries(Object.keys(INPUTS).map(g => [g, config ? inUse(g) : undefined]).filter(([, v]) => v)),
       // Every source of each input, for Settings: its rate, and whether it is another plugin.
       sources: Object.fromEntries(Object.keys(INPUTS).map(g => [g, sourcesOf(g).sort((a, b) => a.src < b.src ? -1 : 1)
-        .map(s => ({ source: s.src, hz: rateHz(s), plugin: !s.sensor }))]).filter(([, l]) => l.length)),
+        .map(s => ({ source: s.src, hz: rateHz(s, now), plugin: !s.sensor }))]).filter(([, l]) => l.length)),
       // What has gone out in the last few seconds, so the Live page lists exactly that.
       sent: Object.keys(sentAt).filter(k => now - sentAt[k] < STALE_MS),
       outputPaths: config ? Object.fromEntries(Object.keys(OUTPUTS).map(k => [k, outPath(k)])) : {}

@@ -505,7 +505,7 @@
     const b = state.behaviour
     $('behaviour').innerHTML = b ? [
       `<b>Light air:</b> below ${b.lightAirOffKn} kn of TWS, wind direction is noise, so TWD and the ground wind direction and angle are not published (TWA, TWS and ground wind speed still are: TWA is what you sail by). They come back once TWS reaches ${b.lightAirOnKn} kn; the gap stops them flickering on and off.`,
-      `<b>Stale inputs:</b> an input older than ${b.staleS} s is not used. Without STW or apparent wind nothing is published (the status says so, and this page greys out the last values, which Signal K keeps); without heading, no TWD, current or ground wind; without SOG and COG, no current or ground wind; without heel, no heel correction or leeway.`,
+      `<b>Stale inputs:</b> an input older than ${b.staleS} s is not used. Without STW or apparent wind nothing is published (the status says so, and this page greys out the last values, which Signal K keeps), unless Auto can move to another sensor; without heading, no TWD, current or ground wind; without SOG and COG, no current or ground wind; without heel, no heel correction or leeway.`,
       `<b>Rate limit:</b> no path is published more often than ${b.maxPublishHz} Hz. Faster updates are dropped; when that keeps happening the status says so, as it usually means a feedback loop with another plugin.`,
       '<b>Implausible input</b> (apparent wind over 120 kn, STW over 60 kn, heel beyond ±90°, or negative speeds) is not used, and the status says why.'
     ].map(t => `<li>${t}</li>`).join('') : '<li>Update the plugin to see these.</li>'

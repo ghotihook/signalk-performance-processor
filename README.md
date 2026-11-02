@@ -47,7 +47,7 @@
 
 ## Getting started
 
-1. **Check the inputs.** The Live page lists every input with its source and age. Each input is read from one sensor, never from another plugin: Auto takes the one with the highest data rate in the first 2 s, not necessarily the most accurate. **Settings → Input sources** lists every source of each input with its rate: where two instruments send the same thing (a compass and an IMU both sending heel, say), choose the right one there.
+1. **Check the inputs.** The Live page lists every input with its source and age. Each input is read from one sensor, never from another plugin: Auto takes the one with the highest data rate in the first 2 s, not necessarily the most accurate, and moves to another only if that one stops. **Settings → Input sources** lists every source of each input with its rate: where two instruments send the same thing (a compass and an IMU both sending heel, say), choose the right one there.
 2. **Calibrate.** Log some sailing since your setup last changed (rig tune, sails, instrument calibration): 10 or more tacks and gybes in steady wind, some reaching and a few roundings, and windward-leeward laps for the TWS table. Run `python -m plugincal --since <that date>` ([how](https://github.com/ghotihook/boatcal/tree/main/plugincal)), paste each table it prints into the **Calibration** page, and **Save**. By hand, the H5000 rule works unchanged: if TWD lifts on every tack, take half the error off TWA in that cell.
 3. **Compare.** Sail in Shadow mode and compare the `…Corrected` paths with your instruments. Anything else that uses true wind or boat speed (a polar or performance plugin, a display) still reads the standard paths until you go live: point it at the `…Corrected` paths to see its numbers on the corrected values first.
 4. **Go live** with Replace mode once you trust it: rank this plugin first for each output path in **Server → Source Priorities**, and take the instrument's own TWA / TWS tables out so nothing is corrected twice. This plugin sends true heading too: turn off any other plugin that works it out (such as derived-data's true heading), so one value goes to the whole boat.
@@ -91,7 +91,7 @@ More true wind damping gives a steadier TWD but shows a real shift later.
 - **Light air.** Below 1.5 kn of TWS, wind direction is noise: TWD and the ground wind direction and angle are not published until TWS is back to 2 kn. TWA, TWS and ground wind speed still are: in light air TWA is what you sail by, so it is never held back.
 - **Stale or implausible input.** Inputs older than 3 s are not used. When apparent wind stops nothing is published: Signal K keeps the last values, so the status says so and the Live page greys them out. Apparent wind over 120 kn, STW over 60 kn or heel beyond ±90° is ignored, and the status says why.
 - **Heading.** `navigation.headingTrue` from the heading sensor if it sends it; otherwise magnetic heading plus `navigation.magneticVariation` (normally from the GPS); otherwise the fallback variation in Settings.
-- **Inputs from sensors, one each.** Unless you choose a source in Settings, every input is read from data connections only, never from another plugin (its value is a copy, later and slower, or already corrected, and in Replace mode it may be this plugin's own output fed back), and from one sensor: for its first 2 s the first seen, then the one sending most often (the highest data rate, not necessarily the most accurate), kept until restart or Save. Two sensors that disagree are never mixed. If the sensor in use goes quiet, the input is missing (the status names any other sensor sending it) rather than silently replaced by a sensor the tables were not fitted to.
+- **Inputs from sensors, one each.** Unless you choose a source in Settings, every input is read from data connections only, never from another plugin (its value is a copy, later and slower, or already corrected, and in Replace mode it may be this plugin's own output fed back), and from one sensor: for its first 2 s the first seen, then the one sending most often (the highest data rate, not necessarily the most accurate), kept while it sends. Two sensors that disagree are never mixed. If that sensor goes quiet for 3 s (10 minutes for variation) and another sensor is sending the input, the other sensor takes over at once and the status says so for a minute: it may not be the one the tables were fitted to, so if you would rather have no value than a different sensor's, choose a source in Settings. A chosen source is never replaced: if it goes quiet the input is missing, and the status names any other sensor sending it.
 - **No loops with other plugins**, as above, and no path is published more often than 20 Hz.
 
 ## The webapp
@@ -167,7 +167,8 @@ The plugin's status line (in the admin UI and at the top of the webapp) says wha
 | Waiting for apparent wind | No `angleApparent` / `speedApparent` yet from the sensor in use (or the chosen source) |
 | No apparent wind for N s: nothing published | Apparent wind stopped. Nothing is published, but Signal K keeps the last values, so displays may still show them: the Live page greys them out |
 | Waiting for speed through water | No STW in the last 3 s |
-| (X sends it: choose it in Settings) | After any missing input: another sensor sends it. Auto keeps the sensor it chose at start, so choose X if it is the right one |
+| (X sends it: choose it in Settings) | After any missing input: another sensor sends it, and a chosen source is never replaced. Choose X if it is the right one. On Auto you see this only for the 3 s before X takes over |
+| … from X: Y stopped sending | Auto has moved that input to sensor X, shown for a minute. Normal about 30 s after a boot on NMEA 2000, when the server renames a device from its address to its CAN name. Otherwise a sensor has failed: X may not be the sensor your tables were fitted to, so check it or choose a source in Settings |
 | (only from X, another plugin: …) | After any missing input: only another plugin sends it, which is ignored unless chosen (derived-data's COG true or true heading, another STW corrector). Choose it in Settings, or better, read the sensor it is made from |
 | Not publishing — … is not plausible | An input is out of range (a sensor fault); nothing is published from it |
 | … light air … | TWS is below 1.5 kn: TWD and ground wind direction are held back until 2 kn; TWA still goes out |
@@ -192,6 +193,8 @@ cd ~/.signalk && npm install /path/to/signalk-performance-processor && sudo syst
 ```
 
 `lib/processor.js` is the calculation, free of Signal K so it can be tested and replayed (`plugincal` runs it directly, through its exports and `_internals`, and `public/tables.js`: check boatcal's `plugincal/pipeline.js` before changing them). Each correction is an entry in its `CORRECTIONS`, with its defaults in `lib/defaults.js` and its editor in `public/app.js`. `public/tables.js` is the table layout and text format, shared by the plugin, the webapp and `plugincal`. `lib/damping.js` is the damping; `index.js` the Signal K side.
+
+Every equation, interpolation, fade, limit and damping rule, and how `plugincal` fits the tables: [SPECIFICATION.md](SPECIFICATION.md), the master record of the maths. Change it with the code.
 
 What changed in each release: [CHANGELOG.md](CHANGELOG.md).
 

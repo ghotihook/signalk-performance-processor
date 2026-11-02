@@ -580,8 +580,8 @@ test('a chosen source overrides the automatic choice', async () => {
   close(json.result.input.heel, 4.43, 0.01)
 })
 
-test('when the sensor in use goes quiet, the input is missing and the status names the other', () => {
-  const h = harness()
+test('when a chosen sensor goes quiet, the input is missing and the status names the other', () => {
+  const h = harness({ sources: { attitude: 'imu.II' } })
   for (let t = 0; t < 30; t++) h.feed([{ path: 'navigation.attitude', value: { roll: -0.15 * RAD } }], 'imu.II', 100)
   h.feed([{ path: 'navigation.attitude', value: { roll: 4.43 * RAD } }], 'compass.II', 4000) // the IMU is now 4 s old
   h.feed(boat.filter(v => v.path !== 'navigation.attitude'))
@@ -680,9 +680,98 @@ test('without SOG/COG the status says there is no current or ground wind, and na
 test('Auto chooses once: a sensor that starts after the first 2 s does not take over', async () => {
   const h = harness()
   for (let t = 0; t < 25; t++) h.feed([{ path: 'navigation.attitude', value: { roll: 4.43 * RAD } }], 'compass.II', 1000) // 1 Hz, for 25 s
-  for (let t = 0; t < 50; t++) h.feed([{ path: 'navigation.attitude', value: { roll: -0.15 * RAD } }], 'imu.II', 100) // 10 Hz from now on
+  for (let t = 0; t < 50; t++) { // 10 Hz from now on, with the compass still sending
+    h.feed([{ path: 'navigation.attitude', value: { roll: -0.15 * RAD } }], 'imu.II', 100)
+    if (t % 10 === 9) h.feed([{ path: 'navigation.attitude', value: { roll: 4.43 * RAD } }], 'compass.II', 0)
+  }
   const { json } = await h.call('GET', '/live')
-  assert.strictEqual(json.inUse.attitude, 'compass.II', 'kept until restart or Save; choose the IMU in Settings')
+  assert.strictEqual(json.inUse.attitude, 'compass.II', 'kept while it sends; choose the IMU in Settings')
+})
+
+// ---- Auto follows a sensor that stops or is renamed (0.2.15) ----
+
+const SPEED = 'navigation.speedThroughWater'
+
+test('a device renamed by the server when it learns the CAN name is followed, without a restart', async () => {
+  const h = harness({ mode: 'replace' })
+  for (let t = 0; t < 30; t++) { h.feed(wind, 'n2k.100', 250); h.feed([{ path: SPEED, value: 3 }], 'n2k.100', 250) }
+  let out = []
+  for (let t = 0; t < 12; t++) { out = out.concat(h.feed(wind, 'n2k.c079', 250)); out = out.concat(h.feed([{ path: SPEED, value: 3 }], 'n2k.c079', 250)) }
+  const { json } = await h.call('GET', '/live')
+  assert.strictEqual(json.inUse.apparentWind, 'n2k.c079')
+  assert.strictEqual(json.inUse.stw, 'n2k.c079')
+  assert.ok('environment.wind.speedTrue' in paths(out), 'true wind goes out again')
+  assert.ok(SPEED in paths(out), 'STW goes out again')
+  assert.ok(h.errors.some(e => /STW from n2k\.c079: n2k\.100 stopped sending/.test(e)), 'the server log records it')
+  assert.match(json.status, /apparent wind from n2k\.c079: n2k\.100 stopped sending/)
+})
+
+test('the move to another sensor is reported for a minute', async () => {
+  const h = harness({ mode: 'replace' })
+  for (let t = 0; t < 30; t++) h.feed([{ path: SPEED, value: 3 }], 'a.II', 100)
+  for (let t = 0; t < 35; t++) h.feed([{ path: SPEED, value: 3 }], 'b.II', 100)
+  h.feed(boat); h.feed(wind, 'b.II')
+  assert.match((await h.call('GET', '/live')).json.status, /STW from b\.II/)
+  for (let t = 0; t < 65; t++) { h.feed(boat, 'b.II', 500); h.feed(wind, 'b.II', 500) }
+  assert.doesNotMatch((await h.call('GET', '/live')).json.status, /stopped sending/)
+})
+
+test('the replacement sensor is the busiest one still sending, and stays when the first returns', async () => {
+  const h = harness({ mode: 'replace' })
+  const heel = v => [{ path: 'navigation.attitude', value: { roll: v * RAD } }]
+  for (let t = 0; t < 40; t++) { // imu 10 Hz, compass 1 Hz, gyro stops after a moment
+    h.feed(heel(1), 'imu.II', 100)
+    if (t % 10 === 0) h.feed(heel(5), 'compass.II', 0)
+    if (t < 5) h.feed(heel(9), 'gyro.II', 0)
+  }
+  assert.strictEqual((await h.call('GET', '/live')).json.inUse.attitude, 'imu.II')
+  for (let t = 0; t < 40; t++) {
+    h.feed(heel(2), 'imu2.II', 100)
+    if (t % 10 === 0) h.feed(heel(5), 'compass.II', 0)
+  }
+  assert.strictEqual((await h.call('GET', '/live')).json.inUse.attitude, 'imu2.II', 'not the 1 Hz compass; not a source gone quiet')
+  for (let t = 0; t < 20; t++) { h.feed(heel(1), 'imu.II', 100); h.feed(heel(2), 'imu2.II', 0) }
+  assert.strictEqual((await h.call('GET', '/live')).json.inUse.attitude, 'imu2.II', 'no switching back and forth')
+})
+
+test('a quiet sensor is kept while nothing else sends, and takes up again', async () => {
+  const h = harness({ mode: 'replace' })
+  for (let t = 0; t < 30; t++) h.feed([{ path: SPEED, value: 3 }], 'a.II', 100)
+  h.feed([{ path: SPEED, value: 3 }], 'a.II', 60000)
+  const { json } = await h.call('GET', '/live')
+  assert.strictEqual(json.inUse.stw, 'a.II')
+  assert.ok(!h.errors.some(e => /stopped sending/.test(e)))
+})
+
+test('another plugin never takes over from a quiet sensor', async () => {
+  const h = harness({ mode: 'replace' })
+  for (let t = 0; t < 30; t++) h.feed([{ path: SPEED, value: 3 }], 'a.II', 100)
+  h.feed([{ path: SPEED, value: 3 }], 'signalk-other', 5000)
+  assert.strictEqual((await h.call('GET', '/live')).json.inUse.stw, 'a.II')
+})
+
+test('a chosen source is never replaced', async () => {
+  const h = harness({ mode: 'replace', sources: { stw: 'a.II' } })
+  for (let t = 0; t < 30; t++) h.feed([{ path: SPEED, value: 3 }], 'a.II', 100)
+  for (let t = 0; t < 50; t++) h.feed([{ path: SPEED, value: 3 }], 'b.II', 100)
+  assert.strictEqual((await h.call('GET', '/live')).json.inUse.stw, 'a.II')
+})
+
+test('variation has its own limit: a sender 5 s apart is not quiet', async () => {
+  const h = harness({ mode: 'replace' })
+  const vr = { path: 'navigation.magneticVariation', value: 0.2 }
+  h.feed([vr], 'gps.II', 100)
+  for (let t = 0; t < 10; t++) { h.feed([vr], 'gps.II', 5000); h.feed([vr], 'other.II', 2500) }
+  assert.strictEqual((await h.call('GET', '/live')).json.inUse.variation, 'gps.II')
+})
+
+test('a sensor that has stopped shows 0 Hz', async () => {
+  const h = harness({ mode: 'replace' })
+  for (let t = 0; t < 30; t++) h.feed([{ path: SPEED, value: 3 }], 'a.II', 100)
+  const before = (await h.call('GET', '/live')).json.sources.stw[0].hz
+  assert.ok(before > 5, String(before))
+  h.feed([{ path: 'navigation.headingMagnetic', value: 1 }], 'c.II', 20000)
+  assert.strictEqual((await h.call('GET', '/live')).json.sources.stw[0].hz, 0)
 })
 
 test('a config with a section that is not an object is refused, not saved', async () => {
