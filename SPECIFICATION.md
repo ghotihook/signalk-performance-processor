@@ -5,7 +5,7 @@ signalk-performance-processor, and of how boatcal's `plugincal` fits the tables.
 the implementation; this document is what it must do. **Change one, change the other**, in
 the same commit, and note the change in [CHANGELOG.md](CHANGELOG.md).
 
-Written for 0.2.16 (config schema 6) and plugincal 1.3.3.
+Written for 0.2.17 (config schema 6) and plugincal 1.3.3.
 
 | Section | Code |
 |---|---|

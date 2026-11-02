@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.17 — 2026-11-03
+
+- **`AGENTS.md`**: instructions for coding agents working on this repo: the rules that must hold, the gotchas and the release steps. It ships in the package. Nothing in the plugin changed.
+- 0.2.16 was not published to npm, so everything in it reaches npm with this release.
+
 ## 0.2.16 — 2026-11-03
 
 - **Fixed: saving in the webapp started a plugin that was disabled in the server.** With Replace mode saved it published on the standard paths while the server showed it as off. A save now waits for the plugin to be enabled.
