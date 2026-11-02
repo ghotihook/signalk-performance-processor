@@ -35,10 +35,10 @@
 
   // Display names and help for each correction, in pipeline order.
   const CORRECTIONS = {
-    stw: { name: 'Boat speed (STW)', what: 'Knots added to the paddlewheel by heel (rows, port − and starboard +) and boat speed (columns): the H5000 boat speed / heel table, with a 1 kn column where a paddlewheel stalls. Blank cells are filled from the nearest value in their row. Applied before anything else uses STW.' },
+    stw: { name: 'Boat speed (STW)', what: 'Knots added to the paddlewheel by heel (rows, port − and starboard +) and boat speed (columns): the H5000 boat speed / heel table, with a 1 kn column where a paddlewheel stalls. A blank cell takes the value to its left in its row (at the start of a row, the first value to its right). Applied before anything else uses STW.' },
     leeway: { name: 'Leeway', what: 'Sideways slip: leeway = K × heel ÷ STW². Published, and used for current. Not used in true wind: the TWA table takes up its effect.' },
     twa: { name: 'TWA table', what: 'Degrees added to |TWA| by TWS, in rows at TWA 40°, 90° and 165°: the H5000 TWA correction table. Negative = TWA was reading too wide.' },
-    tws: { name: 'TWS table', what: 'Knots added to TWS by TWS, as upwind, reaching and downwind corrections blended by TWA: the H5000 TWS correction table. Masthead units read high downwind (the sails speed the air up over the top of the rig), so the downwind correction is usually negative. Blank cells take the nearest value in their row.' }
+    tws: { name: 'TWS table', what: 'Knots added to TWS by TWS, as upwind, reaching and downwind corrections blended by TWA: the H5000 TWS correction table. Masthead units read high downwind (the sails speed the air up over the top of the rig), so the downwind correction is usually negative. A blank cell takes the value to its left in its row (at the start of a row, the first value to its right).' }
   }
 
   // The tables' text format (tables.js): what Paste a table reads and Copy writes.
@@ -158,9 +158,10 @@
     let value
     if (el.type === 'checkbox') value = el.checked
     else if (el.type === 'number') {
-      // A blank cell in a table that allows it means "not measured"; elsewhere keep the
-      // old value until something is typed.
-      if (el.value === '') { if (!el.dataset.nullable) return; value = null } else value = Number(el.value)
+      // A blank cell in a table that allows it means "not measured"; elsewhere the old value
+      // stays, and comes back into the box so what is shown is what will be saved.
+      if (el.value === '' && !el.dataset.nullable) { el.value = el.dataset.path.split('.').reduce((o, k) => o[k], state.draft); return }
+      value = el.value === '' ? null : Number(el.value)
     } else value = el.value
     setPath(el.dataset.path, value)
     // Edit symmetrically: the same value at the same heel on the other side.
@@ -259,7 +260,7 @@
           : i.headingMagnetic != null ? [sensor('Compass', `${fmt(i.headingMagnetic, 0)}° M`, 'magnetic'), sensor('Variation', `${fmt(Math.abs(o.variation), 1)}° ${o.variation < 0 ? 'W' : 'E'}`, o.headingFrom === 'magnetic + fallback variation' ? 'fallback, from Settings' : 'from Signal K')]
             : [missing('Compass', 'no TWD, current or ground wind')],
         steps: [fromCompass ? { label: 'Add variation', value: `${fmt(o.heading, 0)}° T` } : { label: 'Add variation', value: '--', note: i.headingTrue != null ? 'not needed' : 'no heading', cls: 'off' }, damping(dm.headingS)],
-        out: fromCompass ? { lines: [`Heading ${fmt(o.heading, 0)}° T`], note: 'with each compass update' } : notSent(i.headingTrue != null ? 'the sensor sends true heading' : 'no heading')
+        out: fromCompass ? { lines: [`Heading ${fmt(o.heading, 0)}° T`] } : notSent(i.headingTrue != null ? 'the sensor sends true heading' : 'no heading')
       },
       {
         name: 'Boat speed',
@@ -271,7 +272,7 @@
         name: 'Leeway',
         inputs: [heel, stw],
         steps: [corr('leeway', 'K × heel ÷ STW²', angle(o.leeway), `K ${state.saved ? state.saved.corrections.leeway.k : ''}`)],
-        out: on('leeway') ? { lines: [`Leeway ${angle(o.leeway)}`], note: 'undamped' } : notSent('leeway off: 0°')
+        out: on('leeway') ? { lines: [`Leeway ${angle(o.leeway)}`] } : notSent('leeway off: 0°')
       },
       {
         // TWA, TWS and TWD are one calculation: true wind from apparent wind and boat speed,
@@ -291,10 +292,10 @@
           damping(dm.trueWindS)
         ],
         out: held
-          ? { lines: [`TWA ${angle(p.twa)}`, `TWS ${fmt(p.tws)} kn`], note: 'TWD held: light air' }
+          ? { lines: [`TWA ${angle(p.twa)}`, `TWS ${fmt(p.tws)} kn`], note: 'TWD not sent: light air' }
           : o.twd == null
-            ? { lines: [`TWA ${angle(p.twa)}`, `TWS ${fmt(p.tws)} kn`], note: 'no heading: no TWD' }
-            : { lines: [`TWD ${fmt(p.twd, 0)}° T`, `TWA ${angle(p.twa)}`, `TWS ${fmt(p.tws)} kn`], note: 'TWA with each heading update too' }
+            ? { lines: [`TWA ${angle(p.twa)}`, `TWS ${fmt(p.tws)} kn`], note: 'TWD not sent: no heading' }
+            : { lines: [`TWD ${fmt(p.twd, 0)}° T`, `TWA ${angle(p.twa)}`, `TWS ${fmt(p.tws)} kn`] }
       },
       {
         name: 'Current',
@@ -302,7 +303,7 @@
         steps: o.current
           ? [{ label: 'Ground − water', value: `${fmt(o.current.drift, 2)} kn → ${fmt(o.current.set, 0)}°`, note: 'water: STW along heading + leeway' }, damping(dm.currentS)]
           : [{ label: 'Ground − water', value: '--', note: 'needs heading, SOG and COG', cls: 'off' }],
-        out: p.current ? { lines: [`${fmt(p.current.drift, 2)} kn → ${fmt(p.current.set, 0)}°`], note: 'a trend: average it over a beat' } : notSent('no heading or GPS')
+        out: p.current ? { lines: [`Current ${fmt(p.current.drift, 2)} kn → ${fmt(p.current.set, 0)}°`] } : notSent('no heading or GPS')
       },
       {
         name: 'Ground wind',
@@ -313,15 +314,15 @@
           ? [{ label: 'True wind + current', value: `${fmt(o.groundWind.direction, 0)}° · ${fmt(o.groundWind.speed)} kn` }, damping(dm.trueWindS)]
           : [],
         out: !p.groundWind ? notSent('no current')
-          : held ? { lines: [`${fmt(p.groundWind.speed)} kn`], note: 'direction and angle held: light air' }
-            : { lines: [`${fmt(p.groundWind.direction, 0)}° T · ${fmt(p.groundWind.speed)} kn`, `angle ${angle(p.groundWind.angle)}`] }
+          : held ? { lines: [`GWS ${fmt(p.groundWind.speed)} kn`], note: 'GWD and GWA not sent: light air' }
+            : { lines: [`GWD ${fmt(p.groundWind.direction, 0)}° T`, `GWA ${angle(p.groundWind.angle)}`, `GWS ${fmt(p.groundWind.speed)} kn`] }
       }
     ]
   }
 
   function renderFlow (live) {
-    // Every box is the same size, so nothing moves as the values change: a long note is cut
-    // to two lines, with the whole of it on hover.
+    // Every step box is the same size, so nothing moves as the values change: a long note is
+    // cut to two lines, with the whole of it on hover.
     const chip = c => `<div class="fchip ${c.cls || ''}"${c.note ? ` title="${esc(c.note)}"` : ''}><div class="l">${esc(c.label)}</div>` +
       `<div class="v">${esc(c.value || '')}</div>` + (c.note ? `<div class="n">${esc(c.note)}</div>` : '') + '</div>'
     $('flow').innerHTML = flowChains(live).map(ch =>
@@ -424,7 +425,7 @@
       body = `<div class="fields">${field('K', 'corrections.leeway.k', c.k, 0.01)}</div>`
     } else if (id === 'twa') {
       const rows = PPTables.TWA_ROW_KEYS.map(k => [`${AXES.twaRows[k]}° TWA`, k, true])
-      body = grid('Degrees added to |TWA| (blank = not enough data: nearest measured value used)', 'TWS kn', 'corrections.twa', 'tws', rows, c)
+      body = grid('Degrees added to |TWA| (blank = not enough data: the value to its left is used)', 'TWS kn', 'corrections.twa', 'tws', rows, c)
     } else if (id === 'tws') {
       const rows = [['Upwind kn', 'upwind', true], ['Reaching kn', 'reach', true], ['Downwind kn', 'downwind', true], ['Up angle °', 'upAngle', false], ['Down angle °', 'downAngle', false]]
       body = grid(`Knots added to TWS: upwind in full up to the up angle, reaching at ${PPTables.REACH_DEG}°, downwind in full from the down angle`, 'TWS kn', 'corrections.tws', 'tws', rows, c) +
@@ -507,7 +508,7 @@
       `<b>Light air:</b> below ${b.lightAirOffKn} kn of TWS, wind direction is noise, so TWD and the ground wind direction and angle are not published (TWA, TWS and ground wind speed still are: TWA is what you sail by). They come back once TWS reaches ${b.lightAirOnKn} kn; the gap stops them flickering on and off.`,
       `<b>Stale inputs:</b> an input older than ${b.staleS} s is not used. Without STW or apparent wind nothing is published (the status says so, and this page greys out the last values, which Signal K keeps), unless Auto can move to another sensor; without heading, no TWD, current or ground wind; without SOG and COG, no current or ground wind; without heel, no heel correction or leeway.`,
       `<b>Rate limit:</b> no path is published more often than ${b.maxPublishHz} Hz. Faster updates are dropped; when that keeps happening the status says so, as it usually means a feedback loop with another plugin.`,
-      '<b>Implausible input</b> (apparent wind over 120 kn, STW over 60 kn, heel beyond ±90°, or negative speeds) is not used, and the status says why.'
+      '<b>Implausible input</b> (apparent wind over 120 kn, STW over 60 kn, heel beyond ±90°, or negative speeds) is not used. The status says why for wind and STW; heel counts as no heel.'
     ].map(t => `<li>${t}</li>`).join('') : '<li>Update the plugin to see these.</li>'
     renderSources()
   }
@@ -556,6 +557,7 @@
       try {
         Object.assign(state.draft.corrections[id], PASTE[id].parse($('paste-' + id).value))
         renderAll()
+        $('paste-' + id).closest('details').open = true // rendered closed, with this message inside
         $('paste-msg-' + id).textContent = 'Pasted: Save to keep it.'
       } catch (err) {
         $('paste-msg-' + id).textContent = err.message
@@ -566,7 +568,15 @@
       const id = copy.dataset.copy
       const text = PPTables.format(id, state.draft.corrections[id])
       const done = m => { $('paste-msg-' + id).textContent = m }
-      navigator.clipboard.writeText(text).then(() => done('Copied.'), () => { $('paste-' + id).value = text; done('Copy blocked by the browser: the table is in the box above.') })
+      // Browsers offer navigator.clipboard over https only, and Signal K is usually plain http.
+      const inBox = () => {
+        const box = $('paste-' + id)
+        box.value = text
+        box.select()
+        done(document.execCommand('copy') ? 'Copied.' : 'Copy blocked by the browser: the table is selected in the box above.')
+      }
+      if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => done('Copied.'), inBox)
+      else inBox()
     }
     const def = e.target.closest('[data-defaults]')
     if (def && state.defaults) {

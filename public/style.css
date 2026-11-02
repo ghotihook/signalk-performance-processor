@@ -130,7 +130,7 @@ td.mono { font-variant-numeric: tabular-nums; }
 .fchip.from { border-style: dotted; border-color: var(--muted); }
 .fchip.off { border-style: dashed; background: transparent; color: var(--muted); }
 .fchip.damp { background: transparent; }
-.obox { box-sizing: border-box; width: 100%; height: 5.2em; overflow: hidden; display: flex; flex-direction: column; justify-content: center; padding: 4px 10px; border: 1px solid var(--accent); border-radius: 8px; background: var(--active); font-weight: 600; font-variant-numeric: tabular-nums; }
+.obox { box-sizing: border-box; width: 100%; min-height: 5.2em; display: flex; flex-direction: column; justify-content: center; padding: 4px 10px; border: 1px solid var(--accent); border-radius: 8px; background: var(--active); font-weight: 600; font-variant-numeric: tabular-nums; }
 .obox.off { border-style: dashed; background: transparent; color: var(--muted); }
 /* Narrow: each chain stacks, name, inputs, steps, then what is sent */
 @media (max-width: 700px) {

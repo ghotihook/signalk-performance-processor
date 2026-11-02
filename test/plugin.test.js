@@ -828,3 +828,101 @@ test('2 Hz wind with a 10 Hz compass: every wind update sends its TWA, and nothi
   assert.doesNotMatch(h.statuses[h.statuses.length - 1], /Rate limited/)
   assert.deepStrictEqual(h.errors, [])
 })
+
+// ---- 0.2.16 ----
+
+test('a save while disabled in the server is kept, and starts nothing', async () => {
+  const h = harness()
+  h.plugin.stop()
+  const r = await h.call('PUT', '/calibration', { mode: 'replace' })
+  assert.strictEqual(r.status, 200)
+  assert.strictEqual(h.saved().mode, 'replace')
+  assert.strictEqual((await h.call('GET', '/live')).json.running, false)
+  assert.strictEqual((await h.call('GET', '/calibration')).json.config.mode, 'replace')
+  assert.deepStrictEqual(h.feed(boat.concat(wind)), [], 'not subscribed')
+  h.plugin.start()
+  assert.strictEqual((await h.call('GET', '/live')).json.running, true, 'runs once enabled')
+})
+
+test('a save still repairs a plugin that failed to start', async () => {
+  const h = harness({ sources: null })
+  assert.strictEqual((await h.call('GET', '/live')).json.running, false)
+  const r = await h.call('PUT', '/calibration', { sources: {} })
+  assert.strictEqual(r.status, 200)
+  const live = (await h.call('GET', '/live')).json
+  assert.strictEqual(live.running, true)
+  assert.strictEqual(live.error, '')
+})
+
+for (const [name, text] of [['truncated', '{"schema":6,"mode":"replace",'], ['not an object', '[]']]) {
+  test(`an unreadable config file (${name}) stops the plugin, says why, and is kept on Save`, async () => {
+    const h = harness()
+    const file = path.join(h.dir, 'config.json')
+    h.plugin.stop()
+    fs.writeFileSync(file, text)
+    h.plugin.start()
+    const live = (await h.call('GET', '/live')).json
+    assert.strictEqual(live.running, false)
+    assert.match(live.error, /could not read config\.json/)
+    assert.ok(h.errors.some(e => /could not read config\.json/.test(e)))
+    const r = await h.call('PUT', '/calibration', (await h.call('GET', '/calibration')).json.config)
+    assert.strictEqual(r.status, 200)
+    assert.strictEqual(fs.readFileSync(file + '.bad', 'utf8'), text)
+    assert.strictEqual((await h.call('GET', '/live')).json.running, true)
+  })
+}
+
+test('a PUT without schema changes the configuration in use; with it, replaces it', async () => {
+  const h = harness()
+  await h.call('PUT', '/calibration', { variation: 3, corrections: { leeway: { k: 6.5 } } })
+  await h.call('PUT', '/calibration', {})
+  await h.call('PUT', '/calibration', { mode: 'replace' })
+  assert.strictEqual(h.saved().variation, 3)
+  assert.strictEqual(h.saved().corrections.leeway.k, 6.5)
+  assert.strictEqual(h.saved().mode, 'replace')
+  await h.call('PUT', '/calibration', { schema: 6, variation: 4 })
+  assert.strictEqual(h.saved().variation, 4)
+  assert.strictEqual(h.saved().corrections.leeway.k, DEFAULTS.corrections.leeway.k)
+})
+
+test('a PUT that is not a JSON object is refused', async () => {
+  const h = harness()
+  for (const body of [[], null]) assert.strictEqual((await h.call('PUT', '/calibration', body)).status, 400)
+  assert.strictEqual(h.saved(), null)
+})
+
+test('a source first seen without a source object can still be chosen by Auto', () => {
+  const h = harness()
+  const d = source => ({ updates: [{ $source: 'x.1', ...(source ? { source: { label: 'x' } } : {}), timestamp: new Date(clock).toISOString(), values: [{ path: 'navigation.speedThroughWater', value: 3 }] }] })
+  h.deliver(d(false))
+  h.deliver(d(true))
+  clock += 2500
+  assert.doesNotThrow(() => h.deliver(d(true)))
+})
+
+test('no value anywhere in a config makes validation throw', () => {
+  const { normalizeConfig } = require('../lib/processor')
+  const walk = (o, at, out) => {
+    for (const k of Object.keys(o)) {
+      out.push(at.concat(k))
+      if (o[k] !== null && typeof o[k] === 'object') walk(o[k], at.concat(k), out)
+    }
+    return out
+  }
+  const paths = walk(DEFAULTS, [], [])
+  for (const schema of [6, 5, 4, 3]) {
+    for (const p of paths) {
+      for (const bad of [null, 5, 'x', true, [], {}, [null], [[]]]) {
+        const c = JSON.parse(JSON.stringify({ schema, ...DEFAULTS }))
+        let o = c
+        for (const k of p.slice(0, -1)) o = o[k]
+        o[p[p.length - 1]] = bad
+        assert.doesNotThrow(() => normalizeConfig(c), `schema ${schema} ${p.join('.')} = ${JSON.stringify(bad)}`)
+      }
+    }
+    const c = { schema, corrections: { foo: null } }
+    assert.doesNotThrow(() => normalizeConfig(c))
+  }
+  assert.ok(normalizeConfig({ corrections: { foo: null } }).errors.some(e => /foo/.test(e)))
+  assert.ok(normalizeConfig({ corrections: { twa: { upwind: 5 } } }).errors.length > 0)
+})

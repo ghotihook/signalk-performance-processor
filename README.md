@@ -42,7 +42,7 @@
 ## Installation
 
 1. In the Signal K admin UI, **Appstore → Available**, search for **Performance Processor**, **Install**, and restart the server when asked.
-2. **Server → Plugin Config**: enable **Performance Processor** (it ships disabled).
+2. **Server → Plugin Config**: enable **gh - Performance Processor** (it ships disabled).
 3. Open **Webapps → Performance Processor**. It starts in Shadow mode with the defaults.
 
 ## Getting started
@@ -89,7 +89,7 @@ More true wind damping gives a steadier TWD but shows a real shift later.
 **Built in**, with the plugin's own numbers listed in the webapp:
 
 - **Light air.** Below 1.5 kn of TWS, wind direction is noise: TWD and the ground wind direction and angle are not published until TWS is back to 2 kn. TWA, TWS and ground wind speed still are: in light air TWA is what you sail by, so it is never held back.
-- **Stale or implausible input.** Inputs older than 3 s are not used. When apparent wind stops nothing is published: Signal K keeps the last values, so the status says so and the Live page greys them out. Apparent wind over 120 kn, STW over 60 kn or heel beyond ±90° is ignored, and the status says why.
+- **Stale or implausible input.** Inputs older than 3 s are not used. When apparent wind stops nothing is published: Signal K keeps the last values, so the status says so and the Live page greys them out. Apparent wind over 120 kn or STW over 60 kn is ignored and the status says why; heel beyond ±90° counts as no heel.
 - **Heading.** `navigation.headingTrue` from the heading sensor if it sends it; otherwise magnetic heading plus `navigation.magneticVariation` (normally from the GPS); otherwise the fallback variation in Settings.
 - **Inputs from sensors, one each.** Unless you choose a source in Settings, every input is read from data connections only, never from another plugin (its value is a copy, later and slower, or already corrected, and in Replace mode it may be this plugin's own output fed back), and from one sensor: for its first 2 s the first seen, then the one sending most often (the highest data rate, not necessarily the most accurate), kept while it sends. Two sensors that disagree are never mixed. If that sensor goes quiet for 3 s (10 minutes for variation) and another sensor is sending the input, the other sensor takes over at once and the status says so for a minute: it may not be the one the tables were fitted to, so if you would rather have no value than a different sensor's, choose a source in Settings. A chosen source is never replaced: if it goes quiet the input is missing, and the status names any other sensor sending it.
 - **No loops with other plugins**, as above, and no path is published more often than 20 Hz.
@@ -140,14 +140,14 @@ Everything is set in the webapp and saved to `config.json` in the plugin's data 
   "sources": { "apparentWind": "", "stw": "", "heading": "", "attitude": "", "gps": "", "variation": "" },
   "corrections": {
     "stw": { "enabled": true, "heel": [-20, -10, 0, 10, 20], "stw": [1, 2.5, 5, …, 15], "add": [[…], […], […], […], […]] },
-    "leeway": { "enabled": true, "k": 8.568 },
+    "leeway": { "enabled": true, "k": 8.396 },
     "twa": { "enabled": true, "tws": [5, 10, …, 30], "upwind": […], "reach": […], "downwind": […] },
     "tws": { "enabled": true, "tws": [5, 10, …, 30], "upwind": […], "reach": […], "downwind": […], "upAngle": […], "downAngle": […] }
   }
 }
 ```
 
-Blank table cells are `null`; the plugin uses the nearest value in the row, and a row with none takes the nearest row. The table axes are fixed (the H5000's 2018 layout, with a 1 kn boat speed column): a file from an earlier release keeps its settings, leeway K and any table whose layout still fits. From 0.2.7 to 0.2.11 that is every table: the boat speed table gets a 1 kn column set so it works exactly as before, and the status asks for a refit until you Save. From 0.2.6 the TWA table, and from 0.1.0 to 0.2.5 all three, are reset to the defaults and the plugin runs in Shadow mode until you refit them with `plugincal` and Save (the status says so). A file with any other layout is refused with the reason, and so is a file from a newer release, which is never overwritten.
+Blank table cells are `null`: a blank takes the value to its left in its row (at the start of a row, the first value to its right; it is not interpolated between its neighbours), and a row with none takes the nearest row. The table axes are fixed (the H5000's 2018 layout, with a 1 kn boat speed column): a file from an earlier release keeps its settings, leeway K and any table whose layout still fits. From 0.2.7 to 0.2.11 that is every table: the boat speed table gets a 1 kn column set so it works exactly as before, and the status asks for a refit until you Save. From 0.2.6 the TWA table, and from 0.1.0 to 0.2.5 all three, are reset to the defaults and the plugin runs in Shadow mode until you refit them with `plugincal` and Save (the status says so). A file with any other layout is refused with the reason, and so is a file from a newer release, which is never overwritten. A file that cannot be read is refused too: the plugin does not run, rather than run on the defaults, and if you then Save, the old file is kept as `config.json.bad`.
 
 **The defaults are the author's boat** (before its 2026 rig tune), fitted by `plugincal`. They will be wrong for yours: refit, or use **Reset to defaults** and enter your own.
 
@@ -174,7 +174,7 @@ The plugin's status line (in the admin UI and at the top of the webapp) says wha
 | … light air … | TWS is below 1.5 kn: TWD and ground wind direction are held back until 2 kn; TWA still goes out |
 | … no heel / no heading / no SOG/COG | Running without that input: no heel correction or leeway / no TWD, current or ground wind / no current or ground wind. As above, it names anything else sending it |
 | Rate limited … | Something is updating faster than 20 Hz, usually a loop with another plugin; the status names its source |
-| Configuration: … | The saved configuration is invalid; the message says why, in the admin UI and as "Plugin not running: …" in the webapp. Fix it in the webapp |
+| Configuration: … | The saved configuration is invalid or cannot be read, and the plugin is not running; the message says why, in the admin UI and as "Plugin not running: …" in the webapp. Fix it in the webapp, or restore your backup |
 | Upgraded from an earlier release … | A configuration saved by an earlier release. From 0.2.7–0.2.11: everything is kept, and the boat speed table has a new 1 kn column set so it works as before; refit it with `plugincal` to use it. From earlier: settings are kept, the tables it names are reset to the defaults, and Shadow mode is on; refit them. Save to clear the notice |
 
 ## API
@@ -182,7 +182,7 @@ The plugin's status line (in the admin UI and at the top of the webapp) says wha
 Under `/plugins/signalk-performance-processor`:
 
 - `GET /calibration`: the configuration in use, the defaults, and the built-in limits.
-- `PUT /calibration`: validate, save and restart with a new configuration; 400 with the reasons if it is invalid.
+- `PUT /calibration`: validate, save and restart with a new configuration; 400 with the reasons if it is invalid. A body with `schema` is a whole configuration; without it, the changes are laid over the configuration in use. If the plugin is disabled it is saved for when it is enabled, and nothing starts.
 - `GET /live`: the latest result, each step, input ages, the sources seen, `sent` (the outputs sent in the last 3 s), and `error`: why the plugin is not running, if it is not.
 
 ## Development

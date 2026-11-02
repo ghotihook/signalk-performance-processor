@@ -84,6 +84,7 @@ module.exports = function (app) {
   let retryTimer = null
   let windTimer = null
   let running = false
+  let started = false // between the server's start() and stop(): whether the plugin is enabled
   let startError = '' // why the plugin is not running, for the webapp
 
   // Latest value per input path, from the source in use.
@@ -205,6 +206,7 @@ module.exports = function (app) {
     const key = `${group}|${src}`
     const s = sources[key] = sources[key] || { group, src, sensor, times: [] }
     s.at = now
+    s.sensor = sensor // as of its latest message: a name can start out without a source object
     if (ts == null || ts !== s.ts) { s.ts = ts; s.times.push(now) }
     while (s.times.length && now - s.times[0] > RATE_WINDOW_MS) s.times.shift()
   }
@@ -574,23 +576,29 @@ module.exports = function (app) {
     return path.join(app.getDataDirPath(), CONFIG_FILE)
   }
 
-  // The webapp's saved configuration, or {} (the defaults) before the first save.
+  // The webapp's saved configuration: { raw }, {} before the first save. A file that cannot
+  // be read also gives { error }: it is never taken for a fresh install, or another boat's
+  // tables would run with nothing to say so.
   function loadStored () {
     try {
-      return JSON.parse(fs.readFileSync(configFile(), 'utf8'))
+      const raw = JSON.parse(fs.readFileSync(configFile(), 'utf8'))
+      return raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? { raw } : { raw: {}, error: 'it is not a JSON object' }
     } catch (e) {
-      if (e.code !== 'ENOENT') app.error(`could not read ${configFile()}: ${e.message}`)
+      return e.code === 'ENOENT' ? { raw: {} } : { raw: {}, error: e.message }
     }
-    return {}
   }
+
+  // The configuration in use, or with the plugin never started, the saved one.
+  const current = () => config || normalizeConfig(loadStored().raw).config
 
   // Write to a temporary file and rename, so a crash mid-write never leaves half a file.
   // Never overwrite a file from a newer release: this version would drop what it
-  // does not understand.
+  // does not understand. A file that cannot be read is kept beside it as .bad.
   function saveStored (cfg) {
     const file = configFile()
-    let onDisk = null
-    try { onDisk = JSON.parse(fs.readFileSync(file, 'utf8')).schema } catch (e) {}
+    const { raw, error } = loadStored()
+    const onDisk = raw.schema
+    if (error) fs.copyFileSync(file, file + '.bad')
     if (Number.isInteger(onDisk) && onDisk > CONFIG_SCHEMA) {
       throw new Error(`the saved configuration is schema ${onDisk}, from a newer version of this plugin; update the plugin rather than overwrite it`)
     }
@@ -600,7 +608,15 @@ module.exports = function (app) {
   }
 
   plugin.start = function () {
-    const { config: cfg, errors, notices } = normalizeConfig(loadStored())
+    started = true
+    const { raw, error } = loadStored()
+    if (error) {
+      startError = `Configuration: could not read ${CONFIG_FILE} (${error}). Not running: Save in the webapp to start from the values shown, or restore your backup`
+      app.setPluginError(startError)
+      config = normalizeConfig({}).config // so the webapp can still load and repair it
+      return
+    }
+    const { config: cfg, errors, notices } = normalizeConfig(raw)
     notice = notices.join('; ')
     if (notice) app.error(notice)
     if (errors.length) {
@@ -613,6 +629,7 @@ module.exports = function (app) {
   }
 
   plugin.stop = function () {
+    started = false
     stopEverything()
     app.setPluginStatus('Stopped')
   }
@@ -656,13 +673,15 @@ module.exports = function (app) {
     // for its own options, ahead of the plugin's routes, so ours would never be reached.
     router.get('/calibration', (req, res) => {
       res.set('Cache-Control', 'no-store')
-      res.json({ config: config || normalizeConfig(loadStored()).config, defaults: DEFAULTS, behaviour: BEHAVIOUR })
+      res.json({ config: current(), defaults: DEFAULTS, behaviour: BEHAVIOUR })
     })
 
     router.put('/calibration', async (req, res) => {
       let body
       try { body = await readBody(req) } catch (e) { return res.status(400).json({ errors: ['body is not valid JSON'] }) }
-      const { config: cfg, errors } = normalizeConfig(body)
+      if (body === null || typeof body !== 'object' || Array.isArray(body)) return res.status(400).json({ errors: ['body must be a JSON object'] })
+      // With its schema, a whole configuration; without, changes to the one in use.
+      const { config: cfg, errors } = normalizeConfig(body, body.schema === undefined ? current() : undefined)
       if (errors.length) return res.status(400).json({ errors })
       try {
         saveStored(cfg)
@@ -670,7 +689,9 @@ module.exports = function (app) {
         return res.status(500).json({ errors: [`could not save: ${e.message}`] })
       }
       notice = '' // saved in this release's layout
-      startWith(cfg)
+      // Disabled in the server: saved for when it is enabled, and nothing published until then.
+      if (started) startWith(cfg)
+      else { config = cfg; startError = '' }
       res.json({ config: cfg })
     })
 

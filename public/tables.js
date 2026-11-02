@@ -6,8 +6,7 @@
 //
 // Text format, one table per paste: a header row of TWS or boat speed columns, then one
 // row per table row, its label first. Commas, tabs, semicolons or spaces between cells;
-// blank cells allowed where the table allows them (a blank takes the nearest value in its
-// row).
+// blank cells allowed where the table allows them (fillGaps says what a blank takes).
 //
 //   heel\stw, 1, 2.5, 5, 7.5, 10, 12.5, 15          rows at heel -20, -10, 0, 10, 20
 //   -20,      0.5, 0.65, 0.29, 0.35, 0.21, 0.06, -0.08 (+ = starboard side down)
@@ -60,8 +59,8 @@
     return down
   }
 
-  // A blank cell is "not measured": extend the nearest value in its row into it, then fill
-  // an all-blank row from the nearest row with data; a table with no values at all is 0.
+  // A blank cell is "not measured": it takes the value to its left, or at the start of a row
+  // the first value to its right, not a value between its neighbours. Then fill an all-blank row from the nearest row with data; a table with no values at all is 0.
   function fillGaps (grid) {
     const table = grid.map(r => r.slice())
     const cols = table[0].length

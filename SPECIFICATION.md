@@ -5,7 +5,7 @@ signalk-performance-processor, and of how boatcal's `plugincal` fits the tables.
 the implementation; this document is what it must do. **Change one, change the other**, in
 the same commit, and note the change in [CHANGELOG.md](CHANGELOG.md).
 
-Written for 0.2.15 (config schema 6) and plugincal 1.3.3.
+Written for 0.2.16 (config schema 6) and plugincal 1.3.3.
 
 | Section | Code |
 |---|---|
@@ -418,6 +418,17 @@ because a blank there would now take the new 1 kn cell's value instead.
 Older schemas (3: 0.1.0–0.2.5; 4: 0.2.6) keep their settings and leeway K; their tables are
 reset to the defaults (schema 4 keeps its STW and TWS tables), and the mode goes to Shadow.
 
+### 8.3 Loading and saving
+
+A saved file that cannot be read (not JSON, or not a JSON object) is not the defaults: the
+plugin does not run, and says why. Saving over such a file first copies it to
+`config.json.bad`.
+
+`PUT /calibration`: a body with `schema` is a whole configuration, laid over the defaults; a
+body without it is laid over the configuration in use. Objects merge, arrays replace. A body
+that is not a JSON object is refused. While the plugin is disabled in the server, a save is
+kept but nothing starts.
+
 ---
 
 ## 9 Calibration fits (boatcal `plugincal`)
@@ -431,9 +442,9 @@ one cell at a time). "Held out" scores each day with a fit made without it.
 ### 9.1 STW table and leeway K (from the GPS)
 
 Data: 5 s samples; `--labelled` uses race legs plus the sailing under 2.5 kn from all days.
-Days with a manual boat speed factor are left out; |TWA| > 30°; STW and SOG > 0.5 kn.
+The manual boat speed factor (`man_bsp_adj`) is applied throughout; |TWA| > 30°; STW and SOG > 0.5 kn.
 
-1. **Current** is fitted per 30-minute window where the headings vary enough (circular
+1. **Current** is fitted per 20-minute window where the headings vary enough (circular
    spread ≥ 0.15, ≥ 60 samples, drift ≤ 4 kn), by `stw_leeway`.
 2. The heading for the boat's frame is magnetic plus the offset that makes the water track
    symmetric across tacks (falling back to the GPS variation when too few tacks). In that

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.16 — 2026-11-03
+
+- **Fixed: saving in the webapp started a plugin that was disabled in the server.** With Replace mode saved it published on the standard paths while the server showed it as off. A save now waits for the plugin to be enabled.
+- **Fixed: a `config.json` that cannot be read ran the author's boat tables with only a line in the server log.** The plugin now stops and says why, in the admin UI and the webapp, and Save keeps the old file as `config.json.bad`.
+- **Fixed: "Copy this table" did nothing on plain `http://`**, which is how most boats reach Signal K. It now works there, or leaves the table selected in the box if the browser refuses.
+- **Fixed: `PUT /calibration` with `{}` replaced the saved calibration with the defaults.** A body with `schema` is a whole configuration, as the webapp and `plugincal` send; without it, the changes are laid over the configuration in use. A body that is not a JSON object is refused.
+- **Fixed: a malformed config could throw during validation** (a TWA row that is not a list, or a null correction); it is now refused with the reason.
+- **Fixed: a rare error when a source first seen without a source object later arrived with one** and Auto came to choose a sensor.
+- **Live page:** the True wind result box no longer clips its text. The blue result boxes all read the same way: each line labelled, with a note only when something is not sent.
+- **Calibration:** "Pasted: Save to keep it" now shows. **Settings:** clearing a number that cannot be blank puts the old value back in the box, instead of leaving it empty with the old value still saved.
+- **New defaults**, refitted by plugincal on the races from January 2024 to May 2026 (68 days): the boat speed, TWA and TWS tables, and leeway K 8.396 (was 8.32). The TWS down angle is 120° (was 150°), and the TWS table now reaches 25 kn downwind. A saved configuration keeps its own values; only a fresh install or **Reset to defaults** takes these.
+- **Docs:** a blank table cell takes the value to its left (at the start of a row, the first value to its right), not the "nearest" value, in the README, the webapp and the comments, as the specification always said. The README's K example, the plugin's name in Plugin Config, and what happens to an implausible heel are corrected. Screenshots are regenerated.
+
 ## 0.2.15 — 2026-11-02
 
 - **Fixed: the plugin could stop publishing true wind, STW and leeway about 30 s after a server boot, until restarted, with the Live page greyed out.** Signal K first names an NMEA 2000 device by address (`n2k-tcp.100`) and renames it (`n2k-tcp.c079be00ffd20dcb`) once it learns the CAN name. Auto stayed locked to the old name, so it ignored the same sensor under the new one. On the test boat this took out apparent wind, STW and heel for over 7 hours.
