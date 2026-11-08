@@ -470,7 +470,7 @@
     const head = `<tr><th scope="col" class="muted">${esc(corner)}</th>${cols.map(v => `<th scope="col" class="axis">${esc(v)}</th>`).join('')}</tr>`
     const body = rows.map((r, i) => `<tr><th scope="row" class="axis">${esc(rowLabel(r))}</th>` +
       t.add[i].map((v, j) => `<td><input type="number" step="any" data-nullable="1" data-path="corrections.${id}.add.${i}.${j}" value="${v == null ? '' : esc(v)}" aria-label="${esc(rowLabel(r))} at ${esc(cols[j])} kn"></td>`).join('') + '</tr>')
-    return `<div><h2>${esc(title)}</h2><p class="muted sub">${rows.length} rows × ${cols.length} columns</p><div class="table-wrap"><table class="grid">${head}${body.join('')}</table></div></div>`
+    return `<div><h2>${esc(title)}</h2><p class="muted sub">${rows.length} rows × ${cols.length} columns</p><div class="table-wrap"><table class="grid${cols.length > 8 ? ' dense' : ''}">${head}${body.join('')}</table></div></div>`
   }
 
   function field (label, path, value, step) {

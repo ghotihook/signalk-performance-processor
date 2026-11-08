@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.1 — 2026-11-08
+
+0.3.0 was tagged but not published to npm, so everything in it reaches npm with this release.
+
+- **Fixed: fine tables overflowed the Calibration page** on a laptop, hiding the last columns. Tables with more than 8 columns use compact cells.
+- **Screenshots** regenerated for the fine tables.
+- **README and AGENTS.md** shortened and clearer: what the plugin solves and how, tables of any shape with H5000, H2000 and full-table examples (each checked to paste), and heading fusion: TWA follows the compass's rate while TWD stays damped.
+
 ## 0.3.0 — 2026-11-08
 
 - **Tables of any size (config schema 7).** Every table is now a grid that carries its own rows and columns in `config.json`: `stw` is `{ heel, stw, add }`; `twa` and `tws` are `{ twa, tws, add }`, with rows by |TWA| and columns by TWS. Any axes will do, as long as each one goes up. Lookups are linear between rows, hold the end rows, and run each row from zero at 0 kn, as before. Paste a table with any header and row labels to change its layout.

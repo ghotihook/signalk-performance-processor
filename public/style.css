@@ -188,6 +188,11 @@ td.mono { font-variant-numeric: tabular-nums; }
 .grid th, .grid td { border: 0; padding: 0; }
 .grid th { padding: 0 6px; }
 .grid input { width: 4.6em; text-align: right; font-variant-numeric: tabular-nums; background: var(--cell); }
+/* A fine table (many columns) in compact cells, so it fits a laptop screen without scrolling. */
+.grid.dense { border-spacing: 2px; }
+.grid.dense input { width: 3.4em; padding: 4px 2px; font-size: 0.82em; -moz-appearance: textfield; appearance: textfield; }
+.grid.dense input::-webkit-inner-spin-button, .grid.dense input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.grid.dense th.axis { padding: 0 3px 2px; }
 .grid th.axis { text-align: right; padding: 0 10px 2px; font-size: 0.8em; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
 .grid input:focus, .field input:focus { outline: 2px solid var(--accent); outline-offset: 0; }
 .fields { display: flex; flex-wrap: wrap; gap: 16px; }
