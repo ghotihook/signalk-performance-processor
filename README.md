@@ -159,7 +159,7 @@ Everything is set in the webapp and saved to `config.json` in the plugin's data 
   "sources": { "apparentWind": "", "stw": "", "heading": "", "attitude": "", "gps": "", "variation": "" },
   "corrections": {
     "stw": { "enabled": true, "heel": [-30, -25, …, 30], "stw": [1, 2, …, 15], "add": [[…], …] },
-    "leeway": { "enabled": true, "k": 8.396 },
+    "leeway": { "enabled": true, "k": 8.426 },
     "twa": { "enabled": true, "twa": [30, 40, …, 180], "tws": [4, 6, …, 30], "add": [[…], …] },
     "tws": { "enabled": true, "twa": [30, 40, …, 180], "tws": [4, 6, …, 30], "add": [[…], …] }
   }
@@ -168,7 +168,7 @@ Everything is set in the webapp and saved to `config.json` in the plugin's data 
 
 Blank table cells are `null`: a blank takes the value to its left in its row (at the start of a row, the first value to its right; it is not interpolated between its neighbours), and a row with none takes the nearest row. `add` has a row per row value and a value per column. Each table's axes are saved with it: any number of rows and columns (up to 100), each going up, heel within ±90°, TWA 0 to 180°, speeds above 0. A file from 0.2.12 to 0.2.17 keeps every table exactly: the TWA table becomes a grid with rows at 40°, 90° and 165°, and the TWS table one with rows at its up angle, 90° and its down angle, so nothing changes until you paste or reset to the finer layout. Older files keep their settings, leeway K and any table whose layout still fits. From 0.2.7 to 0.2.11 that is every table: the boat speed table gets a 1 kn column set so it works exactly as before, and the status asks for a refit until you Save. From 0.2.6 the TWA table, and from 0.1.0 to 0.2.5 all three, are reset to the defaults and the plugin runs in Shadow mode until you refit them and Save (the status says so). A file with any other layout is refused with the reason, and so is a file from a newer release, which is never overwritten. A file that cannot be read is refused too: the plugin does not run, rather than run on the defaults, and if you then Save, the old file is kept as `config.json.bad`.
 
-**The defaults are the author's boat** (before its 2026 rig tune), fitted by boatcal. They will be wrong for yours: refit, or use **Reset to defaults** and enter your own.
+**The defaults are the author's boat**, fitted by boatcal in the fine layout. They will be wrong for yours: refit, or use **Reset to defaults** and enter your own.
 
 ## Limitations
 

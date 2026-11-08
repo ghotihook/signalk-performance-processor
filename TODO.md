@@ -32,12 +32,15 @@ Open questions:
 
 ## boatcal for schema 7 (grid tables)
 
-Done in boatcal's working tree (2026-11-08, not committed): it writes schema 7 configs and fits
-the fine grids of `lib/defaults.js`, B&G compatibility dropped. Left:
+Done on boatcal's `dev` branch (2026-11-08): `dba9293` writes schema 7 in the H5000 layout (the
+baseline), `0fef7bd` fits the fine grids, B&G compatibility dropped. `lib/defaults.js` is now
+its fine-grid fit. Left:
 
-- Run it on the database, both setups, and score the fine grids held out against the H5000
+- Run both on the database, both setups, and score the fine grids held out against the H5000
   layout (boatcal SPECIFICATION.md section 11).
-- Then refit `lib/defaults.js` from a real fine-grid fit, and update its note.
+- Record the dates of the fit behind `lib/defaults.js` in its note.
+- The boat speed table's neighbouring cells jump at the edges of the data (heel −20° and −30°,
+  5–7 kn): check whether boatcal's smoothing is strong enough on the fine grid.
 
 The guide for an AI agent fitting a user's tables is now in AGENTS.md ("Calibrating a boat"). Try it
 on a real data set from someone else's boat, and fix what it misses.
