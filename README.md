@@ -171,7 +171,7 @@ One rule for the TWA table (Save names any breach): corrected TWA must move with
 
 **Heading fusion.** Wind direction changes slowly; the boat's heading changes fast. So the plugin damps TWD, not TWA, and sends TWA = damped TWD − heading *now*, with every apparent wind *and every heading* update. A yaw shows in TWA at once, at the compass's rate, while TWD stays put; the wind sensor's noise is damped out of TWD. Heading must not be damped more than apparent wind (keep heading damping at 0 with raw wind), or a yaw swings TWD.
 
-**Damping** (seconds, 0 = none): heading 0, heel 2, true wind 3 (TWD, TWS, ground wind), STW 1, current 10.
+**Damping** (seconds, 0 = none): heading 0, heel 2, true wind 3 (TWD, TWS, ground wind), STW 1, current 120 (it is a trend; up to 300).
 
 **Built in:**
 
@@ -216,7 +216,7 @@ Set in the webapp, saved to `~/.signalk/plugin-config-data/signalk-performance-p
   "schema": 7,
   "mode": "shadow",
   "variation": 12.8,
-  "damping": { "heelS": 2, "headingS": 0, "trueWindS": 3, "stwS": 1, "currentS": 10 },
+  "damping": { "heelS": 2, "headingS": 0, "trueWindS": 3, "stwS": 1, "currentS": 120 },
   "sources": { "apparentWind": "", "stw": "", "heading": "", "attitude": "", "gps": "", "variation": "" },
   "corrections": {
     "stw": { "enabled": true, "heel": [-30, -25, …, 30], "stw": [1, 2, …, 15], "add": [[…], …] },
@@ -235,7 +235,7 @@ Blank cells are `null`. **Upgrading**: files from 0.2.7–0.2.17 keep every tabl
 
 - **Instrument displays** show the instrument's numbers unless you forward these to NMEA 2000 (e.g. `signalk-to-nmea2000`); then choose your own sensors as sources in Settings, so the forwarded values aren't read back.
 - **Damped apparent wind** needs heading damped to the same lag.
-- **Current is a trend**: 1% of boat speed or 1° of heading is 0.1 kn. Average it over a beat.
+- **Current is a trend**: 1% of boat speed or 1° of heading is 0.1 kn, so it is damped over 2 minutes by default (up to 5).
 - **Absolute TWS and TWD** (masthead offset, AWS scale) can't be fitted from tacks: set them in the instrument. The TWS table corrects off the wind *relative to upwind*.
 
 ## Troubleshooting

@@ -348,9 +348,9 @@ y ← y + α · (x − y)
 | TWD, TWS | `trueWindS`, 3 s | each apparent wind message |
 | TWA, only when there is no heading | `trueWindS` | each apparent wind message |
 | Ground wind direction and speed | `trueWindS` | each apparent wind message |
-| Current (as a vector) | `currentS`, 10 s | each apparent wind message |
+| Current (as a vector) | `currentS`, 120 s | each apparent wind message |
 
-Limits (load and save): heel, heading, true wind and STW 0–30 s; current 0–120 s.
+Limits (load and save): heel, heading, true wind and STW 0–30 s; current 0–300 s.
 
 **Heading must have the same lag as apparent wind**, or every yaw swings TWD: with raw,
 undamped apparent wind, heading damping is 0.

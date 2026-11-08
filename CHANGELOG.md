@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Current is damped over 120 s by default** (was 10 s), and up to 300 s may be set (was 120 s). Current is the small difference of two vectors of about boat speed, so 1% of boat speed or 1° of heading is 0.1 kn: a minutes-long average is the useful number. A saved configuration keeps its own value; **Reset to defaults** is per table, so set it in **Settings → Damping**.
+
 ## 0.3.1 — 2026-11-08
 
 0.3.0 was tagged but not published to npm, so everything in it reaches npm with this release.

@@ -472,3 +472,9 @@ test('a schema 6 TWS table that cannot be read is reset to the defaults, saying 
   assert.match(notices[0], /TWS table could not be read.*reset to the defaults/)
   assert.deepStrictEqual(config.corrections.tws, DEFAULTS.corrections.tws)
 })
+
+test('current damping: 120 s by default, up to 300 s', () => {
+  assert.strictEqual(DEFAULTS.damping.currentS, 120)
+  assert.deepStrictEqual(normalizeConfig({ damping: { currentS: 300 } }).errors, [])
+  assert.ok(normalizeConfig({ damping: { currentS: 301 } }).errors.some(e => /Current damping: must be between 0 and 300/.test(e)))
+})
