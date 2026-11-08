@@ -65,6 +65,7 @@
     defaults: null,
     behaviour: null, // the plugin's fixed limits (GET /calibration), for the help text
     configError: null,
+    problem: null, // what is wrong with the saved file, if anything (GET /calibration)
     selected: 'twa',
     symmetric: false, // STW table: edit the same heel on both sides at once
     live: null,
@@ -95,6 +96,7 @@
       state.draft = clone(body.config)
       state.defaults = body.defaults
       state.behaviour = body.behaviour || null
+      state.problem = body.problem || null
       state.configError = null
     } catch (e) {
       // Kept until a load succeeds: the live poll must not clear it.
@@ -134,6 +136,7 @@
       }
       state.saved = body.config
       state.draft = clone(body.config)
+      state.problem = null // saved in this release's layout, and checked
       $('saveErrors').textContent = ''
     } catch (e) {
       $('saveErrors').textContent = e.message
@@ -193,6 +196,15 @@
   function renderHeader () {
     $('cfgError').textContent = state.configError || ''
     $('cfgError').hidden = !state.configError
+    // A saved file that fails its checks: the plugin is stopped, and what is shown is the
+    // file's good parts with the rest from the defaults. Say which, so a Save is a choice.
+    const pr = state.problem
+    $('problem').textContent = pr
+      ? `Your saved configuration has errors, so the plugin is not running: ${pr.errors.join('; ')}. ` +
+        (pr.reset.includes('everything') ? 'Shown here: the defaults. ' : `Shown here: your own values, except ${pr.reset.join(', ')}, reset to the defaults. `) +
+        'Fix them and Save: the file as it was is then kept as config.json.bad.'
+      : ''
+    $('problem').hidden = !pr
     const mode = state.saved ? state.saved.mode : null
     const badge = $('mode')
     badge.textContent = mode === 'replace' ? 'Replace' : mode === 'shadow' ? 'Shadow' : '--'
@@ -233,9 +245,15 @@
     const damping = s => ({ label: 'Damping', value: s ? `${s} s` : 'none', cls: 'damp' })
     const before = trueWind(i, o.stw)
     const held = r.lightAir
-    // Inputs: from a sensor, or made by another chain.
-    const sensor = (label, value, note) => ({ label, value, note, cls: 'sensor' })
-    const from = (label, value, chain) => ({ label, value, note: `from ${chain}`, cls: 'from' })
+    // Rate of the sensor in use for an input group, as Settings lists it.
+    const hzOf = group => {
+      const s = ((live.sources || {})[group] || []).find(x => x.source === (live.inUse || {})[group])
+      return s ? s.hz : null
+    }
+    // Inputs: from a sensor, or made by another chain; group: whose rate the box shows (for a
+    // value from another chain, the input that chain is worked out on).
+    const sensor = (label, value, note, group) => ({ label, value, note, cls: 'sensor', hz: group && hzOf(group) })
+    const from = (label, value, chain, group) => ({ label, value, note: `from ${chain}`, cls: 'from', hz: group && hzOf(group) })
     const missing = (label, note) => ({ label, value: 'none', note, cls: 'off' })
     // A correction step: off, skipped (and why), or what it did.
     const corr = (id, label, value, note) => {
@@ -246,26 +264,25 @@
     }
     const notSent = why => ({ lines: ['not sent'], note: why, cls: 'off' })
 
-    const heel = i.heel == null ? missing('Heel', 'upright row, no leeway') : sensor('Heel', `${fmt(Math.abs(i.heel), 0)}° ${side(i.heel)}`, `damped ${dm.heelS} s`)
-    const heading = o.heading == null ? missing('Heading', 'no TWD, current or ground wind') : from('Heading', `${fmt(o.heading, 0)}° T`, 'heading')
+    const heel = i.heel == null ? missing('Heel', 'upright row, no leeway') : sensor('Heel', `${fmt(Math.abs(i.heel), 0)}° ${side(i.heel)}`, `damped ${dm.heelS} s`, 'attitude')
+    const heading = o.heading == null ? missing('Heading', 'no TWD, current or ground wind') : from('Heading', `${fmt(o.heading, 0)}° T`, 'heading', 'heading')
     const fromCompass = i.headingTrue == null && i.headingMagnetic != null
-    const stw = from('STW', `${fmt(o.stw, 2)} kn`, 'boat speed')
-    const twdNote = 'damped TWD − heading'
+    const stw = from('STW', `${fmt(o.stw, 2)} kn`, 'boat speed', 'stw')
 
     return [
       {
         // True heading: the compass plus variation, sent with each compass update unless the
         // heading sensor sends true heading itself.
         name: 'Heading',
-        inputs: i.headingTrue != null ? [sensor('True heading', `${fmt(i.headingTrue, 0)}° T`, 'from the heading sensor')]
-          : i.headingMagnetic != null ? [sensor('Compass', `${fmt(i.headingMagnetic, 0)}° M`, 'magnetic'), sensor('Variation', `${fmt(Math.abs(o.variation), 1)}° ${o.variation < 0 ? 'W' : 'E'}`, o.headingFrom === 'magnetic + fallback variation' ? 'fallback, from Settings' : 'from Signal K')]
+        inputs: i.headingTrue != null ? [sensor('True heading', `${fmt(i.headingTrue, 0)}° T`, 'from the heading sensor', 'heading')]
+          : i.headingMagnetic != null ? [sensor('Compass', `${fmt(i.headingMagnetic, 0)}° M`, 'magnetic', 'heading'), o.headingFrom === 'magnetic + fallback variation' ? sensor('Variation', `${fmt(Math.abs(o.variation), 1)}° ${o.variation < 0 ? 'W' : 'E'}`, 'fallback, from Settings') : sensor('Variation', `${fmt(Math.abs(o.variation), 1)}° ${o.variation < 0 ? 'W' : 'E'}`, 'from Signal K', 'variation')]
             : [missing('Compass', 'no TWD, current or ground wind')],
-        steps: [fromCompass ? { label: 'Add variation', value: `${fmt(o.heading, 0)}° T` } : { label: 'Add variation', value: '--', note: i.headingTrue != null ? 'not needed' : 'no heading', cls: 'off' }, damping(dm.headingS)],
+        steps: [fromCompass ? { label: 'Add variation', value: `${fmt(o.heading, 0)}° T` } : { label: 'Add variation', value: '--', note: i.headingTrue != null ? 'not needed' : 'no heading', cls: 'off' }, damping(0)],
         out: fromCompass ? { lines: [`Heading ${fmt(o.heading, 0)}° T`] } : notSent(i.headingTrue != null ? 'the sensor sends true heading' : 'no heading')
       },
       {
         name: 'Boat speed',
-        inputs: [sensor('Paddlewheel', `${fmt(i.stw, 2)} kn`, 'raw'), heel],
+        inputs: [sensor('Paddlewheel', `${fmt(i.stw, 2)} kn`, 'raw', 'stw'), heel],
         steps: [corr('stw', 'STW table', `${change(o.stw - i.stw, 2)} kn`, i.heel == null ? 'upright row' : `at ${fmt(Math.abs(i.heel), 0)}° heel ${side(i.heel)}`), damping(dm.stwS)],
         out: on('stw') && p.stw != null ? { lines: [`STW ${fmt(p.stw, 2)} kn`] } : notSent('STW table off: the paddlewheel is used as it is')
       },
@@ -280,7 +297,7 @@
         // the tables, then heading for TWD. The published TWA is the damped TWD less the
         // heading, so it answers the helm at once while the wind is steady.
         name: 'True wind',
-        inputs: [sensor('Apparent wind', angle(i.awa), `${fmt(i.aws)} kn`), stw, heading],
+        inputs: [sensor('AWA, AWS', angle(i.awa), `${fmt(i.aws)} kn`, 'apparentWind'), stw, heading],
         steps: [
           { label: 'Apparent − boat', value: `${fmt(Math.abs(before.twa))}° · ${fmt(before.tws)} kn`, note: 'STW along the heading, no leeway' },
           // The tables' own account, including how much of the row applies where they
@@ -289,7 +306,7 @@
           corr('tws', 'TWS table', `${fmt(o.tws)} kn`, step('tws').detail),
           o.twd == null
             ? { label: 'Heading + TWA', value: '--', note: 'no heading: no TWD', cls: 'off' }
-            : { label: 'Heading + TWA', value: `TWD ${fmt(o.twd, 0)}° T`, note: `sent TWA = ${twdNote}` },
+            : { label: 'Heading + TWA', value: `TWD ${fmt(o.twd, 0)}° T`, note: `sent TWA = TWD − heading${dm.twaS ? `, damped ${dm.twaS} s` : ''}` },
           damping(dm.trueWindS)
         ],
         out: held
@@ -300,7 +317,7 @@
       },
       {
         name: 'Current',
-        inputs: [i.sog == null || i.cog == null ? missing('SOG, COG', 'no current') : sensor('SOG, COG', `${fmt(i.sog, 2)} kn · ${fmt(i.cog, 0)}° T`, i.cogFrom === 'magnetic' ? 'COG magnetic + variation' : 'COG true'), heading, stw, from('Leeway', angle(o.leeway), 'leeway')],
+        inputs: [i.sog == null || i.cog == null ? missing('SOG, COG', 'no current') : sensor('SOG, COG', `${fmt(i.sog, 2)} kn · ${fmt(i.cog, 0)}° T`, i.cogFrom === 'magnetic' ? 'COG magnetic + variation' : 'COG true', 'gps'), heading, stw, from('Leeway', angle(o.leeway), 'leeway', 'apparentWind')],
         steps: o.current
           ? [{ label: 'Ground − water', value: `${fmt(o.current.drift, 2)} kn → ${fmt(o.current.set, 0)}°`, note: 'water: STW along heading + leeway' }, damping(dm.currentS)]
           : [{ label: 'Ground − water', value: '--', note: 'needs heading, SOG and COG', cls: 'off' }],
@@ -309,7 +326,7 @@
       {
         name: 'Ground wind',
         inputs: o.groundWind
-          ? [from('TWD', `${fmt(o.twd, 0)}°`, 'true wind'), from('TWS', `${fmt(o.tws)} kn`, 'true wind'), from('Current', `${fmt(o.current.drift, 2)} kn`, 'current')]
+          ? [from('TWD', `${fmt(o.twd, 0)}°`, 'true wind', 'apparentWind'), from('TWS', `${fmt(o.tws)} kn`, 'true wind', 'apparentWind'), from('Current', `${fmt(o.current.drift, 2)} kn`, 'current', 'apparentWind')]
           : [missing('Current', 'needs heading, SOG and COG')],
         steps: o.groundWind
           ? [{ label: 'True wind + current', value: `${fmt(o.groundWind.direction, 0)}° · ${fmt(o.groundWind.speed)} kn` }, damping(dm.trueWindS)]
@@ -321,16 +338,26 @@
     ]
   }
 
+  // A rate in Hz, as short as it can be (the boxes are narrow): 0.5, 4, 10, or nothing when
+  // unknown. Whole numbers from 2 Hz: a 10 Hz sensor measures 9.9 now and then.
+  const hzText = hz => hz == null ? '' : `${hz >= 2 ? Math.round(hz) : hz.toFixed(1)} Hz`
+  // Each line sent names its output by its first word.
+  const OUT_KEYS = { Heading: 'hdt', STW: 'stw', Leeway: 'leeway', TWD: 'twd', TWA: 'twa', TWS: 'tws', Current: 'current', GWD: 'gwd', GWA: 'gwa', GWS: 'gws' }
+
   function renderFlow (live) {
     // Every step box is the same size, so nothing moves as the values change: a long note is
-    // cut to two lines, with the whole of it on hover.
-    const chip = c => `<div class="fchip ${c.cls || ''}"${c.note ? ` title="${esc(c.note)}"` : ''}><div class="l">${esc(c.label)}</div>` +
+    // cut to two lines, with the whole of it on hover. A box's rate sits at the right of its
+    // label, so a changing rate moves nothing either.
+    const hzSpan = hz => hz == null ? '' : `<span class="hz">${esc(hzText(hz))}</span>`
+    const sentHz = live.sentHz || {}
+    const outLine = t => { const k = OUT_KEYS[t.split(' ')[0]]; return `<div class="oline"><span>${esc(t)}</span>${hzSpan(k ? sentHz[k] : null)}</div>` }
+    const chip = c => `<div class="fchip ${c.cls || ''}"${c.note ? ` title="${esc(c.note)}"` : ''}><div class="l"><span>${esc(c.label)}</span>${hzSpan(c.hz)}</div>` +
       `<div class="v">${esc(c.value || '')}</div>` + (c.note ? `<div class="n">${esc(c.note)}</div>` : '') + '</div>'
     $('flow').innerHTML = flowChains(live).map(ch =>
       `<div class="chain"><div class="cname">${esc(ch.name)}</div>` +
       `<div class="cin">${ch.inputs.map(chip).join('')}</div>` +
       `<div class="csteps"><span class="arrow">→</span>${ch.steps.map(chip).join('<span class="arrow">→</span>')}<span class="tail"></span></div>` +
-      `<div class="cout"><div class="obox ${ch.out.cls || ''}">${ch.out.lines.map(esc).join('<br>')}` +
+      `<div class="cout"><div class="obox ${ch.out.cls || ''}">${ch.out.lines.map(outLine).join('')}` +
       (ch.out.note ? `<div class="n">${esc(ch.out.note)}</div>` : '') + '</div></div></div>').join('')
   }
 
@@ -369,7 +396,7 @@
         tile('TWD', p.twd == null ? '--' : fmt(p.twd, 0), '° T', r.lightAir ? 'light air: not published' : p.twd == null ? 'no heading' : `undamped ${fmt(o.twd, 0)}° · ${headingNote(o)}`),
         tile('STW', fmt(p.stw == null ? o.stw : p.stw, 2), 'kn', `paddlewheel ${fmt(r.input.stw, 2)} kn`),
         tile('Leeway', fmt(Math.abs(o.leeway)), `° ${side(o.leeway)}`, r.input.heel == null ? 'no heel' : `heel ${fmt(r.input.heel, 0)}°`),
-        tile('Current', p.current ? fmt(p.current.drift, 2) : '--', p.current ? `kn · ${fmt(p.current.set, 0)}°` : 'kn', p.current ? 'a trend: average it over a beat' : 'no SOG/COG or heading')
+        tile('Current', p.current ? fmt(p.current.drift, 2) : '--', p.current ? `kn · ${fmt(p.current.set, 0)}°` : 'kn', p.current ? `averaged over ${state.saved ? state.saved.damping.currentS : '--'} s` : 'no SOG/COG or heading')
       ].join('')
       renderFlow(live)
       renderPublished({ ...o, ...p, stw: p.stw == null ? o.stw : p.stw }, live.outputPaths || {}, live.sent || [])
@@ -491,10 +518,13 @@
       `<div><b>${esc(name)}</b><span>${esc(desc)}</span></div></label>`).join('')
     const v = $('variation')
     if (document.activeElement !== v) v.value = state.draft.variation
-    for (const k of ['trueWindS', 'headingS', 'heelS', 'stwS', 'currentS']) {
+    for (const k of ['trueWindS', 'twaS', 'heelS', 'stwS', 'currentS']) {
       const el = $('damp-' + k)
       if (el && document.activeElement !== el && state.draft.damping) el.value = state.draft.damping[k]
     }
+    // A new default reaches a fresh install only: a saved file keeps its own values.
+    const dd = state.defaults && state.defaults.damping
+    $('dampingDefaults').textContent = dd ? `Defaults: true wind ${dd.trueWindS} s, TWA ${dd.twaS} s, heel ${dd.heelS} s, STW ${dd.stwS} s, current ${dd.currentS} s` : ''
     const b = state.behaviour
     $('behaviour').innerHTML = b ? [
       `<b>Light air:</b> below ${b.lightAirOffKn} kn of TWS, wind direction is noise, so TWD and the ground wind direction and angle are not published (TWA, TWS and ground wind speed still are: TWA is what you sail by). They come back once TWS reaches ${b.lightAirOnKn} kn; the gap stops them flickering on and off.`,
@@ -512,7 +542,7 @@
     const seen = key => (live.sources && live.sources[key]) || []
     const describe = (key, src) => {
       const s = seen(key).find(x => x.source === src)
-      return s ? [src, `${s.hz} Hz`, s.plugin ? 'another plugin' : null].filter(Boolean).join(' · ') : src
+      return s ? [src, hzText(s.hz), s.plugin ? 'another plugin' : null].filter(Boolean).join(' · ') : src
     }
     $('sources').innerHTML = Object.entries(SOURCE_LABELS).map(([key, label]) => {
       const chosen = state.draft.sources[key] || ''
@@ -569,6 +599,11 @@
       }
       if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => done('Copied.'), inBox)
       else inBox()
+    }
+    const reset = e.target.closest('[data-reset]')
+    if (reset && state.defaults && state.draft) {
+      state.draft[reset.dataset.reset] = clone(state.defaults[reset.dataset.reset])
+      renderAll()
     }
     const def = e.target.closest('[data-defaults]')
     if (def && state.defaults) {

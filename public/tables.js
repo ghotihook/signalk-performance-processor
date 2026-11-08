@@ -43,23 +43,8 @@
 
   // ---- lookups ----------------------------------------------------------------------
 
-  // Linear interpolation, holding the end values beyond either end.
-  function interp (xs, ys, x) {
-    if (x <= xs[0]) return ys[0]
-    const n = xs.length - 1
-    if (x >= xs[n]) return ys[n]
-    let i = 0
-    while (xs[i + 1] < x) i++
-    return ys[i] + (ys[i + 1] - ys[i]) * (x - xs[i]) / (xs[i + 1] - xs[i])
-  }
-
-  // Along a row of a table by speed: as the H5000, interpolated to zero below the first
-  // column (so nothing is added at 0 kn), linear between columns, the last column held
-  // beyond it.
-  const fromZero = (xs, ys, x) => x <= 0 ? 0 : x < xs[0] ? ys[0] * x / xs[0] : interp(xs, ys, x)
-
-  // The rows either side of v and how far between: [i, j, f], f = 0 at row i, 1 at row j.
-  // Beyond either end, the end row.
+  // The entries either side of v and how far between: [i, j, f], f = 0 at i, 1 at j.
+  // Beyond either end, the end entry.
   function bracket (xs, v) {
     if (v <= xs[0]) return [0, 0, 0]
     const n = xs.length - 1
@@ -68,6 +53,17 @@
     while (xs[i + 1] < v) i++
     return [i, i + 1, (v - xs[i]) / (xs[i + 1] - xs[i])]
   }
+
+  // Linear interpolation, holding the end values beyond either end.
+  function interp (xs, ys, x) {
+    const [i, j, f] = bracket(xs, x)
+    return ys[i] + (ys[j] - ys[i]) * f
+  }
+
+  // Along a row of a table by speed: as the H5000, interpolated to zero below the first
+  // column (so nothing is added at 0 kn), linear between columns, the last column held
+  // beyond it.
+  const fromZero = (xs, ys, x) => x <= 0 ? 0 : x < xs[0] ? ys[0] * x / xs[0] : interp(xs, ys, x)
 
   // A table at row value r and speed s, from its filled grid (fillGaps): along each row by
   // speed from zero, then linear between the rows either side of r, the end row held beyond

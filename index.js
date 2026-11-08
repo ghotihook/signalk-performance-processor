@@ -4,7 +4,7 @@ const fs = require('fs')
 const path = require('path')
 const { DEFAULTS } = require('./lib/defaults')
 const { Smooth, SmoothAngle, SmoothVector } = require('./lib/damping')
-const { process, correctInputs, normalizeConfig, CORRECTIONS, CONFIG_SCHEMA, MAX_LEEWAY_DEG, LEEWAY_FADE_KN, TWA_TAPER_UP_DEG, TWA_TAPER_DOWN_DEG, TWA_SLOPE_MAX } = require('./lib/processor')
+const { process, correctInputs, normalizeConfig, salvage, CORRECTIONS, CONFIG_SCHEMA, MAX_LEEWAY_DEG, LEEWAY_FADE_KN, TWA_TAPER_UP_DEG, TWA_TAPER_DOWN_DEG, TWA_SLOPE_MAX } = require('./lib/processor')
 const { Learner } = require('./lib/learn')
 const history = require('./lib/history')
 
@@ -20,11 +20,12 @@ const STATUS_INTERVAL_MS = 1000
 const MAX_PLAUSIBLE_STW_KN = 60
 const MAX_PLAUSIBLE_AWS_KN = 120
 const MAX_PLAUSIBLE_HEEL_DEG = 90
-// Circuit breaker: no path is published more often than this (20 Hz). A feedback loop
+// Circuit breaker: no path is published more often than this (50 Hz, so a 50 Hz IMU heading
+// and the TWA sent with it all go out). A feedback loop
 // through another plugin delivers its next update within the same millisecond, so the
 // chain ends at the first repeat rather than running away, and the server stays
 // responsive. Nothing latches; the status says while it is happening.
-const MIN_PUBLISH_INTERVAL_MS = 50
+const MIN_PUBLISH_INTERVAL_MS = 20
 const RATE_NOTE_MS = 10000 // how long a dropped update keeps the status flagged
 // A sensor's own timing now and then puts two updates within MIN_PUBLISH_INTERVAL_MS (CAN
 // jitter on a 10 Hz compass); a loop drops updates without end. Flag from this many in
@@ -111,22 +112,21 @@ module.exports = function (app) {
   let windTs = {} // path -> timestamp of its latest value
   let windWaiting = new Set() // paths that arrived without their other half
   let lightAir = false
-  // Damping (config.damping): heel and heading on the way in, the published values on
-  // the way out.
+  // Damping (config.damping): heel on the way in, the published values on the way out.
+  // Heading is never damped: it must lag as raw apparent wind does.
   const damp = {
     heel: new Smooth(),
-    headingTrue: new SmoothAngle(),
-    headingMagnetic: new SmoothAngle(),
     twd: new SmoothAngle(),
     tws: new Smooth(),
     twa: new SmoothAngle(), // only when there is no heading, so no TWD to derive it from
+    twaOut: new SmoothAngle(), // published TWA, TWD − heading (twaS)
+    gwaOut: new SmoothAngle(), // published ground wind angle, GWD − heading (twaS)
     stw: new Smooth(),
     current: new SmoothVector(),
     gwd: new SmoothAngle(),
     gws: new Smooth()
   }
   const resetDamping = () => Object.values(damp).forEach(d => d.reset())
-  const DAMPED_INPUTS = { attitude: ['heel'], heading: ['headingTrue', 'headingMagnetic'] } // input group -> its damping
   let lastResult = null
   let lastResultAt = 0
   let lastStatus = ''
@@ -160,6 +160,7 @@ module.exports = function (app) {
   // when updates were dropped recently, for the status.
   let publishedAt = {}
   let sentAt = {} // OUTPUTS key -> when it was last sent, for the Live page
+  let sentTimes = {} // OUTPUTS key -> when it was sent over the last RATE_WINDOW_MS, for its rate
   let dropsAt = []
   let dropFrom = ''
   function recentDrops (now) {
@@ -219,9 +220,10 @@ module.exports = function (app) {
   }
   const sourcesOf = group => Object.values(sources).filter(s => s.group === group)
   const inUse = group => config.sources[group] || locked[group]
-  // Rate over the last RATE_WINDOW_MS: a source that stopped falls to 0.
-  function rateHz (s, now) {
-    const t = s.times.filter(at => now - at <= RATE_WINDOW_MS)
+  // Rate over the last RATE_WINDOW_MS, from the times of each message (a source) or each
+  // value sent (an output): one that stopped falls to 0.
+  function rateHz (times, now) {
+    const t = times.filter(at => now - at <= RATE_WINDOW_MS)
     return t.length > 1 ? Math.round((t.length - 1) / ((t[t.length - 1] - t[0]) / 1000) * 10) / 10 : 0
   }
   const maxAgeOf = group => group === 'variation' ? VARIATION_MAX_AGE_MS : STALE_MS
@@ -238,8 +240,8 @@ module.exports = function (app) {
     const best = sourcesOf(group).filter(s => s.sensor && now - s.at < maxAgeOf(group)).reduce((a, b) => b.times.length > a.times.length ? b : a)
     if (best.src !== held) {
       app.debug(`${INPUT_LABELS[group]}: using ${best.src}, the sensor sending it most often`)
-      // Start the damping afresh, so the first sensor's reading does not linger in it.
-      for (const d of DAMPED_INPUTS[group] || []) damp[d].reset()
+      // Start heel's damping afresh, so the first sensor's reading does not linger in it.
+      if (group === 'attitude') damp.heel.reset()
     }
     if (quiet) {
       const text = `${INPUT_LABELS[group]} from ${best.src}: ${held} stopped sending`
@@ -286,23 +288,22 @@ module.exports = function (app) {
     return rollDeg(fresh('navigation.attitude', now)) == null ? null : damp.heel.v
   }
 
-  // Damped heading in degrees, when it is fresh at all.
-  function dampedHeading (path, now) {
-    if (fresh(path, now) == null) return undefined
-    const v = damp[path.split('.')[1]].value()
-    return v == null ? undefined : v
+  // Heading in degrees, when it is fresh.
+  function headingDeg (path, now) {
+    const v = fresh(path, now)
+    return v == null ? undefined : norm360(v * RAD_TO_DEG)
   }
 
-  // values: [{ key (an OUTPUTS key), value, by? }]. A value sent by a second trigger (TWA
-  // with heading as well as with apparent wind) is limited on its own, so the two never
-  // crowd each other out or look like a loop.
+  // values: [{ key (an OUTPUTS key), value }].
   function publish (values, timestamp, from) {
     const now = Date.now()
     const kept = values.filter(v => {
-      const id = v.by ? `${v.key}|${v.by}` : v.key
-      if (now - (publishedAt[id] ?? -Infinity) < MIN_PUBLISH_INTERVAL_MS) return false
-      publishedAt[id] = now
+      if (now - (publishedAt[v.key] ?? -Infinity) < MIN_PUBLISH_INTERVAL_MS) return false
+      publishedAt[v.key] = now
       sentAt[v.key] = now
+      const st = sentTimes[v.key] = sentTimes[v.key] || []
+      st.push(now)
+      while (now - st[0] > RATE_WINDOW_MS) st.shift()
       return true
     })
     if (kept.length < values.length) noteDrop(now, from)
@@ -346,9 +347,9 @@ module.exports = function (app) {
   // True heading in degrees, as true wind uses it: from a true-heading sensor, else the
   // compass plus variation.
   function trueHeading (now) {
-    const t = dampedHeading('navigation.headingTrue', now)
+    const t = headingDeg('navigation.headingTrue', now)
     if (t != null) return t
-    const m = dampedHeading('navigation.headingMagnetic', now)
+    const m = headingDeg('navigation.headingMagnetic', now)
     return m == null ? undefined : norm360(m + variationDeg(now))
   }
 
@@ -357,27 +358,30 @@ module.exports = function (app) {
   // - true heading, as heading + variation; not when the heading sensor sends true heading
   //   itself, so a better source (a GPS compass) is never displaced;
   // - TWA and ground wind angle: the damped TWD and ground wind direction from the last
-  //   apparent wind, less the heading now, as onWind works them out. The wind is steady
-  //   between its updates; the bow is not, so TWA follows a tack smoothly.
-  // withWind: apparent wind came in the same delta, so onWind sends TWA with this heading.
-  function onHeading (timestamp, now, from, withWind) {
+  //   apparent wind, less the heading now, damped for reading (twaS). TWD is steady, so they
+  //   change as the heading does, and go out with it, not with apparent wind. TWD keeps the
+  //   undamped heading, so a yaw still cancels in it.
+  // In a delta with apparent wind as well, onWind has already run, so this uses its TWD.
+  function onHeading (timestamp, now, from) {
     const hdg = trueHeading(now)
     if (hdg == null) return
     const values = []
     if (fresh('navigation.headingTrue', now) == null) values.push({ key: 'hdt', value: hdg / RAD_TO_DEG })
     const p = lastResult && lastResult.published
-    if (!withWind && p && p.twd != null && now - lastResultAt < STALE_MS) {
-      p.twa = wrap180(p.twd - hdg)
-      values.push({ key: 'twa', value: p.twa / RAD_TO_DEG, by: 'heading' })
+    if (p && p.twd != null && now - lastResultAt < STALE_MS) {
+      const twaS = config.damping.twaS
+      p.twa = wrap180(damp.twaOut.update(wrap180(p.twd - hdg), now, twaS))
+      values.push({ key: 'twa', value: p.twa / RAD_TO_DEG })
       if (p.groundWind && !lightAir) {
-        p.groundWind.angle = wrap180(p.groundWind.direction - hdg)
-        values.push({ key: 'gwa', value: p.groundWind.angle / RAD_TO_DEG, by: 'heading' })
+        p.groundWind.angle = wrap180(damp.gwaOut.update(wrap180(p.groundWind.direction - hdg), now, twaS))
+        values.push({ key: 'gwa', value: p.groundWind.angle / RAD_TO_DEG })
       }
     }
     if (values.length) publish(values, timestamp, from)
   }
 
-  // True wind, current and leeway go out on every apparent wind update.
+  // TWS, TWD, current and leeway go out on every apparent wind update; TWA only when there
+  // is no heading (with one, onHeading sends it).
   function onWind (timestamp, now, from) {
     const awa = fresh('environment.wind.angleApparent', now)
     const aws = fresh('environment.wind.speedApparent', now)
@@ -396,8 +400,8 @@ module.exports = function (app) {
       aws: awsKn,
       stw: stwKn,
       heel: heelDeg(now),
-      headingMagnetic: dampedHeading('navigation.headingMagnetic', now),
-      headingTrue: dampedHeading('navigation.headingTrue', now),
+      headingMagnetic: headingDeg('navigation.headingMagnetic', now),
+      headingTrue: headingDeg('navigation.headingTrue', now),
       variation: scaled(fresh('navigation.magneticVariation', now, VARIATION_MAX_AGE_MS), RAD_TO_DEG),
       sog: scaled(fresh('navigation.speedOverGround', now), MS_TO_KN),
       cog: cogTrue(now),
@@ -407,37 +411,29 @@ module.exports = function (app) {
     lastResult = { input, ...result }
     lastResultAt = now
 
-    // Damped for publishing. TWD and TWS are smoothed; TWA follows from the smoothed TWD
-    // and the heading now, so it answers the helm at once while the wind itself is steady.
+    // Damped for publishing. With a heading, TWA and ground wind angle are onHeading's: here,
+    // for the status and the Live page, the ones last sent (or TWD − heading before any).
     const o = result.out
     const dm = config.damping
     const tws = damp.tws.update(o.tws, now, dm.trueWindS)
-    let twd = null; let twa
-    if (o.twd != null) {
-      twd = damp.twd.update(o.twd, now, dm.trueWindS)
-      twa = wrap180(twd - o.heading)
-    } else {
-      twa = wrap180(damp.twa.update(o.twa, now, dm.trueWindS))
-    }
+    const twd = o.twd == null ? null : damp.twd.update(o.twd, now, dm.trueWindS)
+    const twa = wrap180(twd == null ? damp.twa.update(o.twa, now, dm.trueWindS) : damp.twaOut.value() ?? twd - o.heading)
     const cur = o.current ? damp.current.update(o.current.drift, o.current.set, now, dm.currentS) : null
-    // Ground wind is damped as true wind is, its angle following from the heading now.
     let gw = null
     if (o.groundWind) {
       const gwd = damp.gwd.update(o.groundWind.direction, now, dm.trueWindS)
-      gw = { direction: gwd, speed: damp.gws.update(o.groundWind.speed, now, dm.trueWindS), angle: wrap180(gwd - o.heading) }
+      gw = { direction: gwd, speed: damp.gws.update(o.groundWind.speed, now, dm.trueWindS), angle: wrap180(damp.gwaOut.value() ?? gwd - o.heading) }
     }
     lastResult.published = { twa, tws, twd, stw: config.corrections.stw.enabled ? damp.stw.v : null, current: cur && { drift: cur.speed, set: cur.deg }, groundWind: gw }
 
     lightAir = tws < (lightAir ? LIGHT_AIR_ON_KN : LIGHT_AIR_OFF_KN)
     lastResult.lightAir = lightAir
-    const values = [{ key: 'tws', value: tws / MS_TO_KN }, { key: 'twa', value: twa / RAD_TO_DEG }]
+    const values = [{ key: 'tws', value: tws / MS_TO_KN }]
+    if (twd == null) values.push({ key: 'twa', value: twa / RAD_TO_DEG }) // no heading to send it
     if (gw) values.push({ key: 'gws', value: gw.speed / MS_TO_KN })
     if (!lightAir) {
       if (twd != null) values.push({ key: 'twd', value: twd / RAD_TO_DEG })
-      if (gw) {
-        values.push({ key: 'gwd', value: gw.direction / RAD_TO_DEG })
-        values.push({ key: 'gwa', value: gw.angle / RAD_TO_DEG })
-      }
+      if (gw) values.push({ key: 'gwd', value: gw.direction / RAD_TO_DEG })
     }
     if (config.corrections.leeway.enabled) values.push({ key: 'leeway', value: o.leeway / RAD_TO_DEG })
     if (cur) values.push({ key: 'current', value: { drift: cur.speed / MS_TO_KN, setTrue: cur.deg / RAD_TO_DEG } })
@@ -450,7 +446,7 @@ module.exports = function (app) {
     const lacking = missing.length ? ` · no ${missing.join(' or ')}` : ''
     const mode = config.mode === 'shadow' ? 'Shadow' : 'Live'
     if (lightAir) {
-      status('lightair', `${mode} — light air, TWS ${tws.toFixed(1)} kn: TWD and ground wind direction not published until TWS reaches ${LIGHT_AIR_ON_KN} kn` + lacking)
+      status('lightair', `${mode} — light air, TWS ${tws.toFixed(1)} kn: TWD and ground wind direction and angle not published until TWS reaches ${LIGHT_AIR_ON_KN} kn` + lacking)
       return
     }
     status('running', `${mode} — TWA ${Math.abs(twa).toFixed(1)}°, TWS ${tws.toFixed(1)} kn, STW ${o.stw.toFixed(2)} kn` + lacking)
@@ -489,15 +485,15 @@ module.exports = function (app) {
 
         latest[v.path] = { value: v.value, source: src, at: now }
         if (v.path === 'navigation.attitude') { const h = rollDeg(v.value); if (h != null) damp.heel.update(h, now, config.damping.heelS) }
-        if (v.path === 'navigation.headingTrue' || v.path === 'navigation.headingMagnetic') damp[v.path.split('.')[1]].update(v.value * RAD_TO_DEG, now, config.damping.headingS)
         if (group === 'heading') heading = { timestamp: update.timestamp, from: src }
         if (group === 'apparentWind' && windPairComplete(v.path, update.timestamp)) wind = { timestamp: update.timestamp, from: src }
         if (group === 'stw') onStw(v.value, update.timestamp, now, src)
       }
     }
-    if (heading) onHeading(heading.timestamp, now, heading.from, wind != null)
+    // Wind first, so a heading in the same delta sends TWA from this wind's TWD.
     if (wind) onWind(wind.timestamp, now, wind.from)
     else checkWind(now)
+    if (heading) onHeading(heading.timestamp, now, heading.from)
   }
 
   function startWith (cfg) {
@@ -505,6 +501,7 @@ module.exports = function (app) {
     config = cfg
     publishedAt = {}
     sentAt = {}
+    sentTimes = {}
     dropsAt = []
     latest = {}
     sources = {}
@@ -597,20 +594,41 @@ module.exports = function (app) {
     }
   }
 
+  // A saved configuration as the webapp should show it: as it is, or, if it fails its
+  // checks, its parts that pass with the rest from the defaults (salvage), so a Save fixes
+  // the boat's own values instead of replacing them.
+  function usable (raw) {
+    const n = normalizeConfig(raw)
+    if (!n.errors.length) return n.config
+    const s = salvage(raw)
+    return s ? s.config : n.config
+  }
+
   // The configuration in use, or with the plugin never started, the saved one.
-  const current = () => config || normalizeConfig(loadStored().raw).config
+  const current = () => config || usable(loadStored().raw)
+
+  // What is wrong with the saved file, for the webapp: null when it is fine (or absent).
+  function storedProblem () {
+    const { raw, error } = loadStored()
+    if (error) return { errors: [`${CONFIG_FILE} could not be read (${error})`], reset: ['everything'] }
+    const { errors } = normalizeConfig(raw)
+    if (!errors.length) return null
+    const s = salvage(raw)
+    return { errors, reset: s ? s.reset : ['everything'] }
+  }
 
   // Write to a temporary file and rename, so a crash mid-write never leaves half a file.
   // Never overwrite a file from a newer release: this version would drop what it
-  // does not understand. A file that cannot be read is kept beside it as .bad.
+  // does not understand. A file that cannot be read, or fails its checks, is kept beside it
+  // as .bad: what the webapp showed of it may not be all of it.
   function saveStored (cfg) {
     const file = configFile()
     const { raw, error } = loadStored()
     const onDisk = raw.schema
-    if (error) fs.copyFileSync(file, file + '.bad')
     if (Number.isInteger(onDisk) && onDisk > CONFIG_SCHEMA) {
       throw new Error(`the saved configuration is schema ${onDisk}, from a newer version of this plugin; update the plugin rather than overwrite it`)
     }
+    if (error || (Object.keys(raw).length && normalizeConfig(raw).errors.length)) fs.copyFileSync(file, file + '.bad')
     fs.mkdirSync(path.dirname(file), { recursive: true })
     fs.writeFileSync(file + '.tmp', JSON.stringify(cfg, null, 2))
     fs.renameSync(file + '.tmp', file)
@@ -631,7 +649,7 @@ module.exports = function (app) {
     if (errors.length) {
       startError = `Configuration: ${errors.join('; ')} — fix it in the webapp`
       app.setPluginError(startError)
-      config = normalizeConfig({}).config // so the webapp can still load and repair it
+      config = usable(raw) // not run: what the webapp shows, to repair it
       return
     }
     startWith(cfg)
@@ -660,9 +678,11 @@ module.exports = function (app) {
       inUse: Object.fromEntries(Object.keys(INPUTS).map(g => [g, config ? inUse(g) : undefined]).filter(([, v]) => v)),
       // Every source of each input, for Settings: its rate, and whether it is another plugin.
       sources: Object.fromEntries(Object.keys(INPUTS).map(g => [g, sourcesOf(g).sort((a, b) => a.src < b.src ? -1 : 1)
-        .map(s => ({ source: s.src, hz: rateHz(s, now), plugin: !s.sensor }))]).filter(([, l]) => l.length)),
+        .map(s => ({ source: s.src, hz: rateHz(s.times, now), plugin: !s.sensor }))]).filter(([, l]) => l.length)),
       // What has gone out in the last few seconds, so the Live page lists exactly that.
       sent: Object.keys(sentAt).filter(k => now - sentAt[k] < STALE_MS),
+      // Each output's rate over the last RATE_WINDOW_MS, for the Live page's pipeline.
+      sentHz: Object.fromEntries(Object.entries(sentTimes).map(([k, t]) => [k, rateHz(t, now)])),
       outputPaths: config ? Object.fromEntries(Object.keys(OUTPUTS).map(k => [k, outPath(k)])) : {}
     }
   }
@@ -732,7 +752,7 @@ module.exports = function (app) {
     // for its own options, ahead of the plugin's routes, so ours would never be reached.
     router.get('/calibration', (req, res) => {
       res.set('Cache-Control', 'no-store')
-      res.json({ config: current(), defaults: DEFAULTS, behaviour: BEHAVIOUR })
+      res.json({ config: current(), defaults: DEFAULTS, behaviour: BEHAVIOUR, problem: storedProblem() })
     })
 
     router.put('/calibration', async (req, res) => {
@@ -789,6 +809,3 @@ const BEHAVIOUR = {
   staleS: STALE_MS / 1000,
   maxPublishHz: 1000 / MIN_PUBLISH_INTERVAL_MS
 }
-
-// For tooling (the README's screenshots); not part of the Signal K plugin API.
-module.exports._internals = { OUTPUTS, SHADOW_SUFFIX, BEHAVIOUR }

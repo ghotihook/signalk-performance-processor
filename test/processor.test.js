@@ -359,7 +359,8 @@ test('a schema 3 config (0.1.0 to 0.2.5) moves forward: settings and K kept, tab
   assert.strictEqual(config.schema, 7)
   assert.strictEqual(config.mode, 'shadow', 'never Replace with tables from another boat')
   assert.strictEqual(config.variation, 11.5)
-  assert.deepStrictEqual(config.damping, old.damping)
+  assert.deepStrictEqual(config.damping, { heelS: 1, trueWindS: 4, twaS: 1, stwS: 2, currentS: 20 }, 'kept, less heading damping (no longer a setting), and TWA damping from the defaults')
+  assert.ok(notices.some(n => /Heading damping \(0.5 s\)/.test(n)))
   assert.deepStrictEqual(config.sources, old.sources)
   assert.deepStrictEqual(config.corrections.leeway, { enabled: false, k: 6.2 })
   for (const t of ['stw', 'twa', 'tws']) assert.deepStrictEqual(config.corrections[t], DEFAULTS.corrections[t], t)
@@ -370,13 +371,13 @@ test('a schema 3 config (0.1.0 to 0.2.5) moves forward: settings and K kept, tab
 test('a schema 4 config (0.2.6) moves forward: only the TWA table, whose columns changed, is reset', () => {
   const stw = { ...STW6, enabled: true }
   const tws = { ...TWS6, enabled: true }
-  const old = { schema: 4, mode: 'replace', damping: { heelS: 2, headingS: 2, trueWindS: 3, stwS: 1, currentS: 10 },
+  const old = { schema: 4, mode: 'replace', damping: { heelS: 2, trueWindS: 4, stwS: 1, currentS: 10 },
     corrections: { stw, leeway: { enabled: true, k: 7 }, twa: { enabled: true, tws: [2.5, 5, 7.5, 10, 12.5, 15], upwind: [1, 1, 1, 1, 1, 1], reach: [0, 0, 0, 0, 0, 0], downwind: [0, 0, 0, 0, 0, 0] }, tws } }
   const { config, errors, notices } = normalizeConfig(old)
   assert.deepStrictEqual(errors, [])
   assert.match(notices[0], /settings kept; the TWA table reset to the defaults.*Shadow mode/)
   assert.strictEqual(config.mode, 'shadow')
-  assert.strictEqual(config.damping.headingS, 2, 'settings kept as saved')
+  assert.strictEqual(config.damping.trueWindS, 4, 'settings kept as saved')
   assert.deepStrictEqual(config.corrections.stw, { ...STW, enabled: true }, 'with the 1 kn column, working as before')
   assert.strictEqual(notices.length, 1, 'one notice: it already asks for a refit')
   assert.deepStrictEqual(config.corrections.tws, { ...TWS, enabled: true }, 'as a grid')
@@ -477,4 +478,15 @@ test('current damping: 120 s by default, up to 300 s', () => {
   assert.strictEqual(DEFAULTS.damping.currentS, 120)
   assert.deepStrictEqual(normalizeConfig({ damping: { currentS: 300 } }).errors, [])
   assert.ok(normalizeConfig({ damping: { currentS: 301 } }).errors.some(e => /Current damping: must be between 0 and 300/.test(e)))
+})
+
+test('salvage keeps each part that passes on its own, resets the rest, and leaves a newer file alone', () => {
+  const { salvage } = require('../lib/processor')
+  const r = salvage({ schema: 7, mode: 'nope', variation: 2, sources: null, corrections: { leeway: { enabled: true, k: 5 }, stw: { enabled: true, heel: [0], stw: [1], add: [[1, 2]] } } })
+  assert.deepStrictEqual(r.reset, ['output mode', 'input sources', 'Boat speed (STW)'])
+  assert.strictEqual(r.config.variation, 2)
+  assert.strictEqual(r.config.corrections.leeway.k, 5)
+  assert.strictEqual(r.config.mode, DEFAULTS.mode)
+  assert.deepStrictEqual(normalizeConfig(r.config).errors, [], 'what it gives is valid')
+  assert.strictEqual(salvage({ schema: 99 }), null)
 })

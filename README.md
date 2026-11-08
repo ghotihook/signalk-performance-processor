@@ -11,7 +11,7 @@
 1. **Boat speed table** (by heel and boat speed) corrects the paddlewheel; leeway follows from heel.
 2. **True wind** = apparent wind − the boat's motion through the water.
 3. **TWA and TWS tables** (by TWA and TWS) correct what the masthead gets wrong.
-4. **Heading fusion**: TWD is damped, where the wind is steady; TWA is sent as damped TWD − heading on *every compass update*. TWA then follows the helm at the compass's rate (often 10 Hz or more), not the wind sensor's (often 1–2 Hz), without the noise of undamped wind.
+4. **Heading fusion**: TWD is damped, where the wind is steady; TWA is sent as damped TWD − heading on *every compass update*, and only then. TWA then follows the helm at the compass's rate (often 10 Hz or more), not the wind sensor's (often 1–2 Hz), without the noise of undamped wind.
 
 It publishes TWA, TWS, TWD, boat speed, leeway, current and ground wind.
 
@@ -153,12 +153,12 @@ One rule for the TWA table (Save names any breach): corrected TWA must move with
 
 | Chain | Uses | Steps | Sends |
 |---|---|---|---|
-| Heading | compass, variation | + variation → damping | true heading (unless the sensor sends it) |
+| Heading | compass, variation | + variation (never damped) | true heading (unless the sensor sends it) |
 | Boat speed | paddlewheel, heel | STW table → damping | STW |
 | Leeway | heel, *STW* | K × heel ÷ STW² | leeway |
-| True wind | apparent wind, *STW*, heading | apparent − boat → TWA table → TWS table → + heading → damping | TWD, TWS; TWA = damped TWD − heading, also on each heading update |
+| True wind | apparent wind, *STW*, heading | apparent − boat → TWA table → TWS table → + heading → damping | TWD, TWS; TWA = damped TWD − heading, on each heading update (on apparent wind only without a heading) |
 | Current | SOG, COG, heading, *STW*, *leeway* | ground − water → damping | current |
-| Ground wind | *TWD*, *TWS*, *current* | true wind + current → damping | speed, direction, angle (angle also on each heading update) |
+| Ground wind | *TWD*, *TWS*, *current* | true wind + current → damping | speed, direction; angle on each heading update |
 
 *Italics*: made by another chain.
 
@@ -169,16 +169,16 @@ One rule for the TWA table (Save names any breach): corrected TWA must move with
 | TWA table | Degrees added to \|TWA\|, by TWA and TWS. In full from 30° to 170°, fading to none at 0° and 180°, so TWD passes smoothly through tacks and gybes |
 | TWS table | Knots added, by TWA and TWS, at the corrected TWA. Masthead units read high off the wind, so mostly negative |
 
-**Heading fusion.** Wind direction changes slowly; the boat's heading changes fast. So the plugin damps TWD, not TWA, and sends TWA = damped TWD − heading *now*, with every apparent wind *and every heading* update. A yaw shows in TWA at once, at the compass's rate, while TWD stays put; the wind sensor's noise is damped out of TWD. Heading must not be damped more than apparent wind (keep heading damping at 0 with raw wind), or a yaw swings TWD.
+**Heading fusion.** Wind direction changes slowly; the boat's heading changes fast. So the plugin damps TWD, not TWA, and sends TWA = damped TWD − heading *now*, with every heading update. A new apparent wind moves TWD only a little, so it waits for the next heading update; without a heading, TWA goes out with apparent wind. A yaw shows in TWA at once, at the compass's rate, while TWD stays put; the wind sensor's noise is damped out of TWD. Heading is never damped, so apparent wind must be raw too: a lag in either swings TWD with every yaw.
 
-**Damping** (seconds, 0 = none): heading 0, heel 2, true wind 3 (TWD, TWS, ground wind), STW 1, current 120 (it is a trend; up to 300).
+**Damping** (seconds, 0 = none): heel 2, true wind 3 (TWD, TWS, ground wind), TWA 1 (the TWA and ground wind angle sent with each heading update, to read; TWD is unaffected), STW 1, current 120 (it is a trend; up to 300).
 
 **Built in:**
 
 - **Light air**: below 1.5 kn TWS, TWD and ground wind direction are held back until 2 kn; TWA and TWS still go out.
 - **Stale or implausible input** (older than 3 s; wind over 120 kn, STW over 60 kn, heel beyond 90°) is not used; the status says why.
 - **One sensor per input**, never another plugin's output unless chosen in Settings. Auto picks the busiest sensor and moves only if it stops.
-- **No path faster than 20 Hz**, so a loop with another plugin shows up in the status.
+- **No path faster than 50 Hz**, so a loop with another plugin shows up in the status.
 
 ## The webapp
 
@@ -216,7 +216,7 @@ Set in the webapp, saved to `~/.signalk/plugin-config-data/signalk-performance-p
   "schema": 7,
   "mode": "shadow",
   "variation": 12.8,
-  "damping": { "heelS": 2, "headingS": 0, "trueWindS": 3, "stwS": 1, "currentS": 120 },
+  "damping": { "heelS": 2, "trueWindS": 3, "twaS": 1, "stwS": 1, "currentS": 120 },
   "sources": { "apparentWind": "", "stw": "", "heading": "", "attitude": "", "gps": "", "variation": "" },
   "corrections": {
     "stw": { "enabled": true, "heel": [-30, -25, …, 30], "stw": [1, 2, …, 15], "add": [[…], …] },
@@ -227,14 +227,14 @@ Set in the webapp, saved to `~/.signalk/plugin-config-data/signalk-performance-p
 }
 ```
 
-Blank cells are `null`. **Upgrading**: files from 0.2.7–0.2.17 keep every table exactly (converted to grids); older files keep settings and K, reset their tables and go to Shadow mode; the status says so until you Save. A file from a newer release, or one that can't be read, is refused and never overwritten (a bad one is kept as `config.json.bad`). **Going back** to 0.2.x after saving in 0.3 needs a copy of your old `config.json`.
+Blank cells are `null`. **Upgrading**: files from 0.2.7–0.2.17 keep every table exactly (converted to grids); older files keep settings and K, reset their tables and go to Shadow mode; the status says so until you Save. A file from a newer release is refused and never overwritten. One that can't be read, or fails its checks, stops the plugin; the webapp shows its good parts and says what was reset, and saving keeps the old file as `config.json.bad`. **Going back** to 0.2.x after saving in 0.3 needs a copy of your old `config.json`.
 
 **The defaults are the author's boat.** Refit for yours.
 
 ## Limitations
 
 - **Instrument displays** show the instrument's numbers unless you forward these to NMEA 2000 (e.g. `signalk-to-nmea2000`); then choose your own sensors as sources in Settings, so the forwarded values aren't read back.
-- **Damped apparent wind** needs heading damped to the same lag.
+- **Damped apparent wind** can't be used: heading is never damped, so wind damped at the instrument swings TWD with every yaw. Turn it off.
 - **Current is a trend**: 1% of boat speed or 1° of heading is 0.1 kn, so it is damped over 2 minutes by default (up to 5).
 - **Absolute TWS and TWD** (masthead offset, AWS scale) can't be fitted from tacks: set them in the instrument. The TWS table corrects off the wind *relative to upwind*.
 
@@ -252,7 +252,7 @@ The status line (admin UI and webapp) says what the plugin is doing.
 | Not publishing — … not plausible | A sensor fault |
 | … light air … | TWS under 1.5 kn: TWD held back |
 | … no heel / heading / SOG/COG | Running without it |
-| Rate limited … | Over 20 Hz, usually a loop with another plugin |
+| Rate limited … | Over 50 Hz, usually a loop with another plugin |
 | Configuration: … | The saved config is invalid or unreadable; not running. Fix it in the webapp |
 | Upgraded from an earlier release … | See [Configuration](#configuration). Save to clear |
 

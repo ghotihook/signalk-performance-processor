@@ -21,6 +21,7 @@
     <div id="status" class="muted status"></div>
     <div id="conn" class="warn" hidden></div>
     <div id="cfgError" class="warn" hidden></div>
+    <div id="problem" class="warn" hidden></div>
   </header>
 
   <div id="saveBar" class="save-bar" hidden>
@@ -80,14 +81,15 @@
       </div>
       <div class="panel">
         <h2>Damping</h2>
-        <p class="muted sub">Seconds; 0 is none. Like the H5000's damping: each value follows its input with this time constant, reaching about two thirds of a change after that many seconds. Heading and apparent wind need the same lag, or a yaw swings TWD: with raw, undamped apparent wind, leave heading undamped (0), and check on the Live page that TWD stays put through a yaw.</p>
+        <p class="muted sub">Seconds; 0 is none. Like the H5000's damping: each value follows its input with this time constant, reaching about two thirds of a change after that many seconds. Heading is never damped: it needs the same lag as apparent wind, or a yaw swings TWD, so apparent wind must arrive undamped (turn off wind damping at the instrument). Check on the Live page that TWD stays put through a yaw. TWA (and the ground wind angle) is TWD less the heading, sent with each heading update; its damping only steadies the number you read, and does not touch TWD. 0 sends every yaw as it happens, as an autopilot may want.</p>
         <div class="fields" id="damping">
           <label class="field">True wind (TWD, TWS)<input id="damp-trueWindS" type="number" step="0.5" min="0" max="30" data-path="damping.trueWindS"></label>
-          <label class="field">Heading<input id="damp-headingS" type="number" step="0.5" min="0" max="30" data-path="damping.headingS"></label>
+          <label class="field">TWA (sent with heading)<input id="damp-twaS" type="number" step="0.5" min="0" max="30" data-path="damping.twaS"></label>
           <label class="field">Heel<input id="damp-heelS" type="number" step="0.5" min="0" max="30" data-path="damping.heelS"></label>
           <label class="field">STW<input id="damp-stwS" type="number" step="0.5" min="0" max="30" data-path="damping.stwS"></label>
           <label class="field">Current<input id="damp-currentS" type="number" step="1" min="0" max="300" data-path="damping.currentS"></label>
         </div>
+        <div><button type="button" class="ghost" data-reset="damping">Reset damping to defaults</button> <span id="dampingDefaults" class="muted sub"></span></div>
       </div>
       <div class="panel">
         <h2>Fallback magnetic variation</h2>

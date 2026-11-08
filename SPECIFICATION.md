@@ -69,7 +69,7 @@ or not finite (any path except attitude), is ignored.
   2. On the first sensor message at least `LOCK_WINDOW = 2 s` later, the sensor with the
      most messages in the last `RATE_WINDOW = 10 s` is chosen (a tie keeps the one seen first).
   3. That choice holds while the sensor sends. If it changed, the input's damping restarts
-     (heel for attitude; both heading smoothers for heading).
+     (heel, for attitude; heading is not damped).
   4. If the sensor in use has been silent for the input's freshness limit (2.3) when another
      sensor's message arrives, the sensor with the most messages in `RATE_WINDOW`, of those
      heard within that limit, is chosen at once. Damping restarts as in 3, the server log
@@ -120,8 +120,7 @@ H = H_true                  if the heading source sends navigation.headingTrue (
   = norm360(H_mag + var)    otherwise
 ```
 
-`H_true` and `H_mag` are the damped values (§6). Heading damping is applied before
-variation; variation is constant over the damping time, so the order does not matter.
+`H_true` and `H_mag` are the latest values, never damped (§6.2).
 
 ### 3.3 COG (true)
 
@@ -342,18 +341,19 @@ y ← y + α · (x − y)
 
 | Quantity | τ (setting, default) | Updated on |
 |---|---|---|
-| Heading (magnetic and true, separately) | `headingS`, 0 s | each heading message |
 | Heel | `heelS`, 2 s | each attitude message (plausible) |
 | Published STW | `stwS`, 1 s | each STW message |
 | TWD, TWS | `trueWindS`, 3 s | each apparent wind message |
+| Published TWA and ground wind angle, with a heading (§6.3) | `twaS`, 1 s | each heading message |
 | TWA, only when there is no heading | `trueWindS` | each apparent wind message |
 | Ground wind direction and speed | `trueWindS` | each apparent wind message |
 | Current (as a vector) | `currentS`, 120 s | each apparent wind message |
 
-Limits (load and save): heel, heading, true wind and STW 0–30 s; current 0–300 s.
+Limits (load and save): heel, true wind, TWA and STW 0–30 s; current 0–300 s.
 
-**Heading must have the same lag as apparent wind**, or every yaw swings TWD: with raw,
-undamped apparent wind, heading damping is 0.
+**Heading is never damped**, and is not a setting. It must have the same lag as apparent
+wind, or every yaw swings TWD, and apparent wind must arrive raw (README). A saved
+`damping.headingS` (before 0.3.2) is dropped on load, with a notice if it was above 0.
 
 ### 6.3 Published TWA and ground wind angle
 
@@ -361,13 +361,24 @@ TWA is not damped on its own. It is the damped TWD less the heading **now**, so 
 the helm at once while the wind itself is steady:
 
 ```
-TWA_pub = wrap180(TWD_d − H)       on each apparent wind message, and on each heading message
-GWA_pub = wrap180(GWD_d − H)       likewise
+TWA_pub = wrap180(D_twaS(TWD_d − H))       on each heading message only
+GWA_pub = wrap180(D_twaS(GWD_d − H))       likewise
 ```
 
-On a heading message these use the last wind result's damped TWD and GWD, if that result is
-under 3 s old and had a heading. When heading and wind arrive in one delta, only the wind's
-TWA is sent. Without a heading, `TWA_pub` is the damped TWA.
+`D_twaS` is the filter of §6.1 on the unit circle with τ = `twaS` (default 1 s). At a 10 Hz
+compass every yaw is otherwise a blur of numbers; this steadies what is read, at the cost of
+TWA reaching 63% of a turn after τ. It is applied only to what is published: TWD is worked
+out with the undamped heading (§3.2), so a yaw still cancels in it. 0 sends every yaw as it
+happens. The status and the Live page show the TWA last published.
+
+TWD_d and GWD_d are damped and change slowly, so these change only as fast as the heading
+does: they are sent with each heading message and **not** with apparent wind. They use the
+last wind result's damped TWD and GWD, if that result is under 3 s old and had a heading.
+When heading and wind arrive in one delta, the wind is worked out first, so the heading's
+TWA uses its TWD.
+
+**Without a heading** there is no TWD: `TWA_pub` is the damped TWA, sent with each apparent
+wind message, and there is no ground wind angle.
 
 ---
 
@@ -379,7 +390,7 @@ TWA is sent. Without a heading, `TWA_pub` is the damped TWA.
 |---|---|
 | STW (STW table on) | each STW message: `STW_c` from the raw STW and the damped heel, then damped |
 | True heading | each heading message, as `H`, unless the heading sensor sends true heading itself |
-| TWA, ground wind angle | each heading message (§6.3) and each apparent wind message |
+| TWA, ground wind angle | each heading message (§6.3); TWA with each apparent wind message only when there is no heading |
 | TWS, TWD, leeway (on), current, ground wind speed and direction | each apparent wind message |
 
 Shadow mode publishes on each standard path with `Corrected` appended; Replace mode on the
@@ -400,8 +411,7 @@ and ground wind speed always are**: TWA is what the crew sails by.
 
 ### 7.3 Rate limit
 
-No output is sent more often than 20 Hz (50 ms apart), counted per output and per trigger
-(TWA sent on heading and TWA sent on wind are limited separately). A dropped update is a
+No output is sent more often than 50 Hz (20 ms apart), counted per output. A dropped update is a
 sign of a feedback loop: the status flags it from 5 drops in 10 s.
 
 ### 7.4 Stopped wind
@@ -496,8 +506,13 @@ and the mode goes to Shadow.
 ### 8.3 Loading and saving
 
 A saved file that cannot be read (not JSON, or not a JSON object) is not the defaults: the
-plugin does not run, and says why. Saving over such a file first copies it to
-`config.json.bad`.
+plugin does not run, and says why. Nor does it run on a file that fails its checks (§8.1).
+For the webapp, such a file is taken apart (`lib/processor.js` `salvage`): the mode, the
+fallback variation, the sources, the damping and each table are checked on their own and
+kept if they pass; the rest come from the defaults. `GET /calibration` shows that, with
+`problem: { errors, reset }` naming what failed and what was reset, so a Save fixes the
+boat's own values instead of replacing them. Saving over a file that cannot be read or fails
+its checks first copies it to `config.json.bad`.
 
 `PUT /calibration`: a body with `schema` is a whole configuration, laid over the defaults; a
 body without it is laid over the configuration in use. Objects merge, arrays replace. A body
@@ -542,7 +557,7 @@ cell at a time). Neighbouring cells are tied together; a cell with too little da
 | Status note after Auto changes sensor | 60 s | `index.js` `SWITCH_NOTE_MS` |
 | Rate window (Auto, Settings) | 10 s | `index.js` `RATE_WINDOW_MS` |
 | Max plausible AWS / STW / heel | 120 kn / 60 kn / 90° | `index.js` |
-| Rate limit | 50 ms (20 Hz) | `index.js` `MIN_PUBLISH_INTERVAL_MS` |
+| Rate limit | 20 ms (50 Hz) | `index.js` `MIN_PUBLISH_INTERVAL_MS` |
 | Loop flag | 5 drops in 10 s | `index.js` `RATE_FLAG_MIN`, `RATE_NOTE_MS` |
 | Light air off / on | 1.5 / 2.0 kn | `index.js` `LIGHT_AIR_OFF_KN`, `LIGHT_AIR_ON_KN` |
 | Status refresh | 1 s | `index.js` `STATUS_INTERVAL_MS` |

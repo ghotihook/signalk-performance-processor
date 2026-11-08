@@ -123,6 +123,11 @@ td.mono { font-variant-numeric: tabular-nums; }
 .fchip { flex: none; box-sizing: border-box; width: 10em; height: 5.2em; overflow: hidden; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); font-variant-numeric: tabular-nums; }
 .fchip .l { font-size: 0.8em; font-weight: 600; color: var(--muted); text-transform: uppercase; }
 .fchip .l, .fchip .v { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The rate at the right of a box's label, and of each line sent */
+.fchip .l, .obox .oline { display: flex; justify-content: space-between; gap: 6px; }
+.fchip .l > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.obox .oline { align-items: baseline; } /* a long value wraps, its rate stays on the first line */
+.hz { flex: none; font-size: 0.9em; font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; text-transform: none; }
 .fchip .v { font-weight: 600; }
 .fchip .n { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .fchip .n, .obox .n { font-size: 0.8em; color: var(--muted); font-weight: 400; }
