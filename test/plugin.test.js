@@ -1143,3 +1143,16 @@ test('nothing that is not a finite number is ever published, and nothing throws'
   assert.ok(!b.sent.some(p => /wind\.(speedTrue|directionTrue)/.test(p)))
   assert.match(b.status, /true wind could not be worked out/)
 })
+
+test('published STW ramped up from 0, heeled and damped: never negative, and rising', () => {
+  const h = harness({ mode: 'replace', corrections: { stw: { heel: [-20, 0, 20], stw: [1, 5], add: [[-0.9, -2], [-0.5, 0], [-0.9, -2]] } } })
+  h.feed([{ path: 'navigation.attitude', value: { roll: -25 * RAD } }])
+  let last = -Infinity
+  for (let i = 0; i <= 150; i++) {
+    const out = paths(h.feed([{ path: 'navigation.speedThroughWater', value: (i / 10) / MS_TO_KN }, { path: 'navigation.attitude', value: { roll: (i % 2 ? -25 : -15) * RAD } }]))
+    const stw = out['navigation.speedThroughWater']
+    assert.ok(stw >= 0, `STW ${i / 10} kn: published ${stw}`)
+    assert.ok(stw >= last, `rising: ${last} then ${stw}`)
+    last = stw
+  }
+})

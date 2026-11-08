@@ -13,6 +13,7 @@
     stw: (b, t) => [
       `Below the first column (${t.stw[0]} kn) the correction runs in a straight line to nothing at 0 kn, so a stopped boat is never given speed. A column at 1 kn catches a paddlewheel's stall, which a straight line from 2.5 kn (the H5000's first column) misses. Beyond the last column (${last(t.stw)} kn) that column is held.`,
       `Rows are heel each side (− = port side down, + = starboard side down), linear between rows; more heel than the last row (${t.heel[0]}° or ${last(t.heel)}°) uses the last row.` + (mirrored(t.heel) ? ' Edit symmetrically copies each value to the same heel on the other side.' : ''),
+      'Corrected STW must rise as STW rises, and is never below 0: between columns, a change smaller than the columns are apart (from 0 kn, the first column above minus its speed). Each value within ±5 kn. Save says where a table breaks this.',
       'Most paddlewheels read low when slow, so positive values at low speed are normal.'
     ],
     leeway: b => [
