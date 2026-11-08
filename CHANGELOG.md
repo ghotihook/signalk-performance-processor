@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.2 — 2026-11-08
 
 - **TWA follows the heading.** TWA and ground wind angle (damped TWD or ground wind direction less the heading now) go out with each heading update only, not with apparent wind; without a heading, TWA goes out with apparent wind as before. A slow compass now sets TWA's rate.
 - **TWA damping, 1 s by default** (`damping.twaS`): a 10 Hz compass made TWA unreadable. Only the published TWA and ground wind angle are damped; TWD keeps the undamped heading. 0 for an autopilot.
