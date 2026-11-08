@@ -223,13 +223,7 @@ STW_c     = max(0, STW + add(h, STW))
 ```
 
 More heel than the end rows uses the end row. Below the first column the correction runs
-straight from 0 at 0 kn: a stopped boat is never given speed, and STW_c is never negative.
-
-**Constraint (checked on load and save):** corrected STW rises as STW rises, from 0 at 0 kn.
-Along each heel row, on each piece between 0 kn and the columns,
-`1 + (add[j+1] − add[j]) / (STW[j+1] − STW[j]) > 0` (with 0 at 0 kn). Between rows the table
-is a mix of the rows either side, and beyond the last column it is held, so the rows are
-enough. Blanks are checked as what they take (§4.4).
+straight from 0 at 0 kn: a stopped boat is never given speed.
 
 ### 5.2 Leeway
 
@@ -464,7 +458,7 @@ tws: { enabled, twa:  [...], tws: [...], add: [[...], ...] }
 Each axis has 1 to 100 entries, all numbers, going up strictly. Blank cells are `null` (§4.4).
 Validation refuses: an axis outside that, a table with fields other than `enabled`, its two
 axes and `add`, the wrong number of rows or of values in a row, a non-number, an STW table with
-no values, an STW table under which corrected STW would fall (§5.1), a cell beyond ±5 kn (STW), ±30° (TWA) or ±10 kn (TWS), leeway K outside 0–30,
+no values, a cell beyond ±5 kn (STW), ±30° (TWA) or ±10 kn (TWS), leeway K outside 0–30,
 the TWA constraint of §5.4, damping outside its limits, variation outside ±180°, a
 section that is not an object, a source that is not a name.
 

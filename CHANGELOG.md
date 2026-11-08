@@ -11,7 +11,6 @@
 - **Never bad data:**
   - A clock set back (NTP, GPS time fix) stopped every output and was flagged as a loop; time now never goes back.
   - SOG over 60 kn, angles beyond a full turn (degrees on a radian path) and variation beyond ±180° are not used.
-  - Corrected STW rises with STW, from 0 at 0 kn, and is never negative: an STW table that would make it fall as the boat speeds up is refused, as the TWA table's rule does for TWA.
   - Table cells are limited to ±5 kn (STW), ±30° (TWA), ±10 kn (TWS), and K to 0–30; a config beyond them stops with the error, its other parts kept (see the fix below).
   - A wind dropout of a few seconds no longer restarts the 120 s current average.
   - Ground wind direction and angle are held back when ground wind speed is light, as TWD is on TWS.

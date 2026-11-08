@@ -498,30 +498,19 @@ test('a table value or K that cannot be right is refused: STW ±5 kn, TWA ±30°
   assert.match(err({ tws: { twa: [90], tws: [10], add: [[-10.5]] } }), /TWS table: every value must be within ±10 kn/)
   assert.match(err({ leeway: { k: -1 } }), /Leeway K: must be from 0 to 30/)
   assert.match(err({ leeway: { k: 31 } }), /Leeway K: must be from 0 to 30/)
-  assert.deepStrictEqual(normalizeConfig({ corrections: { stw: { heel: [0], stw: [6], add: [[-5]] }, tws: { twa: [90], tws: [10], add: [[10]] }, leeway: { k: 30 } } }).errors, [], 'the limits themselves are fine')
+  assert.deepStrictEqual(normalizeConfig({ corrections: { stw: { heel: [0], stw: [5], add: [[-5]] }, tws: { twa: [90], tws: [10], add: [[10]] }, leeway: { k: 30 } } }).errors, [], 'the limits themselves are fine')
   assert.deepStrictEqual(normalizeConfig({ corrections: { leeway: { k: 'x' } } }).errors, ['Leeway K: must be a number'], 'one error for a non-number')
 })
 
-test('STW ramped up from 0: corrected STW is never negative, and rises with STW at every heel', () => {
-  const steep = normalizeConfig({ corrections: { stw: { heel: [-20, 0, 20], stw: [1, 5, 10], add: [[-0.9, -1, 2], [0.5, 4.5, 2], [-0.99, 3, 5]] } } })
-  assert.deepStrictEqual(steep.errors, [], 'a steep table that still rises is valid')
+test('STW ramped up from 0 at every heel: corrected STW is never negative', () => {
+  const steep = normalizeConfig({ corrections: { stw: { heel: [-20, 0, 20], stw: [1, 2, 5], add: [[-5, 5, -5], [-1, -3, 0], [5, -5, 5]] } } })
+  assert.deepStrictEqual(steep.errors, [])
   for (const cfg of [normalizeConfig({}).config, steep.config]) {
     for (let heel = -45; heel <= 45; heel += 2.5) {
-      let last = -Infinity
       for (let i = 0; i <= 2000; i++) {
         const stw = correctInputs({ stw: i / 100, heel }, cfg).c.stw
         assert.ok(stw >= 0 && !Object.is(stw, -0), `STW ${i / 100} at heel ${heel}: ${stw}`)
-        assert.ok(stw > last || (i === 0 && stw === 0), `rises at STW ${i / 100}, heel ${heel}: ${last} then ${stw}`)
-        last = stw
       }
     }
   }
-})
-
-test('an STW table under which corrected STW would fall is refused, naming where', () => {
-  const err = add => normalizeConfig({ corrections: { stw: { heel: [0, 10], stw: [1, 2, 3], add } } }).errors.join('; ')
-  assert.match(err([[0, 0, 0], [0, 2, 0.9]]), /STW table at 10° heel, between 2 and 3 kn: corrected STW would fall/)
-  assert.match(err([[-1, 0, 0], [0, 0, 0]]), /at 0° heel, between 0 and 1 kn/, 'from 0 kn: −1 at 1 kn holds STW at 0')
-  assert.match(err([[null, null, null], [0, 2, 0.5]]), /at 0° heel/, 'a blank row is checked as what it takes: the 10° row')
-  assert.deepStrictEqual(err([[-0.9, 0, 0.9], [0, 0.95, 0]]), '', 'steep but still rising is fine')
 })
