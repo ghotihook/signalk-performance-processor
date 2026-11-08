@@ -55,10 +55,10 @@ function harness (stored = null, options = {}) {
     onDelta({ updates: [update] })
     return published.slice(before)
   }
-  async function call (method, path, body) {
+  async function call (method, path, body, query) {
     let status = 200; let json
     const res = { set () {}, status (s) { status = s; return res }, json (b) { json = b } }
-    await routes[`${method} ${path}`]({ body }, res)
+    await routes[`${method} ${path}`]({ body, query }, res)
     return { status, json }
   }
   const saved = () => { try { return JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8')) } catch (e) { return null } }
@@ -1150,4 +1150,80 @@ test('published STW ramped up from 0, heeled and damped: never negative', () => 
     const stw = paths(h.feed([{ path: 'navigation.speedThroughWater', value: (i / 10) / MS_TO_KN }, { path: 'navigation.attitude', value: { roll: (i % 2 ? -25 : -15) * RAD } }]))['navigation.speedThroughWater']
     assert.ok(stw >= 0, `STW ${i / 10} kn: published ${stw}`)
   }
+})
+
+// A history provider holding 40 minutes of beating, a tack every 5 minutes, ending 3 minutes
+// ago; every path answers whatever source is asked for.
+function beatingHistory (endMs) {
+  const start = endMs - 40 * 60000
+  const at = ms => {
+    if (ms < start || ms >= endMs) return null
+    const i = Math.floor((ms - start) / 1000)
+    const twa = Math.floor(i / 300) % 2 ? -40 : 40
+    const x = 12 * Math.cos(twa * RAD) + 6; const y = 12 * Math.sin(twa * RAD)
+    return {
+      'environment.wind.angleApparent': Math.atan2(y, x),
+      'environment.wind.speedApparent': Math.hypot(x, y) / MS_TO_KN,
+      'navigation.speedThroughWaterRaw': 6 / MS_TO_KN,
+      'navigation.speedThroughWater': 6 / MS_TO_KN,
+      'navigation.headingMagnetic': ((188 - twa) % 360 + 360) % 360 * RAD,
+      'navigation.magneticVariation': 12 * RAD,
+      'navigation.attitude.roll': -Math.sign(twa) * 15 * RAD
+    }
+  }
+  return {
+    async getValues (q) {
+      const from = q.from.epochMilliseconds; const to = q.to.epochMilliseconds
+      const data = []
+      for (let t = from; t < to; t += q.resolution * 1000) {
+        data.push([new Date(t).toISOString(), ...q.pathSpecs.map(s => {
+          const v = []
+          for (let u = t; u < t + q.resolution * 1000; u += 1000) { const r = at(u); if (r && r[s.path] != null) v.push(r[s.path]) }
+          return v.length ? (s.aggregate === 'max' ? Math.max(...v) : v[0]) : null
+        })])
+      }
+      return { data }
+    }
+  }
+}
+
+test('analysis: every few minutes, findings from history, written once each, and summarised', async () => {
+  const h = harness()
+  h.app.getHistoryApi = async () => beatingHistory(clock - 3 * 60000)
+  for (let i = 0; i < 30; i++) h.feed([...wind, ...boat]) // so each input has a sensor in use
+  let r = await h.call('PUT', '/analysis/run')
+  assert.strictEqual(r.status, 200)
+  assert.strictEqual(r.json.lastError, '')
+  assert.ok(r.json.lastRows > 2000, `rows ${r.json.lastRows}`)
+  assert.ok(r.json.lastFound > 10)
+  const day = new Date(clock).toISOString().slice(0, 10)
+  const first = (await h.call('GET', '/analysis/findings', undefined, {})).json
+  assert.ok(first.filter(f => f.type === 'mnv' && f.kind === 'tack').length >= 6)
+  assert.ok(first.filter(f => f.type === 'win').every(f => f.cls === 'up' || !f.stable))
+
+  // Later, nothing new: what was still open closes, nothing is written twice.
+  clock += 10 * 60000
+  r = await h.call('PUT', '/analysis/run')
+  assert.strictEqual(r.json.lastError, '')
+  const all = (await h.call('GET', '/analysis/findings', undefined, {})).json
+  const keys = all.map(f => `${f.type} ${f.t}`)
+  assert.strictEqual(new Set(keys).size, keys.length, 'no finding twice')
+  assert.ok(all.length >= first.length)
+
+  // A restart resumes from the saved state, again without repeats.
+  h.plugin.stop(); h.plugin.start({})
+  for (let i = 0; i < 30; i++) h.feed([...wind, ...boat])
+  r = await h.call('PUT', '/analysis/run')
+  const again = (await h.call('GET', '/analysis/findings', undefined, {})).json
+  assert.strictEqual(again.length, all.length)
+
+  const tacks = (await h.call('GET', '/analysis/findings', undefined, { type: 'mnv', kind: 'tack' })).json
+  assert.ok(tacks.length >= 6 && tacks.every(f => f.kind === 'tack'))
+  const s = (await h.call('GET', '/analysis/summary', undefined, { since: day })).json
+  assert.ok(s.counts['mnv tack compliant stable'] >= 6, JSON.stringify(s.counts))
+  assert.strictEqual((await h.call('GET', '/analysis/summary', undefined, { since: 'yesterday' })).status, 400)
+
+  r = await h.call('PUT', '/analysis', { enabled: false })
+  assert.strictEqual(r.json.enabled, false)
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(h.dir, 'analysis', 'state.json'), 'utf8')).enabled, false)
 })

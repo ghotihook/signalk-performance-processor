@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased (dev)
+
+- **Analysis (beta, SPECIFICATION.md §12).** Every 5 minutes the plugin reads the latest sailing from the History API and writes findings to `analysis/YYYY-MM-DD.jsonl` in its data directory: each 2-minute window classed up, between, reach or down; each tack, gybe and rounding with its TWD step; each leg. Each is marked compliant (the inputs were there) and stable (steady enough to average). From a tack or gybe it says how many degrees the TWA table still needs; off-wind windows against nearby beats say the same for TWS. Not the data, only the findings, so over days they build up histograms on the tables' cells. `GET /analysis/summary`, `/analysis/findings`, `/analysis/status`; `PUT /analysis {enabled}`, `/analysis/run`. Nothing changes a table.
+
 ## 0.3.2 — 2026-11-08
 
 - **TWA follows the heading.** TWA and ground wind angle (damped TWD or ground wind direction less the heading now) go out with each heading update only, not with apparent wind; without a heading, TWA goes out with apparent wind as before. A slow compass now sets TWA's rate.

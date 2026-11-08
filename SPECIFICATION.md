@@ -20,6 +20,7 @@ Written for 0.3.2 (config schema 7) and boatcal after 1.4.0 (fine grids, §9).
 | 9 Calibration fits | boatcal `boatcal/fit.py`, `boatcal/events.py`, `boatcal/decompose.py`, `boatcal/settings.py`; for a user's own data, [AGENTS.md](AGENTS.md) "Calibrating a boat" |
 | 10 Constants | all of the above |
 | 11 Learning (in progress) | `lib/history.js`, `lib/learn.js`, `index.js` (`runLearn`, `startLearn`) |
+| 12 Analysis (beta) | `lib/analysis.js`, `index.js` (`analyseOnce`, `startAnalysis`) |
 
 ---
 
@@ -736,3 +737,92 @@ paddlewheel (NMEA 2000, PGN 128259) is not listed, so it never wins and is never
 | Leg rules | 10 s split, 90 s join, 3 min minimum |
 | `s5` bucket | 5 s |
 | History: probe, padding, request, aggregate, carry forward | 60 s `max`, 4 min, ≤ 1 h at 1 s, `first`, 3 s |
+
+---
+
+## 12 Analysis (beta)
+
+Every few minutes the plugin reads the latest sailing from the History API, as §11.2, and
+writes **findings**: what each stretch of sailing was and what correction it points to, never
+the data itself. Over days the findings add up to histograms on the tables' own cells, to
+feed back into the tables. Nothing here changes a table.
+
+### 12.1 Cadence
+
+Every `ANALYSIS_EVERY` = 5 minutes (the first 30 s after start), the history from where the
+last run read up to `ANALYSIS_LAG` = 1 minute ago (providers write in batches) is read as
+1 Hz rows (§11.2) and fed, a second at a time, to one long-lived analyser: windows,
+manoeuvres and legs carry across runs, so a run boundary changes nothing. When the last row
+is more than 7 minutes old (the boat stopped), what is open is closed.
+
+After a restart (or a Save, which restarts the pipeline) it resumes from the saved state
+(`analysis/state.json`): from the earlier of the open window and the learner's next minute,
+fed from 7 minutes (§11.4's buffer) before, with anything found before that point dropped, so
+nothing is written twice. A leg open at the restart is lost. The first run ever looks back
+1 hour; after the plugin was off, at most 24 hours.
+
+### 12.2 Findings
+
+Appended to `analysis/YYYY-MM-DD.jsonl` (local day of the finding) in the plugin's data
+directory, one JSON object per line. Each carries `v` (layout, 1), `tables` (a hash of the
+corrections in use when it was made), `t` (epoch s), `compliant`, `why`, `stable`,
+`unsteady`.
+
+**Compliant** (for now, the inputs only): apparent wind, STW, heading and heel each present in
+at least 80% of the window's seconds, and at least 80% of its seconds good (§11.5: all present
+and STW over 1 kn). `why` lists what failed (`no attitude`, `STW ≤ 1 kn`, …). Motoring, a
+fouled paddlewheel and the like are not yet tested.
+
+**Stable**: on good seconds, standard deviation (circular for angles) of heading ≤ 6°, raw TWA
+≤ 6°, corrected TWD ≤ 8°, STW ≤ 0.5 kn, and TWS sd / mean ≤ 0.2. `unsteady` lists what failed.
+
+| Type | When | Holds |
+|---|---|---|
+| `win` | each 2-minute window (on the clock) with any data | `cls`: `up` (median \|TWA_r\| < 70°), `between` (70°–80°), `reach` (80°–120°), `down` (> 120°), or none; `side`; medians of the inputs, of raw TWA and TWS, and of the plugin's own corrected STW, TWA, TWS, TWD, leeway; current |
+| `mnv` | each tack, gybe or rounding (`comeUp`, `comeDown`) of §11.5 | its side before (`from`, + starboard); TWA, TWS and TWD either side, corrected and raw; `step` = TWD after − before, corrected and raw (`stepRaw`) |
+| `leg` | each upwind or off-wind leg of §11.5 | kind, start, end, good seconds |
+
+Corrected means through `process` (§5) with the tables in use, on the raw inputs.
+A manoeuvre is compliant by construction (§11.5 keeps only those with good data either side);
+it is stable when TWD's sd is ≤ 8° in each window and TWS changes by no more than 20% across it.
+
+**TWA correction from a tack or gybe.** Either side is at the same |TWA|; if |TWA| reads `e`
+too wide, TWD reads `TWD + s·e` on side `s` (+1 starboard), so the step is `−2·s·e` and the
+table needs `twaAdd = s · step / 2` more at the mean corrected |TWA| and TWS (`absTwa`, `tws`).
+`twaAddRaw` is the same from raw true wind: the whole table cell, not the residual. A rounding
+records its step only: two cells share it.
+
+### 12.3 Summary
+
+`GET /analysis/summary?since=&until=` (local days) gives counts by type, class or kind,
+compliant and stable, and three grids on the tables' own axes (rows |TWA|, columns TWS; each
+value to the nearest row and column), each cell `{ n, median, p25, p75, table }` (`table`: the
+cell's value now). Only compliant, stable findings are used.
+
+| Grid | From | Findings |
+|---|---|---|
+| `twa` | `twaAdd` of tacks and gybes: degrees still to add | made with the tables in use (or `&tables=`) |
+| `twaRaw` | `twaAddRaw` at raw \|TWA\| and TWS: the whole cell | all |
+| `tws` | each `reach` or `down` window: mean corrected TWS of the `up` windows within 20 minutes (with the same tables) − its TWS | made with the tables in use |
+
+The `tws` grid assumes the beats measure TWS right (boatcal keeps rows under 80° at 0) and
+the wind did not change in 20 minutes; it is a guide until enough days build up.
+
+### 12.4 Routes
+
+| Route | |
+|---|---|
+| `GET /analysis/status` | enabled, running, last run, rows read, findings written, error |
+| `PUT /analysis` `{ enabled }` | pause or resume; kept across restarts |
+| `PUT /analysis/run` | run now |
+| `GET /analysis/findings?since=&until=&type=&kind=` | the findings as written |
+| `GET /analysis/summary?since=&until=&tables=` | 12.3 |
+
+| Constant | Value |
+|---|---|
+| Run every, first run after start, lag | 5 min, 30 s, 1 min |
+| Look back: first run, after being off | 1 h, 24 h |
+| Window | 2 min, on the clock |
+| Compliant | each required input ≥ 80%, good seconds ≥ 80% |
+| Stable | sd heading 6°, raw TWA 6°, TWD 8°, STW 0.5 kn; TWS sd/mean 0.2 |
+| TWS pairing | 20 min |

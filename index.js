@@ -7,6 +7,7 @@ const { Smooth, SmoothAngle, SmoothVector } = require('./lib/damping')
 const { process, correctInputs, normalizeConfig, salvage, CORRECTIONS, CONFIG_SCHEMA, MAX_LEEWAY_DEG, LEEWAY_FADE_KN, TWA_TAPER_UP_DEG, TWA_TAPER_DOWN_DEG, TWA_SLOPE_MAX } = require('./lib/processor')
 const { Learner } = require('./lib/learn')
 const history = require('./lib/history')
+const { Analyst, summarise, RESUME_CONTEXT_S } = require('./lib/analysis')
 
 const MS_TO_KN = 1.94384
 const RAD_TO_DEG = 180 / Math.PI
@@ -16,6 +17,14 @@ const STALE_MS = 3000 // an input older than this is not used
 const VARIATION_MAX_AGE_MS = 10 * 60 * 1000
 const CONFIG_FILE = 'config.json'
 const STATUS_INTERVAL_MS = 1000
+// Analysis (§12, beta): every ANALYSIS_EVERY_MS, the history since the last run, up to
+// ANALYSIS_LAG_MS ago (providers write in batches). The first run looks back
+// ANALYSIS_FIRST_MS; after the plugin was off, it catches up at most ANALYSIS_BACK_MS.
+const ANALYSIS_EVERY_MS = 5 * 60 * 1000
+const ANALYSIS_START_MS = 30 * 1000
+const ANALYSIS_LAG_MS = 60 * 1000
+const ANALYSIS_FIRST_MS = 60 * 60 * 1000
+const ANALYSIS_BACK_MS = 24 * 3600 * 1000
 // Bounds for sanity-checking sensor input. Anything outside these is a fault, not a reading.
 const MAX_PLAUSIBLE_STW_KN = 60
 const MAX_PLAUSIBLE_AWS_KN = 120
@@ -593,6 +602,7 @@ module.exports = function (app) {
     app.debug(`started in ${config.mode} mode; corrections on: ${on.join(', ') || 'none'}`)
     status('starting', `Starting — ${config.mode} mode`)
     trySubscribe(0)
+    startAnalysis()
   }
 
   function stopEverything () {
@@ -601,6 +611,7 @@ module.exports = function (app) {
     if (windTimer) { clearInterval(windTimer); windTimer = null }
     unsubscribes.forEach(f => f())
     unsubscribes = []
+    stopAnalysis()
   }
 
   // ---- stored configuration ---------------------------------------------------
@@ -764,6 +775,115 @@ module.exports = function (app) {
     return null
   }
 
+  // Analysis (§12, beta): every few minutes, the latest history through lib/analysis.js into
+  // findings, appended to a file per local day in analysis/. The data itself is not kept.
+  const analysisDir = () => path.join(app.getDataDirPath(), 'analysis')
+  const analysisStateFile = () => path.join(analysisDir(), 'state.json')
+  let analysis = { enabled: true, running: false, lastRunAt: null, lastError: '', lastRows: 0, lastFound: 0, readTo: null, resume: null }
+  let analyst = null
+  let analysisSink = [] // this run's findings: the Analyst lives across runs
+  let analysisTimer = null
+  try {
+    const st = JSON.parse(fs.readFileSync(analysisStateFile(), 'utf8'))
+    analysis = { ...analysis, enabled: st.enabled !== false, readTo: st.readTo ?? null, resume: st.resume ?? null }
+  } catch (e) {} // none yet
+  const analysisView = () => ({ ...analysis, everyMin: ANALYSIS_EVERY_MS / 60000 })
+
+  function saveAnalysisState () {
+    fs.mkdirSync(analysisDir(), { recursive: true })
+    const f = analysisStateFile()
+    fs.writeFileSync(f + '.tmp', JSON.stringify({ enabled: analysis.enabled, readTo: analysis.readTo, resume: analysis.resume }))
+    fs.renameSync(f + '.tmp', f)
+  }
+
+  function appendFindings (found) {
+    if (!found.length) return
+    fs.mkdirSync(analysisDir(), { recursive: true })
+    const byDay = {}
+    for (const f of found) {
+      const day = localDay(f.t * 1000)
+      ;(byDay[day] = byDay[day] || []).push(JSON.stringify(f))
+    }
+    for (const [day, lines] of Object.entries(byDay)) fs.appendFileSync(path.join(analysisDir(), `${day}.jsonl`), lines.join('\n') + '\n')
+  }
+
+  function readFindings (since, until) {
+    let names = []
+    try { names = fs.readdirSync(analysisDir()) } catch (e) { return [] }
+    const out = []
+    for (const n of names.filter(n => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(n)).sort()) {
+      const day = n.slice(0, 10)
+      if ((since && day < since) || (until && day > until)) continue
+      for (const line of fs.readFileSync(path.join(analysisDir(), n), 'utf8').split('\n')) {
+        if (!line) continue
+        try { out.push(JSON.parse(line)) } catch (e) {} // a line cut short by a crash
+      }
+    }
+    return out
+  }
+
+  async function analyseOnce () {
+    if (analysis.running || !config) return
+    analysis.running = true
+    analysis.lastRunAt = Date.now()
+    analysis.lastError = ''
+    const found = analysisSink = []
+    try {
+      let api
+      try { api = typeof app.getHistoryApi === 'function' ? await app.getHistoryApi() : null } catch (e) { api = null }
+      if (!api) throw new Error('No history provider: install one (such as signalk-questdb or signalk-parquet)')
+      const sources = Object.fromEntries(Object.keys(INPUTS).map(g => [g, inUse(g)]).filter(([, v]) => v))
+      const lack = history.missing(sources)
+      if (lack.length) throw new Error(`No sensor in use for ${lack.map(g => INPUT_LABELS[g]).join(', ')}`)
+      const now = Date.now()
+      const to = now - ANALYSIS_LAG_MS
+      let from
+      if (!analyst) {
+        // A new start: from where the last one left off, or ANALYSIS_FIRST_MS back.
+        const floor = Math.floor((now - (analysis.resume ? ANALYSIS_BACK_MS : ANALYSIS_FIRST_MS)) / 1000)
+        const r = analysis.resume || {}
+        const resume = { win: Math.max(r.win ?? floor, floor), learn: Math.max(r.learn ?? floor, floor) }
+        analyst = new Analyst(f => analysisSink.push(f), config, { resume })
+        from = (Math.min(resume.win, resume.learn) - RESUME_CONTEXT_S) * 1000
+      } else {
+        from = analysis.readTo ?? to - ANALYSIS_EVERY_MS
+      }
+      analyst.setConfig(config)
+      const rows = from < to ? await history.dayRows(api, from, to, sources, config.variation, plugin.id) : []
+      for (const r of rows) analyst.add(r)
+      // The boat has stopped: close what is open rather than wait for the next sailing.
+      if (analyst.last != null && to / 1000 - analyst.last > RESUME_CONTEXT_S) analyst.flush()
+      analysis.lastRows = rows.length
+      analysis.readTo = to
+      const safe = analyst.safe()
+      analysis.resume = { win: safe.win ?? Math.floor(to / 1000), learn: safe.learn ?? Math.floor(to / 1000) }
+    } catch (e) {
+      analysis.lastError = e.message
+    } finally {
+      try {
+        appendFindings(found)
+        saveAnalysisState()
+      } catch (e) { analysis.lastError = `could not save findings: ${e.message}` }
+      analysis.lastFound = found.length
+      analysis.running = false
+    }
+  }
+
+  function startAnalysis () {
+    stopAnalysis()
+    if (!analysis.enabled) return
+    const tick = delay => {
+      analysisTimer = setTimeout(() => { analyseOnce().finally(() => { if (analysisTimer) tick(ANALYSIS_EVERY_MS) }) }, delay)
+      if (analysisTimer.unref) analysisTimer.unref()
+    }
+    tick(ANALYSIS_START_MS)
+  }
+
+  function stopAnalysis () {
+    if (analysisTimer) { clearTimeout(analysisTimer); analysisTimer = null }
+    analyst = null // the next start resumes from the saved state
+  }
+
   function readBody (req) {
     if (req.body && typeof req.body === 'object') return Promise.resolve(req.body)
     return new Promise((resolve, reject) => {
@@ -812,6 +932,55 @@ module.exports = function (app) {
     router.get('/learn/status', (req, res) => {
       res.set('Cache-Control', 'no-store')
       res.json(learn)
+    })
+
+    router.get('/analysis/status', (req, res) => {
+      res.set('Cache-Control', 'no-store')
+      res.json(analysisView())
+    })
+
+    // { enabled }: pause or resume the periodic analysis; kept across restarts.
+    router.put('/analysis', async (req, res) => {
+      let body
+      try { body = await readBody(req) } catch (e) { return res.status(400).json({ errors: ['body is not valid JSON'] }) }
+      if (!body || typeof body.enabled !== 'boolean') return res.status(400).json({ errors: ['enabled must be true or false'] })
+      analysis.enabled = body.enabled
+      try { saveAnalysisState() } catch (e) { return res.status(500).json({ errors: [`could not save: ${e.message}`] }) }
+      if (running && analysis.enabled) startAnalysis()
+      else stopAnalysis()
+      res.json(analysisView())
+    })
+
+    // Run now, rather than wait for the timer.
+    router.put('/analysis/run', async (req, res) => {
+      if (!running) return res.status(409).json({ errors: ['the plugin is not running'] })
+      if (analysis.running) return res.status(409).json({ errors: ['already running'] })
+      await analyseOnce()
+      res.json(analysisView())
+    })
+
+    // Findings as written. ?since=&until= (local days, YYYY-MM-DD), &type=win|mnv|leg, &kind=
+    // (a manoeuvre's or leg's kind, or a window's class).
+    const daysOf = q => {
+      const day = s => s === undefined || /^\d{4}-\d{2}-\d{2}$/.test(s)
+      return day(q.since) && day(q.until) ? [q.since, q.until] : null
+    }
+    router.get('/analysis/findings', (req, res) => {
+      const q = req.query || {}
+      const d = daysOf(q)
+      if (!d) return res.status(400).json({ errors: ['since and until must be local dates (YYYY-MM-DD)'] })
+      res.set('Cache-Control', 'no-store')
+      res.json(readFindings(...d).filter(f => (!q.type || f.type === q.type) && (!q.kind || f.kind === q.kind || f.cls === q.kind)))
+    })
+
+    // Counts, and the corrections the findings point to, binned on the tables' own axes.
+    // &tables= a tables id, for the corrections still needed on top of those tables.
+    router.get('/analysis/summary', (req, res) => {
+      const q = req.query || {}
+      const d = daysOf(q)
+      if (!d) return res.status(400).json({ errors: ['since and until must be local dates (YYYY-MM-DD)'] })
+      res.set('Cache-Control', 'no-store')
+      res.json(summarise(readFindings(...d), current(), { tables: q.tables }))
     })
 
     router.get('/live', (req, res) => {
