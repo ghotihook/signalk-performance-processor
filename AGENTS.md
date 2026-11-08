@@ -101,7 +101,7 @@ Each on the output of the one before; thresholds from boatcal.
 - **boatcal runs this code.** It uses `lib/processor.js` (its exports and `_internals`) and `public/tables.js`: check boatcal's `boatcal/pipeline.js` before changing them.
 - **`lib/processor.js` stays free of Signal K**, so it can be tested and replayed. Anything Signal K goes in `index.js`.
 - **Units:** degrees and knots inside the pipeline, radians and m/s in Signal K. Keep the sign conventions in specification §1.
-- **A change to the config layout** means bumping `CONFIG_SCHEMA`, adding an upgrade path and testing it. Never overwrite a file from a newer release.
+- **A change to the config layout** an earlier release would misread (a table's shape, a renamed field) means bumping `CONFIG_SCHEMA`, adding an upgrade path and testing it. A new setting with a default, or a dropped one, needs no bump. Never overwrite a file from a newer release.
 - **No feedback loops.** The plugin never reads its own output, and reads another plugin's only if that source is chosen in Settings.
 - **`plugin.schema` stays empty.** Everything is set in the webapp: saving the admin form could otherwise overwrite the tables.
 - **Don't add `GET` or `POST /config` routes.** The server owns them on every plugin's router.

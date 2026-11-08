@@ -11,7 +11,7 @@
 1. **Boat speed table** (by heel and boat speed) corrects the paddlewheel; leeway follows from heel.
 2. **True wind** = apparent wind − the boat's motion through the water.
 3. **TWA and TWS tables** (by TWA and TWS) correct what the masthead gets wrong.
-4. **Heading fusion**: TWD is damped, where the wind is steady; TWA is sent as damped TWD − heading on *every compass update*, and only then. TWA then follows the helm at the compass's rate (often 10 Hz or more), not the wind sensor's (often 1–2 Hz), without the noise of undamped wind.
+4. **Fast TWA**: TWD is damped, where the wind is steady, and TWA = damped TWD − heading is sent with *every compass update* ([Heading fusion](#how-it-works)).
 
 It publishes TWA, TWS, TWD, boat speed, leeway, current and ground wind.
 
@@ -19,8 +19,8 @@ It publishes TWA, TWS, TWD, boat speed, leeway, current and ground wind.
 
 **What it can do:**
 
+- **TWA at your compass's rate**: 10 Hz or more, not the wind sensor's 1–4 Hz. It moves with the helm through every wave and tack while TWD stays steady. Damped 1 s to read; 0 for an autopilot.
 - **Tables of any shape**: an H5000 or H2000 calibration cell for cell, or a fine grid ([Tables](#tables-of-any-shape)).
-- **Fast, steady TWA** from high-rate heading and low-rate wind.
 - **Shadow mode**: run beside your instruments on separate `…Corrected` paths until you trust it.
 - **Every step live** in a webapp: what each calculation uses, changes and sends.
 - **Damping** per value, as on the H5000.
@@ -169,20 +169,20 @@ One rule for the TWA table (Save names any breach): corrected TWA must move with
 | TWA table | Degrees added to \|TWA\|, by TWA and TWS. In full from 30° to 170°, fading to none at 0° and 180°, so TWD passes smoothly through tacks and gybes |
 | TWS table | Knots added, by TWA and TWS, at the corrected TWA. Masthead units read high off the wind, so mostly negative |
 
-**Heading fusion.** Wind direction changes slowly; the boat's heading changes fast. So the plugin damps TWD, not TWA, and sends TWA = damped TWD − heading *now*, with every heading update. A new apparent wind moves TWD only a little, so it waits for the next heading update; without a heading, TWA goes out with apparent wind. A yaw shows in TWA at once, at the compass's rate, while TWD stays put; the wind sensor's noise is damped out of TWD. Heading is never damped, so apparent wind must be raw too: a lag in either swings TWD with every yaw.
+**Heading fusion: fast TWA.** The wind changes slowly; the bow changes fast. So the plugin damps TWD, not TWA, and sends TWA = damped TWD − heading *now* with every compass update: a 10 Hz compass gives 10 Hz TWA from 2 Hz wind, while TWD stays put. Without a heading, TWA goes out with apparent wind. Heading is never damped, so apparent wind must be raw too: a lag in either swings TWD with every yaw.
 
 **Damping** (seconds, 0 = none): heel 2, true wind 3 (TWD, TWS, ground wind), TWA 1 (the TWA and ground wind angle sent with each heading update, to read; TWD is unaffected), STW 1, current 120 (it is a trend; up to 300).
 
 **Built in:**
 
-- **Light air**: below 1.5 kn TWS, TWD and ground wind direction are held back until 2 kn; TWA and TWS still go out.
+- **Light air**: below 1.5 kn TWS, TWD and ground wind direction and angle are held back until 2 kn; TWA and TWS still go out.
 - **Stale or implausible input** (older than 3 s; wind over 120 kn, STW over 60 kn, heel beyond 90°) is not used; the status says why.
 - **One sensor per input**, never another plugin's output unless chosen in Settings. Auto picks the busiest sensor and moves only if it stops.
 - **No path faster than 50 Hz**, so a loop with another plugin shows up in the status.
 
 ## The webapp
 
-- **Live**: published values, the pipeline with each step's value, what is sent, each input's source and age.
+- **Live**: published values, the pipeline with each step's value and each input's and output's rate, what is sent, each input's source and age.
 - **Calibration**: each correction with its switch, table, limits, **Paste a table**, **Copy this table**, **Reset to defaults**. **Save** applies.
 - **Settings**: Shadow or Replace, damping, fallback variation, the source for each input.
 
@@ -260,9 +260,9 @@ The status line (admin UI and webapp) says what the plugin is doing.
 
 Under `/plugins/signalk-performance-processor`:
 
-- `GET /calibration`: config in use, defaults, built-in limits.
+- `GET /calibration`: config in use, defaults, built-in limits, and what is wrong with the saved file, if anything.
 - `PUT /calibration`: validate, save, restart; 400 with reasons. With `schema`, a whole config; without, changes laid over the current one.
-- `GET /live`: latest result, steps, inputs, sources, what was sent, and any error.
+- `GET /live`: latest result, steps, inputs, sources, what was sent and how often, and any error.
 - `PUT /learn/scan`, `GET /learn/status`: **in progress** (learning the tables from Signal K history).
 
 ## Development

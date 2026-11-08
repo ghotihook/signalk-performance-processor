@@ -16,7 +16,7 @@ Written for 0.3.1 (config schema 7) and boatcal after 1.4.0 (fine grids, §9).
 | 5 The pipeline | `lib/processor.js` (`CORRECTIONS`, `process`) |
 | 6 Damping | `lib/damping.js`, `index.js` (`onWind`, `onHeading`, `onStw`, `onDelta`) |
 | 7 Publishing | `index.js` (`onWind`, `onHeading`, `onStw`, `publish`, `OUTPUTS`) |
-| 8 Configuration | `lib/processor.js` (`normalizeConfig`, `upgrade`, `toGrids`, `addSlowColumn`, `checkTable`, `twaTooSteep`), `public/tables.js` (`twaFromRows`, `twsFromRows`), `lib/defaults.js` |
+| 8 Configuration | `lib/processor.js` (`normalizeConfig`, `salvage`, `upgrade`, `toGrids`, `addSlowColumn`, `checkTable`, `twaTooSteep`), `public/tables.js` (`twaFromRows`, `twsFromRows`), `lib/defaults.js` |
 | 9 Calibration fits | boatcal `boatcal/fit.py`, `boatcal/events.py`, `boatcal/decompose.py`, `boatcal/settings.py`; for a user's own data, [AGENTS.md](AGENTS.md) "Calibrating a boat" |
 | 10 Constants | all of the above |
 | 11 Learning (in progress) | `lib/history.js`, `lib/learn.js`, `index.js` (`runLearn`, `startLearn`) |
@@ -78,8 +78,8 @@ or not finite (any path except attitude), is ignored.
      `n2k-tcp.<canName>`) on learning its CAN name. A chosen source is never replaced.
 - **Message counting:** a message counts once even when it arrives as several deltas: a
   repeat of the same timestamp from the same source is not counted again.
-- **Rate shown in Settings:** `(n − 1) / (t_last − t_first)` over the last 10 s, to 0.1 Hz;
-  0 for a source that has stopped.
+- **Rate** (Settings, Live page): `(n − 1) / (t_last − t_first)` over the last 10 s, to 0.1 Hz
+  (shown whole from 2 Hz); 0 for a source that has stopped. Outputs' send rates likewise.
 
 ### 2.3 Freshness
 
@@ -357,25 +357,18 @@ wind, or every yaw swings TWD, and apparent wind must arrive raw (README). A sav
 
 ### 6.3 Published TWA and ground wind angle
 
-TWA is not damped on its own. It is the damped TWD less the heading **now**, so it answers
-the helm at once while the wind itself is steady:
+The damped TWD less the heading **now**, then damped for reading, on each heading message
+only (not with apparent wind):
 
 ```
-TWA_pub = wrap180(D_twaS(TWD_d − H))       on each heading message only
-GWA_pub = wrap180(D_twaS(GWD_d − H))       likewise
+TWA_pub = wrap180(D_twaS(TWD_d − H))
+GWA_pub = wrap180(D_twaS(GWD_d − H))
 ```
 
-`D_twaS` is the filter of §6.1 on the unit circle with τ = `twaS` (default 1 s). At a 10 Hz
-compass every yaw is otherwise a blur of numbers; this steadies what is read, at the cost of
-TWA reaching 63% of a turn after τ. It is applied only to what is published: TWD is worked
-out with the undamped heading (§3.2), so a yaw still cancels in it. 0 sends every yaw as it
-happens. The status and the Live page show the TWA last published.
-
-TWD_d and GWD_d are damped and change slowly, so these change only as fast as the heading
-does: they are sent with each heading message and **not** with apparent wind. They use the
-last wind result's damped TWD and GWD, if that result is under 3 s old and had a heading.
-When heading and wind arrive in one delta, the wind is worked out first, so the heading's
-TWA uses its TWD.
+`D_twaS` is §6.1 on the unit circle, τ = `twaS` (default 1 s; 0 = every yaw as it happens).
+TWD itself uses the undamped heading (§3.2), so a yaw still cancels in it. TWD_d and GWD_d
+come from the last wind result, if under 3 s old and with a heading. In a delta with both,
+wind is worked out first. The status and the Live page show the TWA last published.
 
 **Without a heading** there is no TWD: `TWA_pub` is the damped TWA, sent with each apparent
 wind message, and there is no ground wind angle.

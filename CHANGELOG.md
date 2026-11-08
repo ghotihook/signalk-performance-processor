@@ -2,22 +2,16 @@
 
 ## Unreleased
 
-- **Fixed: saving over a configuration that failed its checks lost it.** The plugin rightly stopped, but the webapp then showed the defaults without saying so, and a Save of anything replaced the boat's tables, K, variation, mode and sources with them, with no backup. The webapp now shows your own values, with only the parts that failed reset to the defaults, and says which and why. Saving keeps the file as it was in `config.json.bad`.
-- **Settings → Damping: Reset damping to defaults**, with the defaults listed. A saved configuration keeps its own damping, so new defaults (current 120 s, TWA 1 s) reach it only this way.
-- Wording: the Live page's Current tile says how long current is averaged over; the light-air status names the ground wind angle too.
-
-- **Rate limit raised to 50 Hz** (was 20 Hz). True heading, TWA and the ground wind angle go out with each heading update, so a 25–50 Hz IMU heading was thinned and set off a false "feedback loop" warning. A real loop repeats within the same millisecond, so it is still caught.
-
-- **Live page: rates in the pipeline.** Each input box shows the rate of the sensor in use (a value from another chain shows the rate it is worked out at), and each line sent shows how often it goes out, over the last 10 s: TWA at the compass's rate, TWD and TWS at the wind's. `GET /live` reports them as `sentHz`. Rates from 2 Hz are whole numbers, as in Settings; the apparent wind box is labelled AWA, AWS; a long line sent wraps rather than being cut off.
-- **Screenshots** regenerated.
-
-- **TWA damping, 1 s by default** (`damping.twaS`, 0–30 s, in **Settings → Damping**). With a 10 Hz compass, TWA (TWD − heading) showed every yaw ten times a second, too fast to read. Only the published TWA and ground wind angle are damped: TWD is still worked out with the undamped heading, so a yaw still cancels in it. TWA now reaches 63% of a turn after 1 s; set 0 for every yaw as it happens (an autopilot steering to TWA may want that). A saved configuration takes the 1 s default.
-
-- **TWA and ground wind angle go out with heading updates only.** They are the damped TWD (or ground wind direction) less the heading now, so they change only as fast as the heading does; sending them with apparent wind as well only interleaved two triggers. With heading and apparent wind in one delta, the wind is worked out first, so that TWA uses the new TWD. Without a heading, TWA still goes out with apparent wind (the damped TWA). If your compass is slower than your wind sensor, TWA now updates at the compass's rate.
-
-- **Heading is never damped; heading damping is no longer a setting.** Heading must lag exactly as apparent wind does, or every yaw swings TWD, and apparent wind must arrive raw. A damped heading only ever matched wind damped at the instrument, which the calibration and the TWA table can't use either. A saved `damping.headingS` is dropped on load; if it was above 0, the status says so and asks you to turn off wind damping at the instrument and Save. The config schema is unchanged: an earlier release reads the new file with heading damping 0.
-
-- **Current is damped over 120 s by default** (was 10 s), and up to 300 s may be set (was 120 s). Current is the small difference of two vectors of about boat speed, so 1% of boat speed or 1° of heading is 0.1 kn: a minutes-long average is the useful number. A saved configuration keeps its own value; **Reset to defaults** is per table, so set it in **Settings → Damping**.
+- **TWA follows the heading.** TWA and ground wind angle (damped TWD or ground wind direction less the heading now) go out with each heading update only, not with apparent wind; without a heading, TWA goes out with apparent wind as before. A slow compass now sets TWA's rate.
+- **TWA damping, 1 s by default** (`damping.twaS`): a 10 Hz compass made TWA unreadable. Only the published TWA and ground wind angle are damped; TWD keeps the undamped heading. 0 for an autopilot.
+- **Heading is never damped**, and heading damping is no longer a setting: it must lag as raw apparent wind does. A saved `headingS` is dropped, with a notice if it was above 0.
+- **Current damped over 120 s by default** (was 10 s), up to 300 s.
+- **Settings → Damping: Reset damping to defaults.** A saved configuration keeps its own damping, so new defaults reach it only this way.
+- **Rate limit 50 Hz** (was 20 Hz), so a fast IMU heading is not flagged as a feedback loop.
+- **Live page shows rates:** each input's sensor rate and each output's send rate (`GET /live` `sentHz`).
+- **Fixed: Save could lose a configuration that failed its checks.** The webapp showed the defaults without saying so, and saving replaced everything. It now shows your own values with only the failed parts reset, says which, and Save keeps the old file as `config.json.bad`.
+- Config schema unchanged: an earlier release ignores `twaS` and reads heading damping as 0.
+- Wording fixes; screenshots regenerated.
 
 ## 0.3.1 — 2026-11-08
 

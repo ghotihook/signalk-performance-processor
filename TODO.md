@@ -1,5 +1,12 @@
 # TODO
 
+## Next
+
+- **`lib/output.js`:** move the output stage (damping, TWA from heading, light air) out of
+  `index.js` into a pure module boatcal can call, so its replay can't drift. Then
+  `lib/config.js` for the config half of `processor.js`.
+- **boatcal `pipeline.js`:** apply `twaS` to the replayed TWA; drop the `headingS` comment.
+
 ## Learning the tables on the boat
 
 Read the boat's sailing from the Signal K v2 History API, reduce it to what the fits need, and
