@@ -34,6 +34,28 @@ The user hands you a log of their sailing (a Signal K history export, InfluxDB o
 
 Convert Signal K's radians and m/s. Take the median of faster data into each second; leave a gap as a gap rather than filling it. Each column must come from **one** sensor: where Signal K holds the same path from several sources, use the one the user names, and never a source that is a plugin (`$source` like `signalk-…` or `derived-data`).
 
+#### Reading NMEA logs
+
+When the data is NMEA rather than Signal K history:
+
+- **Timestamps:** every line needs the time it arrived (Signal K's Data Logging files have it; so do Actisense, Yacht Devices and `candump` logs). If only `RMC`/`ZDA` carry time, the inputs cannot be aligned to the second: stop and ask for a timestamped log.
+- **Decode NMEA 2000** with canboat (`analyzer`) or equivalent; keep each message's source address.
+- **Map the inputs**, and take only these:
+
+  | Input | NMEA 0183 | NMEA 2000 |
+  |---|---|---|
+  | `awa`, `aws` | `MWV`, reference `R` only; angle 0–360 clockwise, so above 180 is port: convert to ±180; units flag N, K or M | PGN 130306, reference Apparent (2) only; radians, m/s |
+  | `stw` | `VHW` knots field | PGN 128259 |
+  | `hdg` | `HDG` heading (magnetic sensor), its deviation and variation fields; `HDM` | PGN 127250, reference Magnetic; deviation and variation fields |
+  | `heel` | `XDR` angle transducer named for roll or heel; degrees | PGN 127257 roll; radians |
+  | `sog`, `cog` | `RMC`, `VTG` | PGN 129026 |
+  | `variation` | `RMC`, `HDG` | PGN 127258 |
+
+- **Never** `MWV` `T`, PGN 130306 with a true reference, `MWD`, `VWT`: those are true wind. Treat `HDT` and true-referenced 127250 as computed unless the user says the compass sends them.
+- **One source per input.** List every talker ID (0183) or source address (2000) sending each input, with its rate, and show the user. Where there are two, the user must say which is the sensor: a processor re-sends corrected values on the same sentence or PGN. Never merge two sources.
+- **Checksums:** drop lines that fail them, and report how many.
+- **Then run every check in step 2** on the decoded columns. Heel's sign in particular varies by maker (check 5).
+
 ### 2. Check that the inputs are raw: stop if they are not
 
 This plugin applies every correction and all the damping itself. Anything an instrument or another plugin has already done to the inputs gets done twice, and the fit then calibrates the wrong thing. Do every check below, report each result to the user, and **stop and ask** on any that fails or that you cannot settle from the data.

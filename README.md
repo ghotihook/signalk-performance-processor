@@ -60,7 +60,7 @@ The tables are fitted from your own sailing. The best way to get them is to give
 
 **1. Log the right sailing.** Since your setup last changed (rig tune, sails, masthead unit, instrument calibration): 10 or more tacks and gybes in steady wind, some reaching, a few mark roundings, and windward-leeward laps for the TWS table. More days is better: each day is held out in turn to check the fit.
 
-**2. Export it raw.** Apparent wind angle and speed straight from the masthead unit, paddlewheel boat speed, magnetic heading and variation, heel, SOG and COG, at 1 Hz or faster, for the whole period. From Signal K, a history provider (signalk-to-influxdb2, signalk-questdb, signalk-parquet) holds these on the paths in [Requirements](#requirements); if this plugin has run in Replace mode, export `navigation.speedThroughWaterRaw` and `navigation.headingMagnetic`, not its own outputs. A log from your instrument system or a navigation program works too, as long as it is the raw values. **Raw matters most:** apparent wind that an instrument has already corrected or damped, or boat speed it has already corrected for heel, gets corrected twice. If you don't know whether your log is raw, say so: the agent checks.
+**2. Export it raw.** Apparent wind angle and speed straight from the masthead unit, paddlewheel boat speed, magnetic heading and variation, heel, SOG and COG, at 1 Hz or faster, for the whole period. From Signal K, a history provider (signalk-to-influxdb2, signalk-questdb, signalk-parquet) holds these on the paths in [Requirements](#requirements); if this plugin has run in Replace mode, export `navigation.speedThroughWaterRaw` and `navigation.headingMagnetic`, not its own outputs. A log from your instrument system or a navigation program works too, as long as it is the raw values. **Raw matters most:** apparent wind that an instrument has already corrected or damped, or boat speed it has already corrected for heel, gets corrected twice. If you don't know whether your log is raw, say so: the agent checks. From NMEA logs, see [Example: from NMEA logs](#example-from-nmea-logs); either way, read [Before you start](#before-you-start-find-out-about-your-instruments) and [Pitfalls](#pitfalls) first.
 
 **3. Give it to your agent** with this repository (or this plugin's folder in `~/.signalk/node_modules`), and a prompt like:
 
@@ -69,6 +69,51 @@ The tables are fitted from your own sailing. The best way to get them is to give
 **4. Expect questions.** The agent should ask where each input came from and what your instruments do to it, report every check (raw inputs, signs, units, damping, masthead alignment, faults), and stop if something is wrong. That is the point: a table fitted from corrected data looks just as convincing as a right one.
 
 **5. Check what you get back:** each table in the paste format, or a complete `config.json`, and a report of the data used, what was left out and why, how much each table improved things on days it was not fitted on, and which cells are blank for lack of data. Paste the tables into **Calibration** (or send the config with `PUT /calibration`), **Save**, and sail in **Shadow mode** until you trust them.
+
+### Before you start: find out about your instruments
+
+The agent will ask, and the answers decide whether your data can be used:
+
+- **Wind:** does your instrument apply wind correction tables (TWA/TWS calibration, "wind angle correction")? What is its wind damping set to? Is the masthead alignment (offset) set on the sensor?
+- **Boat speed:** is there a boat speed calibration, a single factor or a table by speed or heel?
+- **Heading:** what compass, is deviation corrected, and is the heading you log magnetic or true?
+- **Heel:** what sends it, and does it read positive with the starboard side down or the port side?
+- **What else sits between the sensors and your log:** a processor (H5000, Hydra, Expedition), a multiplexer, Signal K with plugins? Each can send corrected values on the same sentences or paths as the raw ones.
+- **When your setup last changed:** rig tune, new sails, masthead unit, instrument calibration.
+
+### Example: from NMEA logs
+
+If you have NMEA rather than Signal K history, log it like this and hand the log over.
+
+**Record it with a time on every line.** Most NMEA 0183 sentences carry no time of their own, and the tack analysis needs wind, heading and boat speed lined up to the second. The simplest way is Signal K's **Data Logging** on each data connection (Server → Data Connections), which writes every incoming line, 0183 or NMEA 2000, with the time it arrived, before anything is corrected. Otherwise use a logger that stamps each line (for NMEA 2000, an Actisense, Yacht Devices or `candump` log). Log for the whole time you are sailing, not only the races.
+
+**What each input is, and the trap in each:**
+
+| Input | NMEA 0183 | NMEA 2000 | Trap |
+|---|---|---|---|
+| Apparent wind | `MWV` with reference `R` (relative) | PGN 130306, reference *Apparent* | `MWV` … `T` and the other 130306 references are true wind: don't use them. An instrument processor often re-sends apparent wind already calibrated and damped, on the same sentence: you want the masthead unit's own |
+| Boat speed | `VHW` (knots field) | PGN 128259 | Often the processor's corrected STW, not the paddlewheel's |
+| Heading | `HDG` (magnetic sensor heading, with deviation and variation fields), `HDM` | PGN 127250, reference *Magnetic* | `HDT` and true-referenced 127250 are often computed by something else; magnetic logged as true |
+| Heel | `XDR` with a roll or heel transducer (name varies by maker) | PGN 127257 (roll) | The sign varies by maker; degrees or radians |
+| SOG, COG | `RMC`, `VTG` | PGN 129026 | COG true or magnetic |
+| Variation | `RMC`, `HDG` | PGN 127258 | — |
+
+**Prompt:**
+
+> Read AGENTS.md in signalk-performance-processor and follow "Calibrating a boat" to fit my tables from these NMEA logs: `<files>`. They are Signal K Data Logging files (or: an Actisense / candump log). The sensors are `<masthead unit, paddlewheel, compass, heel sensor, GPS, and what each is connected to>`; my processor is `<make and model>`, its wind tables are `<on/off/don't know>` and its wind damping is `<value>`. My setup last changed on `<date>`. Here is my current `config.json`. Find which source sends each input, show me, and check every input is raw before fitting anything. Stop and ask me if anything might not be.
+
+### Pitfalls
+
+- **Corrected data that looks raw.** The commonest mistake, and it gives a confident, wrong table. A processor often sends its corrected wind and boat speed on the same sentences and PGNs as the raw ones. Know which device each value came from.
+- **True wind instead of apparent:** `MWV` `T`, or PGN 130306 with a true reference.
+- **Damped wind.** Instrument wind damping makes AWA lag heading, so TWD swings on every tack, and the fit takes that for a calibration error. Set wind damping to 0 while logging, or log ahead of the processor.
+- **Two devices sending the same thing,** mixed in one log: each input must come from one sensor.
+- **No timestamps,** or only the GPS time once a second: the inputs cannot be lined up.
+- **Signs and units:** heel's sign, AWA as 0–360 (above 180 is port), knots against m/s or km/h.
+- **This plugin's own output.** In Replace mode it publishes STW, true heading and true wind: a Signal K log then holds corrected values on the standard paths. Use `navigation.speedThroughWaterRaw` and magnetic heading.
+- **Mixed setups.** Data from before a rig tune, new sails or a calibration change fits a boat that no longer exists.
+- **Too little sailing.** Fewer than about 10 tacks and gybes in steady wind, or no off-wind legs next to beats: the agent should leave those tables thin rather than fit noise.
+- **Things the tables cannot fix:** a masthead alignment offset, AWS scale, compass deviation. They belong in the instrument (see Limitations).
 
 [boatcal](https://github.com/ghotihook/boatcal) is the author's implementation of the same method, against the author's own database: the reference for the method, and the agent's to read.
 

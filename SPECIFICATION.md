@@ -5,7 +5,7 @@ signalk-performance-processor, and of how boatcal fits the tables. The code is
 the implementation; this document is what it must do. **Change one, change the other**, in
 the same commit, and note the change in [CHANGELOG.md](CHANGELOG.md).
 
-Written for the `dev` branch after 0.2.17 (config schema 7) and boatcal after 1.4.0 (fine grids, §9).
+Written for 0.3.0 (config schema 7) and boatcal after 1.4.0 (fine grids, §9).
 
 | Section | Code |
 |---|---|
