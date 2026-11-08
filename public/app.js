@@ -245,6 +245,7 @@
     const damping = s => ({ label: 'Damping', value: s ? `${s} s` : 'none', cls: 'damp' })
     const before = trueWind(i, o.stw)
     const held = r.lightAir
+    const heldGround = r.lightAirGround
     // Rate of the sensor in use for an input group, as Settings lists it.
     const hzOf = group => {
       const s = ((live.sources || {})[group] || []).find(x => x.source === (live.inUse || {})[group])
@@ -332,7 +333,7 @@
           ? [{ label: 'True wind + current', value: `${fmt(o.groundWind.direction, 0)}° · ${fmt(o.groundWind.speed)} kn` }, damping(dm.trueWindS)]
           : [],
         out: !p.groundWind ? notSent('no current')
-          : held ? { lines: [`GWS ${fmt(p.groundWind.speed)} kn`], note: 'GWD and GWA not sent: light air' }
+          : heldGround ? { lines: [`GWS ${fmt(p.groundWind.speed)} kn`], note: 'GWD and GWA not sent: light air' }
             : { lines: [`GWD ${fmt(p.groundWind.direction, 0)}° T`, `GWA ${angle(p.groundWind.angle)}`, `GWS ${fmt(p.groundWind.speed)} kn`] }
       }
     ]
@@ -527,10 +528,10 @@
     $('dampingDefaults').textContent = dd ? `Defaults: true wind ${dd.trueWindS} s, TWA ${dd.twaS} s, heel ${dd.heelS} s, STW ${dd.stwS} s, current ${dd.currentS} s` : ''
     const b = state.behaviour
     $('behaviour').innerHTML = b ? [
-      `<b>Light air:</b> below ${b.lightAirOffKn} kn of TWS, wind direction is noise, so TWD and the ground wind direction and angle are not published (TWA, TWS and ground wind speed still are: TWA is what you sail by). They come back once TWS reaches ${b.lightAirOnKn} kn; the gap stops them flickering on and off.`,
+      `<b>Light air:</b> below ${b.lightAirOffKn} kn, wind direction is noise: TWD is not published below that TWS, nor ground wind direction and angle below that ground wind speed. They come back from ${b.lightAirOnKn} kn; the gap stops them flickering. TWA, TWS and ground wind speed always go out: TWA is what you sail by.`,
       `<b>Stale inputs:</b> an input older than ${b.staleS} s is not used. Without STW or apparent wind nothing is published (the status says so, and this page greys out the last values, which Signal K keeps), unless Auto can move to another sensor; without heading, no TWD, current or ground wind; without SOG and COG, no current or ground wind; without heel, no heel correction or leeway.`,
-      `<b>Rate limit:</b> no path is published more often than ${b.maxPublishHz} Hz. Faster updates are dropped; when that keeps happening the status says so, as it usually means a feedback loop with another plugin.`,
-      '<b>Implausible input</b> (apparent wind over 120 kn, STW over 60 kn, heel beyond ±90°, or negative speeds) is not used. The status says why for wind and STW; heel counts as no heel.'
+      `<b>Loop guard:</b> another plugin's output (read only when chosen as a source) can drive no path faster than ${b.maxPublishHz} Hz. Faster updates are dropped and the status says so: it usually means a feedback loop. Sensors are never limited.`,
+      '<b>Implausible input</b> is not used: apparent wind over 120 kn, STW or SOG over 60 kn, negative speeds, heel beyond ±90°, an angle beyond a full turn or variation beyond ±180° (degrees sent as radians). The status says why for wind and STW; the others count as missing.'
     ].map(t => `<li>${t}</li>`).join('') : '<li>Update the plugin to see these.</li>'
     renderSources()
   }

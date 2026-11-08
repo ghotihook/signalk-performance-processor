@@ -7,7 +7,14 @@
 - **Heading is never damped**, and heading damping is no longer a setting: it must lag as raw apparent wind does. A saved `headingS` is dropped, with a notice if it was above 0.
 - **Current damped over 120 s by default** (was 10 s), up to 300 s.
 - **Settings → Damping: Reset damping to defaults.** A saved configuration keeps its own damping, so new defaults reach it only this way.
-- **Rate limit 50 Hz** (was 20 Hz), so a fast IMU heading is not flagged as a feedback loop.
+- **Loop guard only for another plugin's output** (50 Hz, was 20 Hz for everything): a fast IMU or a gateway's bursts are never dropped or flagged as a loop.
+- **Never bad data:**
+  - A clock set back (NTP, GPS time fix) stopped every output and was flagged as a loop; time now never goes back.
+  - SOG over 60 kn, angles beyond a full turn (degrees on a radian path) and variation beyond ±180° are not used.
+  - Table cells are limited to ±5 kn (STW), ±30° (TWA), ±10 kn (TWS), and K to 0–30; a config beyond them stops with the error, its other parts kept (see the fix below).
+  - A wind dropout of a few seconds no longer restarts the 120 s current average.
+  - Ground wind direction and angle are held back when ground wind speed is light, as TWD is on TWS.
+  - Only finite numbers are published; a current that can't be worked out is left out, not sent as 0.
 - **Live page shows rates:** each input's sensor rate and each output's send rate (`GET /live` `sentHz`).
 - **Fixed: Save could lose a configuration that failed its checks.** The webapp showed the defaults without saying so, and saving replaced everything. It now shows your own values with only the failed parts reset, says which, and Save keeps the old file as `config.json.bad`.
 - Config schema unchanged: an earlier release ignores `twaS` and reads heading damping as 0.

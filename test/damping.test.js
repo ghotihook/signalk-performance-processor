@@ -42,3 +42,20 @@ test('SmoothVector: current smoothed as a vector', () => {
   assert.ok(Math.abs(v.speed - (2 * (1 - Math.exp(-1)) - 1)) < 1e-9, `speed ${v.speed}`)
   assert.ok(Math.abs(v.deg - 270) < 1e-9, `set ${v.deg}`)
 })
+
+test('a gap restarts only when longer than both 10 s and the time constant', () => {
+  const d = new Smooth()
+  d.update(0, 0, 120)
+  const v = d.update(10, 12000, 120) // a 12 s dropout in a 120 s average
+  assert.ok(Math.abs(v - 10 * (1 - Math.exp(-12 / 120))) < 1e-9, `blended, not restarted: ${v}`)
+  assert.strictEqual(d.update(4, 12000 + 121000, 120), 4, 'restarted after more than the time constant')
+  const s = new Smooth()
+  s.update(0, 0, 3)
+  assert.strictEqual(s.update(9, 10500, 3), 9, 'a short time constant still restarts after 10 s')
+  const a = new SmoothAngle()
+  a.update(10, 0, 120)
+  assert.ok(a.update(20, 12000, 120) < 12, 'directions likewise')
+  const c = new SmoothVector()
+  c.update(1, 0, 0, 120)
+  assert.ok(c.update(5, 90, 12000, 120).speed < 1.5, 'and current')
+})

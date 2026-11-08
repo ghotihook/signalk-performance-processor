@@ -19,22 +19,31 @@ const STATUS_INTERVAL_MS = 1000
 // Bounds for sanity-checking sensor input. Anything outside these is a fault, not a reading.
 const MAX_PLAUSIBLE_STW_KN = 60
 const MAX_PLAUSIBLE_AWS_KN = 120
+const MAX_PLAUSIBLE_SOG_KN = 60
 const MAX_PLAUSIBLE_HEEL_DEG = 90
-// Circuit breaker: no path is published more often than this (50 Hz, so a 50 Hz IMU heading
-// and the TWA sent with it all go out). A feedback loop
-// through another plugin delivers its next update within the same millisecond, so the
-// chain ends at the first repeat rather than running away, and the server stays
-// responsive. Nothing latches; the status says while it is happening.
+// Values that cannot be right are not used (the input counts as missing). An angle beyond
+// a full turn is degrees on a radian path; variation beyond half a turn likewise.
+const TURN = 2 * Math.PI
+const PLAUSIBLE = {
+  'environment.wind.angleApparent': v => Math.abs(v) <= TURN,
+  'navigation.headingMagnetic': v => Math.abs(v) <= TURN,
+  'navigation.headingTrue': v => Math.abs(v) <= TURN,
+  'navigation.courseOverGroundTrue': v => Math.abs(v) <= TURN,
+  'navigation.courseOverGroundMagnetic': v => Math.abs(v) <= TURN,
+  'navigation.magneticVariation': v => Math.abs(v) <= Math.PI,
+  'navigation.speedOverGround': v => v >= 0 && v * MS_TO_KN <= MAX_PLAUSIBLE_SOG_KN
+}
+// Circuit breaker against a feedback loop: an update driven by another plugin's output (read
+// only when chosen in Settings) goes out at most this often per path. A loop through another
+// plugin delivers its next update within the same millisecond, so the chain ends at the first
+// repeat rather than running away. Sensors are never limited: a burst from a gateway is data.
 const MIN_PUBLISH_INTERVAL_MS = 20
 const RATE_NOTE_MS = 10000 // how long a dropped update keeps the status flagged
-// A sensor's own timing now and then puts two updates within MIN_PUBLISH_INTERVAL_MS (CAN
-// jitter on a 10 Hz compass); a loop drops updates without end. Flag from this many in
-// RATE_NOTE_MS.
-const RATE_FLAG_MIN = 5
+const RATE_FLAG_MIN = 5 // drops in RATE_NOTE_MS that flag a loop
 // Below a breath of wind its direction is noise, and a TWD that swings with every puff is
-// worse than none. TWD and ground wind direction and angle stop below LIGHT_AIR_OFF_KN of
-// TWS and resume from LIGHT_AIR_ON_KN; the gap keeps them from flickering on and off around
-// one value. TWA always goes out: in light air it is what the crew sails by.
+// worse than none. TWD stops below LIGHT_AIR_OFF_KN of TWS and resumes from LIGHT_AIR_ON_KN;
+// the gap keeps it from flickering on and off around one value. Ground wind direction and
+// angle likewise, on ground wind speed. TWA always goes out: it is what the crew sails by.
 const LIGHT_AIR_OFF_KN = 1.5
 const LIGHT_AIR_ON_KN = 2
 // Without a chosen source, each input is read from one sensor: for the first LOCK_WINDOW_MS
@@ -112,6 +121,7 @@ module.exports = function (app) {
   let windTs = {} // path -> timestamp of its latest value
   let windWaiting = new Set() // paths that arrived without their other half
   let lightAir = false
+  let lightAirGround = false
   // Damping (config.damping): heel on the way in, the published values on the way out.
   // Heading is never damped: it must lag as raw apparent wind does.
   const damp = {
@@ -187,6 +197,17 @@ module.exports = function (app) {
   }
   const notes = now => switchNote(now) + rateNote(now)
 
+  // A clock that never goes back. A time fix (NTP, GPS) that sets the system clock back would
+  // otherwise freeze the damping, keep old values fresh, and stop every output.
+  let clockLast = -Infinity
+  let clockShift = 0
+  function nowMs () {
+    const t = Date.now() + clockShift
+    if (t < clockLast) { clockShift += clockLast - t; return clockLast }
+    clockLast = t
+    return t
+  }
+
   function fresh (p, now, maxAge = STALE_MS) {
     const l = latest[p]
     return l && now - l.at < maxAge ? l.value : undefined
@@ -199,7 +220,7 @@ module.exports = function (app) {
   let statusText = ''
   let notice = '' // shown ahead of every status until the config is saved (an upgraded file)
   function status (kind, text) {
-    const now = Date.now()
+    const now = nowMs()
     if (kind === statusKind && now - statusAt < STATUS_INTERVAL_MS) return
     statusKind = kind
     statusText = notice ? `${notice} · ${text}` : text
@@ -294,11 +315,14 @@ module.exports = function (app) {
     return v == null ? undefined : norm360(v * RAD_TO_DEG)
   }
 
-  // values: [{ key (an OUTPUTS key), value }].
+  // values: [{ key (an OUTPUTS key), value }]. Nothing that is not a finite number goes out.
+  const finite = v => typeof v.value === 'number' ? Number.isFinite(v.value) : Object.values(v.value).every(Number.isFinite)
+  const isSensor = src => Object.values(sources).some(s => s.src === src && s.sensor)
   function publish (values, timestamp, from) {
-    const now = Date.now()
-    const kept = values.filter(v => {
-      if (now - (publishedAt[v.key] ?? -Infinity) < MIN_PUBLISH_INTERVAL_MS) return false
+    const now = nowMs()
+    const limited = !isSensor(from) // driven by another plugin's output: a loop is possible
+    const kept = values.filter(finite).filter(v => {
+      if (limited && now - (publishedAt[v.key] ?? -Infinity) < MIN_PUBLISH_INTERVAL_MS) return false
       publishedAt[v.key] = now
       sentAt[v.key] = now
       const st = sentTimes[v.key] = sentTimes[v.key] || []
@@ -306,7 +330,7 @@ module.exports = function (app) {
       while (now - st[0] > RATE_WINDOW_MS) st.shift()
       return true
     })
-    if (kept.length < values.length) noteDrop(now, from)
+    if (kept.length < values.filter(finite).length) noteDrop(now, from)
     values = kept.map(v => ({ path: outPath(v.key), value: v.value }))
     if (!values.length) return
     // No source object: the server stamps $source with plugin.id, which is what the
@@ -372,7 +396,7 @@ module.exports = function (app) {
       const twaS = config.damping.twaS
       p.twa = wrap180(damp.twaOut.update(wrap180(p.twd - hdg), now, twaS))
       values.push({ key: 'twa', value: p.twa / RAD_TO_DEG })
-      if (p.groundWind && !lightAir) {
+      if (p.groundWind && !lightAirGround) {
         p.groundWind.angle = wrap180(damp.gwaOut.update(wrap180(p.groundWind.direction - hdg), now, twaS))
         values.push({ key: 'gwa', value: p.groundWind.angle / RAD_TO_DEG })
       }
@@ -408,6 +432,7 @@ module.exports = function (app) {
       cogFrom: fresh('navigation.courseOverGroundTrue', now) != null ? 'true' : 'magnetic' // for the Live page
     }
     const result = process(input, config)
+    if (!Number.isFinite(result.out.twa) || !Number.isFinite(result.out.tws)) return status('badwind', 'Not publishing — true wind could not be worked out from these inputs')
     lastResult = { input, ...result }
     lastResultAt = now
 
@@ -427,14 +452,14 @@ module.exports = function (app) {
     lastResult.published = { twa, tws, twd, stw: config.corrections.stw.enabled ? damp.stw.v : null, current: cur && { drift: cur.speed, set: cur.deg }, groundWind: gw }
 
     lightAir = tws < (lightAir ? LIGHT_AIR_ON_KN : LIGHT_AIR_OFF_KN)
+    lightAirGround = !!gw && gw.speed < (lightAirGround ? LIGHT_AIR_ON_KN : LIGHT_AIR_OFF_KN)
     lastResult.lightAir = lightAir
+    lastResult.lightAirGround = lightAirGround
     const values = [{ key: 'tws', value: tws / MS_TO_KN }]
     if (twd == null) values.push({ key: 'twa', value: twa / RAD_TO_DEG }) // no heading to send it
     if (gw) values.push({ key: 'gws', value: gw.speed / MS_TO_KN })
-    if (!lightAir) {
-      if (twd != null) values.push({ key: 'twd', value: twd / RAD_TO_DEG })
-      if (gw) values.push({ key: 'gwd', value: gw.direction / RAD_TO_DEG })
-    }
+    if (twd != null && !lightAir) values.push({ key: 'twd', value: twd / RAD_TO_DEG })
+    if (gw && !lightAirGround) values.push({ key: 'gwd', value: gw.direction / RAD_TO_DEG })
     if (config.corrections.leeway.enabled) values.push({ key: 'leeway', value: o.leeway / RAD_TO_DEG })
     if (cur) values.push({ key: 'current', value: { drift: cur.speed / MS_TO_KN, setTrue: cur.deg / RAD_TO_DEG } })
     publish(values, timestamp, from)
@@ -446,7 +471,7 @@ module.exports = function (app) {
     const lacking = missing.length ? ` · no ${missing.join(' or ')}` : ''
     const mode = config.mode === 'shadow' ? 'Shadow' : 'Live'
     if (lightAir) {
-      status('lightair', `${mode} — light air, TWS ${tws.toFixed(1)} kn: TWD and ground wind direction and angle not published until TWS reaches ${LIGHT_AIR_ON_KN} kn` + lacking)
+      status('lightair', `${mode} — light air, TWS ${tws.toFixed(1)} kn: TWD not published until TWS reaches ${LIGHT_AIR_ON_KN} kn` + lacking)
       return
     }
     status('running', `${mode} — TWA ${Math.abs(twa).toFixed(1)}°, TWS ${tws.toFixed(1)} kn, STW ${o.stw.toFixed(2)} kn` + lacking)
@@ -462,7 +487,7 @@ module.exports = function (app) {
   }
 
   function onDelta (delta) {
-    const now = Date.now()
+    const now = nowMs()
     let wind = null // the apparent wind message completed in this delta, worked out after the loop
     let heading = null // likewise the heading update
     for (const update of (delta.updates || [])) {
@@ -482,6 +507,7 @@ module.exports = function (app) {
         const wanted = config.sources[group]
         if (!wanted && sensor) chooseSensor(group, src, now)
         if (src !== inUse(group)) continue
+        if (PLAUSIBLE[v.path] && !PLAUSIBLE[v.path](v.value)) continue
 
         latest[v.path] = { value: v.value, source: src, at: now }
         if (v.path === 'navigation.attitude') { const h = rollDeg(v.value); if (h != null) damp.heel.update(h, now, config.damping.heelS) }
@@ -511,6 +537,7 @@ module.exports = function (app) {
     windTs = {}
     windWaiting = new Set()
     lightAir = false
+    lightAirGround = false
     resetDamping()
     lastResult = null
     statusKind = null // so the next status shows at once (and a cleared notice goes with it)
@@ -547,7 +574,7 @@ module.exports = function (app) {
         try {
           sm.subscribe(subscription, unsubscribes, err => app.setPluginError(String(err)), onDelta)
           status('waiting', 'Waiting for apparent wind')
-          windTimer = setInterval(() => checkWind(Date.now()), STATUS_INTERVAL_MS)
+          windTimer = setInterval(() => checkWind(nowMs()), STATUS_INTERVAL_MS)
           if (windTimer.unref) windTimer.unref()
           return
         } catch (e) {
@@ -664,7 +691,7 @@ module.exports = function (app) {
   // ---- API for the webapp -------------------------------------------------
 
   function liveSnapshot () {
-    const now = Date.now()
+    const now = nowMs()
     const inputs = {}
     for (const [path, l] of Object.entries(latest)) inputs[path] = { source: l.source, ageMs: now - l.at }
     return {

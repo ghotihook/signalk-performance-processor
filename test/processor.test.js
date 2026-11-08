@@ -490,3 +490,14 @@ test('salvage keeps each part that passes on its own, resets the rest, and leave
   assert.deepStrictEqual(normalizeConfig(r.config).errors, [], 'what it gives is valid')
   assert.strictEqual(salvage({ schema: 99 }), null)
 })
+
+test('a table value or K that cannot be right is refused: STW ±5 kn, TWA ±30°, TWS ±10 kn, K 0 to 30', () => {
+  const err = c => normalizeConfig({ corrections: c }).errors.join('; ')
+  assert.match(err({ stw: { heel: [0], stw: [5], add: [[5.1]] } }), /STW table: every value must be within ±5 kn/)
+  assert.match(err({ twa: { twa: [90], tws: [10], add: [[30.5]] } }), /TWA table: every value must be within ±30°/)
+  assert.match(err({ tws: { twa: [90], tws: [10], add: [[-10.5]] } }), /TWS table: every value must be within ±10 kn/)
+  assert.match(err({ leeway: { k: -1 } }), /Leeway K: must be from 0 to 30/)
+  assert.match(err({ leeway: { k: 31 } }), /Leeway K: must be from 0 to 30/)
+  assert.deepStrictEqual(normalizeConfig({ corrections: { stw: { heel: [0], stw: [5], add: [[-5]] }, tws: { twa: [90], tws: [10], add: [[10]] }, leeway: { k: 30 } } }).errors, [], 'the limits themselves are fine')
+  assert.deepStrictEqual(normalizeConfig({ corrections: { leeway: { k: 'x' } } }).errors, ['Leeway K: must be a number'], 'one error for a non-number')
+})

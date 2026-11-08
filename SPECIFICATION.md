@@ -84,6 +84,8 @@ or not finite (any path except attitude), is ignored.
 ### 2.3 Freshness
 
 An input is used only if it arrived within `STALE = 3 s`; variation within 10 minutes.
+Every age and every damping step is measured on a clock that never goes back: a time fix
+that sets the system clock back continues from where it was.
 
 ### 2.4 Apparent wind pairing
 
@@ -101,6 +103,12 @@ AWA is normalised: `AWA = wrap180(awa_rad × 180/π)`.
 | AWS | < 0 or > 120 kn: nothing published, status says why |
 | STW | < 0 or > 60 kn: nothing published, status says why; corrected STW not republished |
 | Heel | not finite, or abs > 90° → treated as missing |
+| SOG | < 0 or > 60 kn → treated as missing |
+| AWA, heading, COG | abs > 2π (degrees on a radian path) → treated as missing |
+| Variation | abs > π → treated as missing |
+| True wind | not finite: nothing from the wind calculation published, status says why |
+
+Nothing that is not a finite number is ever published.
 
 ---
 
@@ -331,7 +339,8 @@ y ← y + α · (x − y)
   reaches `1 − e⁻¹ ≈ 63%` of a step after τ seconds at any rate.
 - On a steady ramp the output lags by τ seconds.
 - White noise on each sample is reduced to about `√(Δt / 2τ)` of its size.
-- First sample, τ = 0, or a gap longer than **10 s**: the new value is taken as it is.
+- First sample, τ = 0, or a gap longer than both **10 s** and τ: the new value is taken as
+  it is. (A shorter gap keeps a long average, such as current's, through a dropout.)
 - A repeat of the same time: no change.
 - **Directions** (`SmoothAngle`): smoothed on the unit circle, sin and cos separately, so 359°
   and 1° average to 0°.
@@ -399,13 +408,15 @@ lightAir = TWS_d < 2.0 kn     if lightAir was already on
          = TWS_d < 1.5 kn     otherwise
 ```
 
-In light air **TWD, ground wind direction and ground wind angle are not sent**. **TWA, TWS
-and ground wind speed always are**: TWA is what the crew sails by.
+In light air **TWD is not sent**. Ground wind direction and angle follow the same rule on the
+damped ground wind speed. **TWA, TWS and ground wind speed always are**: TWA is what the crew
+sails by.
 
 ### 7.3 Rate limit
 
-No output is sent more often than 50 Hz (20 ms apart), counted per output. A dropped update is a
-sign of a feedback loop: the status flags it from 5 drops in 10 s.
+An update driven by another plugin's output (read only when chosen, §2.2) is sent at most
+every 20 ms per output (50 Hz); faster ones are dropped, and the status flags a feedback loop
+from 5 drops in 10 s. Updates driven by a sensor are never limited.
 
 ### 7.4 Stopped wind
 
@@ -447,7 +458,8 @@ tws: { enabled, twa:  [...], tws: [...], add: [[...], ...] }
 Each axis has 1 to 100 entries, all numbers, going up strictly. Blank cells are `null` (§4.4).
 Validation refuses: an axis outside that, a table with fields other than `enabled`, its two
 axes and `add`, the wrong number of rows or of values in a row, a non-number, an STW table with
-no values, the TWA constraint of §5.4, damping outside its limits, variation outside ±180°, a
+no values, a cell beyond ±5 kn (STW), ±30° (TWA) or ±10 kn (TWS), leeway K outside 0–30,
+the TWA constraint of §5.4, damping outside its limits, variation outside ±180°, a
 section that is not an object, a source that is not a name.
 
 The text format (`public/tables.js` `format`, `parse`): a header row `heel\stw` or `TWA\TWS`
@@ -549,12 +561,13 @@ cell at a time). Neighbouring cells are tied together; a cell with too little da
 | Auto lock window | 2 s | `index.js` `LOCK_WINDOW_MS` |
 | Status note after Auto changes sensor | 60 s | `index.js` `SWITCH_NOTE_MS` |
 | Rate window (Auto, Settings) | 10 s | `index.js` `RATE_WINDOW_MS` |
-| Max plausible AWS / STW / heel | 120 kn / 60 kn / 90° | `index.js` |
-| Rate limit | 20 ms (50 Hz) | `index.js` `MIN_PUBLISH_INTERVAL_MS` |
+| Max plausible AWS / STW / SOG / heel | 120 kn / 60 kn / 60 kn / 90° | `index.js` |
+| Table cell limits, K range | ±5 kn, ±30°, ±10 kn; 0–30 | `lib/processor.js` `TABLES`, `MAX_LEEWAY_K` |
+| Loop guard (another plugin's output only) | 20 ms (50 Hz) | `index.js` `MIN_PUBLISH_INTERVAL_MS` |
 | Loop flag | 5 drops in 10 s | `index.js` `RATE_FLAG_MIN`, `RATE_NOTE_MS` |
 | Light air off / on | 1.5 / 2.0 kn | `index.js` `LIGHT_AIR_OFF_KN`, `LIGHT_AIR_ON_KN` |
 | Status refresh | 1 s | `index.js` `STATUS_INTERVAL_MS` |
-| Damping reset gap | 10 s | `lib/damping.js` `RESET_S` |
+| Damping reset gap | 10 s, or τ if longer | `lib/damping.js` `RESET_S` |
 | Leeway cap | 15° | `lib/processor.js` `MAX_LEEWAY_DEG` |
 | Leeway fade | 1.5 → 3 kn | `lib/processor.js` `LEEWAY_FADE_KN` |
 | TWA taper | 30° off the wind, 10° short of dead downwind | `lib/processor.js` `TWA_TAPER_UP_DEG`, `TWA_TAPER_DOWN_DEG` |

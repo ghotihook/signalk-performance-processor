@@ -175,10 +175,10 @@ One rule for the TWA table (Save names any breach): corrected TWA must move with
 
 **Built in:**
 
-- **Light air**: below 1.5 kn TWS, TWD and ground wind direction and angle are held back until 2 kn; TWA and TWS still go out.
-- **Stale or implausible input** (older than 3 s; wind over 120 kn, STW over 60 kn, heel beyond 90°) is not used; the status says why.
+- **Never bad data**: only finite numbers go out. Stale or implausible input (older than 3 s; wind over 120 kn, STW or SOG over 60 kn, heel beyond 90°, degrees on a radian path) is not used. Table cells are limited (STW ±5 kn, TWA ±30°, TWS ±10 kn, K 0–30). A clock set back does not stop anything.
+- **Light air**: below 1.5 kn TWS, TWD is held back until 2 kn; ground wind direction and angle likewise on ground wind speed. TWA and TWS always go out.
 - **One sensor per input**, never another plugin's output unless chosen in Settings. Auto picks the busiest sensor and moves only if it stops.
-- **No path faster than 50 Hz**, so a loop with another plugin shows up in the status.
+- **Loop guard**: another plugin's output can't drive any path faster than 50 Hz, so a loop shows up in the status. Sensors are never limited.
 
 ## The webapp
 
@@ -249,10 +249,10 @@ The status line (admin UI and webapp) says what the plugin is doing.
 | (X sends it: choose it in Settings) | Another sensor sends a missing input |
 | … from X: Y stopped sending | Auto moved to sensor X. Normal 30 s after boot on NMEA 2000 (device renamed); otherwise check Y |
 | (only from X, another plugin) | Only another plugin sends it: choose it in Settings, or read its sensor |
-| Not publishing — … not plausible | A sensor fault |
+| Not publishing — … | A sensor fault, or true wind that can't be worked out |
 | … light air … | TWS under 1.5 kn: TWD held back |
 | … no heel / heading / SOG/COG | Running without it |
-| Rate limited … | Over 50 Hz, usually a loop with another plugin |
+| Rate limited … | Another plugin's output driving a path over 50 Hz: a loop |
 | Configuration: … | The saved config is invalid or unreadable; not running. Fix it in the webapp |
 | Upgraded from an earlier release … | See [Configuration](#configuration). Save to clear |
 

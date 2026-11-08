@@ -224,18 +224,32 @@ test('a loop through another plugin is cut at the first repeat, flagged, and nev
   assert.strictEqual(t.errors.filter(e => /Rate limited/.test(e)).length, 1, 'logged once per episode')
 })
 
-test('a burst is thinned to 50 Hz, not stopped, and the flag clears', () => {
-  const h = harness({ mode: 'replace' })
+test('a burst from another plugin is thinned to 50 Hz, not stopped, and the flag clears', () => {
+  const h = harness({ mode: 'replace', sources: { stw: 'signalk-other' } })
   h.feed([{ path: 'navigation.attitude', value: { roll: -20 * RAD } }])
   let published = 0
-  for (let i = 0; i < 300; i++) published += h.feed([{ path: 'navigation.speedThroughWater', value: (5 + i * 0.001) / MS_TO_KN }], 'h2000.II', 1).length
+  for (let i = 0; i < 300; i++) published += h.feed([{ path: 'navigation.speedThroughWater', value: (5 + i * 0.001) / MS_TO_KN }], 'signalk-other', 1).length
   assert.ok(published >= 15 && published <= 16, `${published} of 300 published over 0.3 s`)
   // back to a normal rate: every sample goes out again
-  for (let i = 0; i < 5; i++) assert.strictEqual(h.feed([{ path: 'navigation.speedThroughWater', value: 6 / MS_TO_KN }]).length, 1)
+  for (let i = 0; i < 5; i++) assert.strictEqual(h.feed([{ path: 'navigation.speedThroughWater', value: 6 / MS_TO_KN }], 'signalk-other').length, 1)
   h.feed(boat); h.feed(wind)
   assert.match(h.statuses[h.statuses.length - 1], /Rate limited/)
   h.feed(wind, 'h2000.II', 11000)
   assert.doesNotMatch(h.statuses[h.statuses.length - 1], /Rate limited/)
+})
+
+test('a sensor is never rate limited: a gateway burst all goes out, and is not called a loop', () => {
+  const h = harness({ mode: 'replace' })
+  h.feed(boat); h.feed(windHdg)
+  let hdt = 0
+  for (let i = 0; i < 20; i++) {
+    h.feed(boat, 'h2000.II', 250)
+    for (let k = 0; k < 3; k++) hdt += 'navigation.headingTrue' in paths(h.feed([{ path: 'navigation.headingMagnetic', value: (110 + k) * RAD }], 'h2000.II', 0)) ? 1 : 0
+  }
+  assert.strictEqual(hdt, 60, 'every compass message in each burst')
+  h.feed(windHdg)
+  assert.doesNotMatch(h.statuses[h.statuses.length - 1], /Rate limited/)
+  assert.deepStrictEqual(h.errors.filter(e => /Rate limited/.test(e)), [])
 })
 
 test('light air: TWD stops below 1.5 kn of TWS and comes back from 2 kn; TWA never stops', async () => {
@@ -1036,4 +1050,96 @@ test('raw STW goes out on its own path, unchanged, in both modes and with the ST
       assert.ok(Math.abs(out['navigation.speedThroughWaterRaw'] - 5 / MS_TO_KN) < 1e-12, `${mode}, table ${enabled ? 'on' : 'off'}`)
     }
   }
+})
+
+// ---- robustness: it never publishes bad data ----
+
+test('the clock set back an hour (a time fix): everything keeps going, and nothing is called a loop', () => {
+  const h = harness({ mode: 'replace', damping: { trueWindS: 3 } })
+  for (let i = 0; i < 30; i++) h.feed([...boat, ...windHdg])
+  clock -= 3600 * 1000
+  let out = []
+  for (let i = 0; i < 150; i++) out = paths(h.feed([...boat, ...windHdg.map(v => v.path === 'environment.wind.angleApparent' ? { ...v, value: 60 * RAD } : v)]))
+  assert.ok('environment.wind.directionTrue' in out && 'environment.wind.angleTrueWater' in out, 'still publishing')
+  const twd = deg(out['environment.wind.directionTrue'])
+  const settled = deg(paths(harness({ mode: 'replace', damping: { trueWindS: 0 } }).feed([...boat, ...windHdg.map(v => v.path === 'environment.wind.angleApparent' ? { ...v, value: 60 * RAD } : v)]))['environment.wind.directionTrue'])
+  assert.ok(Math.abs(twd - settled) < 1, `damping kept running: TWD ${twd} reaching ${settled}`)
+  assert.doesNotMatch(h.statuses[h.statuses.length - 1], /Rate limited/)
+})
+
+test('the clock set back: a sensor that then stops is stale after 3 s, not fresh for an hour', () => {
+  const h = harness({ mode: 'replace' })
+  for (let i = 0; i < 10; i++) h.feed([...boat, ...windHdg])
+  clock -= 3600 * 1000
+  let out = []
+  for (let i = 0; i < 40; i++) out = paths(h.feed([...boat.filter(v => !/heading/.test(v.path)), ...wind]))
+  assert.ok(!('environment.wind.directionTrue' in out), 'no TWD 4 s after the compass stopped')
+})
+
+test('implausible values are not used: SOG 1000 kn, angles in degrees on radian paths, variation beyond ±180°', () => {
+  const h = harness({ mode: 'replace', damping: { currentS: 0, trueWindS: 0, twaS: 0 } })
+  const good = paths(h.feed([...boat, ...windHdg]))
+  const sog = paths(h.feed([...boat.map(v => v.path === 'navigation.speedOverGround' ? { ...v, value: 1000 / MS_TO_KN } : v), ...windHdg], 'h2000.II', 100))
+  assert.ok(sog['environment.current'].drift * MS_TO_KN < 1, 'the last good SOG, not 1000 kn')
+  const stale = paths(h.feed([...boat.map(v => v.path === 'navigation.speedOverGround' ? { ...v, value: 1000 / MS_TO_KN } : v), ...windHdg], 'h2000.II', 3100))
+  assert.ok(!('environment.current' in stale) && !('environment.wind.speedOverGround' in stale), 'and none once that is stale')
+  const hdg = paths(h.feed([...boat.map(v => v.path === 'navigation.headingMagnetic' ? { ...v, value: 110 } : v), ...wind], 'h2000.II', 3100))
+  assert.ok(!('environment.wind.directionTrue' in hdg) && !('navigation.headingTrue' in hdg), 'heading 110 on a radian path: no heading')
+  const awa = h.feed([...boat, ...windHdg.map(v => v.path === 'environment.wind.angleApparent' ? { ...v, value: 35 } : v)], 'h2000.II', 3100)
+  assert.ok(!awa.some(o => o.values.some(v => /wind\.(speedTrue|directionTrue)/.test(v.path))), 'AWA 35 on a radian path: no true wind')
+  const vr = paths(h.feed([...boat, ...windHdg, { path: 'navigation.magneticVariation', value: 12.8 }], 'h2000.II', 3100))
+  close(deg(vr['navigation.headingTrue']), 110 + DEFAULTS.variation, 1e-6, 'variation 12.8 rad ignored: the fallback')
+  close(deg(good['navigation.headingTrue']), 110 + DEFAULTS.variation, 1e-6)
+})
+
+test('ground wind direction and angle wait for ground wind speed, as TWD waits for TWS', () => {
+  const h = harness({ mode: 'replace', damping: { heelS: 0, trueWindS: 0, twaS: 0, stwS: 0, currentS: 0 } })
+  // 6 kn through the water dead downwind in 6 kn of true wind, held still over the ground by a
+  // 6 kn current against: the air over the ground is still
+  const run = [{ path: 'navigation.speedThroughWater', value: 6 / MS_TO_KN }, { path: 'navigation.headingTrue', value: 0 }, { path: 'navigation.attitude', value: { roll: 0 } },
+    { path: 'navigation.speedOverGround', value: 0 }, { path: 'navigation.courseOverGroundTrue', value: 0 }]
+  const out = paths(h.feed([...run, { path: 'environment.wind.angleApparent', value: 0 }, { path: 'environment.wind.speedApparent', value: 0.01 / MS_TO_KN }]))
+  assert.ok('environment.wind.speedOverGround' in out, 'ground wind speed goes out')
+  assert.ok(!('environment.wind.directionGround' in out) && !('environment.wind.angleTrueGround' in out), 'its direction and angle do not')
+  assert.ok('environment.wind.directionTrue' in out, 'TWD (6 kn) does')
+})
+
+test('a 12 s wind dropout keeps the 120 s current average', () => {
+  const h = harness({ mode: 'replace' })
+  let cur
+  for (let i = 0; i < 1200; i++) cur = paths(h.feed([...boat, ...windHdg]))['environment.current']
+  h.feed(boat.filter(v => !/Ground|courseOver/.test(v.path)), 'h2000.II', 12000)
+  const after = paths(h.feed([...boat.map(v => v.path === 'navigation.speedOverGround' ? { ...v, value: 9 / MS_TO_KN } : v), ...windHdg]))['environment.current']
+  assert.ok(Math.abs(after.drift - cur.drift) * MS_TO_KN < 0.5, `one odd sample after the gap moves it ${((after.drift - cur.drift) * MS_TO_KN).toFixed(2)} kn`)
+})
+
+test('nothing that is not a finite number is ever published, and nothing throws', () => {
+  const proc = require('../lib/processor')
+  const real = proc.process
+  const index = require.resolve('../index.js')
+  const run = (spoil) => {
+    delete require.cache[index]
+    proc.process = (input, cfg) => { const r = real(input, cfg); spoil(r.out); return r }
+    try {
+      const fresh = require('../index.js')
+      let cb = null; const published = []; const statuses = []
+      const app = { getDataDirPath: () => fs.mkdtempSync(path.join(os.tmpdir(), 'spp-')), debug () {}, error () {}, setPluginError () {}, setPluginStatus: m => statuses.push(m),
+        handleMessage (id, d) { if (d.updates[0].values) published.push(...d.updates[0].values) }, subscriptionmanager: { subscribe: (s, u, e, f) => { cb = f } } }
+      fresh(app).start({ })
+      for (let i = 0; i < 3; i++) { clock += 100; cb({ updates: [{ $source: 'h2000.II', source: { label: 'h2000' }, timestamp: 'x' + i, values: [...boat, ...windHdg] }] }) }
+      const bad = published.filter(v => typeof v.value === 'number' ? !Number.isFinite(v.value) : Object.values(v.value).some(x => !Number.isFinite(x)))
+      return { bad, sent: published.map(v => v.path), status: statuses[statuses.length - 1] }
+    } finally {
+      proc.process = real
+      delete require.cache[index]
+    }
+  }
+  const a = run(o => { o.twd = Infinity; o.current = { drift: NaN, set: 3 } })
+  assert.deepStrictEqual(a.bad, [])
+  assert.ok(!a.sent.some(p => /directionTrue|environment\.current/.test(p)), 'no TWD, no current')
+  assert.ok(a.sent.some(p => /speedTrue/.test(p)), 'the rest still goes out')
+  const b = run(o => { o.tws = NaN })
+  assert.deepStrictEqual(b.bad, [])
+  assert.ok(!b.sent.some(p => /wind\.(speedTrue|directionTrue)/.test(p)))
+  assert.match(b.status, /true wind could not be worked out/)
 })
