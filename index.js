@@ -4,7 +4,9 @@ const fs = require('fs')
 const path = require('path')
 const { DEFAULTS } = require('./lib/defaults')
 const { Smooth, SmoothAngle, SmoothVector } = require('./lib/damping')
-const { process, correctInputs, normalizeConfig, CORRECTIONS, CONFIG_SCHEMA, MAX_LEEWAY_DEG, LEEWAY_FADE_KN, TWA_TAPER_UP_DEG, TWA_TAPER_DOWN_DEG } = require('./lib/processor')
+const { process, correctInputs, normalizeConfig, CORRECTIONS, CONFIG_SCHEMA, MAX_LEEWAY_DEG, LEEWAY_FADE_KN, TWA_TAPER_UP_DEG, TWA_TAPER_DOWN_DEG, TWA_SLOPE_MAX } = require('./lib/processor')
+const { Learner } = require('./lib/learn')
+const history = require('./lib/history')
 
 const MS_TO_KN = 1.94384
 const RAD_TO_DEG = 180 / Math.PI
@@ -68,7 +70,12 @@ const OUTPUTS = {
   gwa: { path: 'environment.wind.angleTrueGround', units: 'rad', description: 'Ground wind angle from the bow, + to starboard' },
   // The Signal K schema has no ground wind direction (directionTrue is the water wind's).
   gwd: { path: 'environment.wind.directionGround', units: 'rad', description: 'Ground wind direction, true: where the wind over the ground comes from', custom: true },
-  hdt: { path: 'navigation.headingTrue', units: 'rad', description: 'True heading: magnetic heading plus variation' }
+  hdt: { path: 'navigation.headingTrue', units: 'rad', description: 'True heading: magnetic heading plus variation' },
+  // The paddlewheel's own value, not an output: in Replace mode corrected STW wins
+  // navigation.speedThroughWater by source priority, and the server drops the loser before
+  // history providers see it, so this is how raw STW reaches history for learning (§7.5,
+  // §11.2). The same path in both modes.
+  stwRaw: { path: 'navigation.speedThroughWaterRaw', units: 'm/s', description: 'Speed through water as the sensor sent it, before the STW table: recorded for learning', custom: true, fixed: true }
 }
 const SHADOW_SUFFIX = 'Corrected'
 
@@ -134,7 +141,7 @@ module.exports = function (app) {
   }
 
   function outPath (key) {
-    return config.mode === 'shadow' ? OUTPUTS[key].path + SHADOW_SUFFIX : OUTPUTS[key].path
+    return config.mode === 'shadow' && !OUTPUTS[key].fixed ? OUTPUTS[key].path + SHADOW_SUFFIX : OUTPUTS[key].path
   }
 
   // Loop guard. The server stamps our deltas with $source = plugin.id; tolerate a
@@ -308,15 +315,17 @@ module.exports = function (app) {
 
   // Corrected STW goes out as soon as the paddlewheel reports, at its own rate.
   function onStw (rawMs, timestamp, now, from) {
-    const stw = config.corrections.stw
-    if (!stw.enabled) return
     const stwKn = rawMs * MS_TO_KN
     // A sensor fault is not a reading; republishing it under this plugin's source
     // would put the source the user ranked first behind a bad number.
     if (stwKn < 0 || stwKn > MAX_PLAUSIBLE_STW_KN) return
-    const { c } = correctInputs({ stw: stwKn, heel: heelDeg(now) }, config)
-    const ms = damp.stw.update(c.stw, now, config.damping.stwS) / MS_TO_KN
-    publish([{ key: 'stw', value: ms }], timestamp, from)
+    // The raw value goes out with the corrected one, in one delta (§7.5).
+    const values = [{ key: 'stwRaw', value: rawMs }]
+    if (config.corrections.stw.enabled) {
+      const { c } = correctInputs({ stw: stwKn, heel: heelDeg(now) }, config)
+      values.push({ key: 'stw', value: damp.stw.update(c.stw, now, config.damping.stwS) / MS_TO_KN })
+    }
+    publish(values, timestamp, from)
   }
 
   // Variation in degrees: from Signal K (the GPS) when fresh, else the configured fallback.
@@ -658,6 +667,56 @@ module.exports = function (app) {
     }
   }
 
+  // Learning (§11): read sailing from the History API a local day at a time, through
+  // lib/learn.js, into day files of records. Nothing is fitted or applied here.
+  let learn = { running: false, since: null, until: null, day: null, days: {}, error: '' }
+  const learnDir = () => path.join(app.getDataDirPath(), 'learn')
+  const localDay = ms => { const d = new Date(ms); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
+  const dayStart = iso => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d).getTime() }
+
+  async function runLearn (since, until, sources) {
+    let api
+    try { api = typeof app.getHistoryApi === 'function' ? await app.getHistoryApi() : null } catch (e) { api = null }
+    if (!api) throw new Error('No history provider: install one (such as signalk-parquet or signalk-to-influxdb2) and record some sailing')
+    const lack = history.missing(sources)
+    if (lack.length) throw new Error(`No sensor in use for ${lack.map(g => INPUT_LABELS[g]).join(', ')}: wait for its data, or choose it in Settings`)
+    fs.mkdirSync(learnDir(), { recursive: true })
+    const fallback = config ? config.variation : DEFAULTS.variation
+    for (let t = dayStart(since); t <= dayStart(until); t = dayStart(localDay(t + 36 * 3600 * 1000))) {
+      const day = localDay(t)
+      learn.day = day
+      const rows = await history.dayRows(api, t, dayStart(localDay(t + 36 * 3600 * 1000)), sources, fallback, plugin.id)
+      const recs = []
+      const l = new Learner(r => recs.push(r))
+      for (const r of rows) l.add(r)
+      l.flush()
+      const file = path.join(learnDir(), `${day}.jsonl`)
+      if (recs.length) fs.writeFileSync(file, recs.map(r => JSON.stringify(r)).join('\n') + '\n')
+      else if (fs.existsSync(file)) fs.unlinkSync(file)
+      const count = k => recs.filter(r => r.type === 'mnv' && r.kind === k).length
+      learn.days[day] = {
+        seconds: rows.length,
+        tacks: count('mnvTack'), gybes: count('mnvGybe'), roundings: count('mnvComeDown') + count('mnvComeUp'),
+        legsUp: recs.filter(r => r.type === 'leg' && r.kind === 'up').length,
+        legsOff: recs.filter(r => r.type === 'leg' && r.kind === 'off').length
+      }
+    }
+  }
+
+  function startLearn (body) {
+    const isDay = s => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s)
+    const since = body.since; const until = body.until || localDay(Date.now())
+    if (!isDay(since) || !isDay(until) || since > until) return 'since and until must be local dates (YYYY-MM-DD), since first'
+    if (learn.running) return 'a scan is already running'
+    // The sensors in use now, unless the request names them: never another plugin's output.
+    const sources = Object.fromEntries(Object.keys(INPUTS).map(g => [g, (body.sources || {})[g] || (config ? inUse(g) : undefined)]).filter(([, v]) => v))
+    learn = { running: true, since, until, day: null, days: {}, error: '', sources }
+    runLearn(since, until, sources)
+      .catch(e => { learn.error = e.message })
+      .finally(() => { learn.running = false; learn.day = null })
+    return null
+  }
+
   function readBody (req) {
     if (req.body && typeof req.body === 'object') return Promise.resolve(req.body)
     return new Promise((resolve, reject) => {
@@ -695,6 +754,19 @@ module.exports = function (app) {
       res.json({ config: cfg })
     })
 
+    router.put('/learn/scan', async (req, res) => {
+      let body
+      try { body = await readBody(req) } catch (e) { return res.status(400).json({ errors: ['body is not valid JSON'] }) }
+      const err = startLearn(body || {})
+      if (err) return res.status(err.startsWith('a scan') ? 409 : 400).json({ errors: [err] })
+      res.status(202).json(learn)
+    })
+
+    router.get('/learn/status', (req, res) => {
+      res.set('Cache-Control', 'no-store')
+      res.json(learn)
+    })
+
     router.get('/live', (req, res) => {
       res.set('Cache-Control', 'no-store')
       res.json(liveSnapshot())
@@ -705,12 +777,13 @@ module.exports = function (app) {
 }
 
 // Fixed behaviour the webapp describes, sent from here so its text always matches the code.
-// (The tables' layout it reads from tables.js, which it loads from this plugin.)
+// (Each table's axes it reads from the table itself.)
 const BEHAVIOUR = {
   maxLeewayDeg: MAX_LEEWAY_DEG,
   leewayFadeKn: LEEWAY_FADE_KN,
   twaTaperUpDeg: TWA_TAPER_UP_DEG,
   twaTaperDownDeg: TWA_TAPER_DOWN_DEG,
+  twaSlopeMax: TWA_SLOPE_MAX,
   lightAirOffKn: LIGHT_AIR_OFF_KN,
   lightAirOnKn: LIGHT_AIR_ON_KN,
   staleS: STALE_MS / 1000,

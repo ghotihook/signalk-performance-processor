@@ -1,37 +1,45 @@
-// The calibration tables' layout (the B&G H5000's) and their text format, shared by the
-// plugin (require) and the webapp (a <script> tag), so a table pasted in the webapp, a
-// table from the boatcal plugincal tool and a saved config all read the same way. The
-// lookups every table shares (zero at 0 kn, blending the TWA rows) are here too, so the
-// webapp's worked examples use exactly the plugin's arithmetic.
+// The calibration tables and their text format, shared by the plugin (require) and the webapp
+// (a <script> tag), so a table pasted in the webapp, a table from boatcal or a user's own agent
+// and a saved config all read the same way. The lookup every table shares is here too, so
+// the webapp's worked examples use exactly the plugin's arithmetic.
 //
-// Text format, one table per paste: a header row of TWS or boat speed columns, then one
-// row per table row, its label first. Commas, tabs, semicolons or spaces between cells;
-// blank cells allowed where the table allows them (fillGaps says what a blank takes).
+// Every table is a grid whose axes are saved with it: rows down the side, columns along the
+// top, and add[row][column]. Any axes will do, as long as each goes up (AXIS_RANGE says how
+// far): a coarse H5000-style table and a fine one are read the same way.
 //
-//   heel\stw, 1, 2.5, 5, 7.5, 10, 12.5, 15          rows at heel -20, -10, 0, 10, 20
-//   -20,      0.5, 0.65, 0.29, 0.35, 0.21, 0.06, -0.08 (+ = starboard side down)
+//   STW table  { heel: [...], stw: [...], add }   rows heel (deg, + = starboard side down),
+//                                                 columns boat speed (kn)
+//   TWA table  { twa: [...], tws: [...], add }    rows |TWA| (deg), columns TWS (kn)
+//   TWS table  { twa: [...], tws: [...], add }    the same
 //
-//   TWA\TWS, 5, 10, 15, 20, 25, 30                  rows at TWA 40, 90, 165
-//   40,      -9, -7, -5, -2, 3, 6
+// Text format, one table per paste: a header row of the columns, then one row per table
+// row, its label first. Commas, tabs, semicolons or spaces between cells; blank cells
+// allowed (fillGaps says what a blank takes); rows in any order.
 //
-//   TWS, 5, 10, 15, 20, 25, 30                       rows: upwind, reach, downwind (kn),
-//   upwind, 0, 0, 0, 0, 0, 0                          up angle, down angle (deg TWA)
+//   heel\stw, 1, 2, 3, ...
+//   -30,      0.5, 0.65, 0.29, ...       (+ = starboard side down)
+//
+//   TWA\TWS, 4, 6, 8, ...
+//   30,      -9, -7, -5, ...
 ;(function (root) {
   'use strict'
 
-  const AXES = {
-    stwHeel: [-20, -10, 0, 10, 20], // STW table rows, deg of heel, + = starboard side down
-    stwSpeed: [1, 2.5, 5, 7.5, 10, 12.5, 15], // STW table columns, boat speed kn (the H5000's, and 1 kn where a paddlewheel stalls)
-    twaTws: [5, 10, 15, 20, 25, 30], // TWA table columns, TWS kn
-    twaRows: { upwind: 40, reach: 90, downwind: 165 }, // TWA table rows, deg TWA
-    twsTws: [5, 10, 15, 20, 25, 30] // TWS table columns, TWS kn
+  // Each table's axes: the field each is saved in, its label in the text format.
+  const KINDS = {
+    stw: { rows: 'heel', cols: 'stw', corner: 'heel\\stw' },
+    twa: { rows: 'twa', cols: 'tws', corner: 'TWA\\TWS' },
+    tws: { rows: 'twa', cols: 'tws', corner: 'TWA\\TWS' }
   }
-  const TWA_ROW_KEYS = ['upwind', 'reach', 'downwind']
-  const TWS_ROWS = [ // key, label in the text format, blanks allowed
-    ['upwind', 'upwind', true], ['reach', 'reach', true], ['downwind', 'downwind', true],
-    ['upAngle', 'up angle', false], ['downAngle', 'down angle', false]
-  ]
-  const REACH_DEG = 90 // the TWS table's reaching correction applies in full at this TWA
+  // What each axis may hold. Speeds start above 0: a row runs from zero at 0 kn to its
+  // first column (fromZero).
+  const AXIS_RANGE = {
+    heel: { what: 'heel rows', unit: '°', min: -90, max: 90 },
+    stw: { what: 'boat speed columns', unit: ' kn', min: 0, max: 60, aboveMin: true },
+    twa: { what: 'TWA rows', unit: '°', min: 0, max: 180 },
+    tws: { what: 'TWS columns', unit: ' kn', min: 0, max: 120, aboveMin: true }
+  }
+  const MAX_AXIS = 100 // entries on any one axis
+  const REACH_DEG = 90 // the reaching row of the schema 6 TWS table (twsFromRows)
 
   // ---- lookups ----------------------------------------------------------------------
 
@@ -50,8 +58,34 @@
   // beyond it.
   const fromZero = (xs, ys, x) => x <= 0 ? 0 : x < xs[0] ? ys[0] * x / xs[0] : interp(xs, ys, x)
 
-  // The rows of a table blended by |TWA|: the first row in full up to its angle, the
-  // second at its angle, the third in full from its angle, linear between.
+  // The rows either side of v and how far between: [i, j, f], f = 0 at row i, 1 at row j.
+  // Beyond either end, the end row.
+  function bracket (xs, v) {
+    if (v <= xs[0]) return [0, 0, 0]
+    const n = xs.length - 1
+    if (v >= xs[n]) return [n, n, 0]
+    let i = 0
+    while (xs[i + 1] < v) i++
+    return [i, i + 1, (v - xs[i]) / (xs[i + 1] - xs[i])]
+  }
+
+  // A table at row value r and speed s, from its filled grid (fillGaps): along each row by
+  // speed from zero, then linear between the rows either side of r, the end row held beyond
+  // either end.
+  function lookup (rows, cols, filled, r, s) {
+    const [i, j, f] = bracket(rows, r)
+    const a = fromZero(cols, filled[i], s)
+    return f === 0 ? a : a * (1 - f) + fromZero(cols, filled[j], s) * f
+  }
+
+  // The same, from a table as saved (blanks and all). The plugin caches the filled grid.
+  function value (kind, t, r, s) {
+    const k = KINDS[kind]
+    return lookup(t[k.rows], t[k.cols], fillGaps(t.add), r, s)
+  }
+
+  // The rows of a schema 6 table blended by |TWA|: the first row in full up to its angle,
+  // the second at its angle, the third in full from its angle, linear between.
   function blendRows (absTwa, upAngle, reachAngle, downAngle, up, reach, down) {
     if (absTwa <= upAngle) return up
     if (absTwa <= reachAngle) return up + (reach - up) * (absTwa - upAngle) / (reachAngle - upAngle)
@@ -80,15 +114,42 @@
     return table.map(r => r.map(v => v == null ? 0 : v))
   }
 
-  // TWS table: knots added at this |TWA| and TWS. Upwind correction in full up to the up
-  // angle, reaching in full at 90, downwind in full from the down angle, linear between, so
-  // it never steps; each row by TWS from zero at 0 kn. The plugin requires up angle < 90 <
-  // down angle (normalizeConfig); the clamps here only keep a bad table from dividing by 0.
-  function twsCorrection (t, absTwa, tws) {
-    const [up, reach, down] = fillGaps([t.upwind, t.reach, t.downwind]).map(r => fromZero(t.tws, r, tws))
-    const upA = Math.min(REACH_DEG - 1, interp(t.tws, t.upAngle, tws))
-    const downA = Math.max(REACH_DEG + 1, interp(t.tws, t.downAngle, tws))
-    return blendRows(absTwa, upA, REACH_DEG, downA, up, reach, down)
+  // What is wrong with an axis, or null: numbers, going up, within its range, not too many.
+  function checkAxis (name, xs) {
+    const a = AXIS_RANGE[name]
+    if (!Array.isArray(xs) || xs.length === 0) return `${a.what}: needs at least one`
+    if (xs.length > MAX_AXIS) return `${a.what}: at most ${MAX_AXIS}`
+    if (!xs.every(v => typeof v === 'number' && Number.isFinite(v))) return `${a.what}: every one must be a number`
+    if (xs.some((v, i) => i > 0 && v <= xs[i - 1])) return `${a.what}: must go up, each larger than the one before`
+    if (xs[0] < a.min || (a.aboveMin && xs[0] <= a.min) || xs[xs.length - 1] > a.max) return `${a.what}: must be ${a.aboveMin ? 'above' : 'from'} ${a.min} to ${a.max}${a.unit}`
+    return null
+  }
+
+  // ---- schema 6 tables ---------------------------------------------------------------
+  //
+  // Schema 6 (0.2.12 to 0.2.17) had three rows in each wind table. Each converts to a grid
+  // that looks up the same.
+
+  // TWA: rows at 40, 90 and 165, the end rows held beyond them. As a grid, exactly that.
+  function twaFromRows (t) {
+    const row = r => Array.isArray(r) ? r.slice() : r
+    return { twa: [40, 90, 165], tws: row(t.tws), add: [row(t.upwind), row(t.reach), row(t.downwind)] }
+  }
+
+  // TWS: upwind in full up to the up angle, reaching at 90, downwind in full from the down
+  // angle, with the angles by TWS. With the same angles in every column, a grid with rows at
+  // those angles is exactly that (exact: true). Otherwise the grid's rows are every angle
+  // used, each cell the old table's value there: the same in each column, close between.
+  // Expects the old table valid (equal lengths, up angle < 90 < down angle).
+  function twsFromRows (t) {
+    const same = xs => xs.every(v => v === xs[0])
+    if (same(t.upAngle) && same(t.downAngle)) {
+      return { exact: true, table: { twa: [t.upAngle[0], REACH_DEG, t.downAngle[0]], tws: t.tws.slice(), add: [t.upwind.slice(), t.reach.slice(), t.downwind.slice()] } }
+    }
+    const [up, reach, down] = fillGaps([t.upwind, t.reach, t.downwind])
+    const twa = Array.from(new Set(t.upAngle.concat([REACH_DEG], t.downAngle))).sort((a, b) => a - b)
+    const add = twa.map(a => t.tws.map((_, j) => Math.round(blendRows(a, t.upAngle[j], REACH_DEG, t.downAngle[j], up[j], reach[j], down[j]) * 1000) / 1000))
+    return { exact: false, table: { twa, tws: t.tws.slice(), add } }
   }
 
   // ---- text format --------------------------------------------------------------------
@@ -98,7 +159,7 @@
   // Rows of cells; the first row is the header. Tolerates spreadsheet damage: quotes, a
   // byte-order mark, Unicode minus signs, degree signs and padding.
   function cells (text) {
-    const lines = String(text || '').replace(/^\uFEFF/, '').trim().split(/\r?\n/).filter(l => l.trim())
+    const lines = String(text || '').replace(/^﻿/, '').trim().split(/\r?\n/).filter(l => l.trim())
     if (lines.length < 2) throw new Error('needs a header row and at least one table row')
     const sep = lines[0].includes(',') ? ',' : lines[0].includes('\t') ? '\t' : lines[0].includes(';') ? ';' : /\s+/
     return lines.map(l => l.trim().split(sep).map(cleanCell))
@@ -110,81 +171,87 @@
     return n
   }
 
-  // Header columns as numbers, checked against the expected axis.
-  function header (rows, axis, what) {
-    const cols = rows[0].slice(1).filter((c, j, a) => !(c === '' && j === a.length - 1)).map((c, j) => number(c, `column ${j + 1} of the header`))
-    if (!(cols.length === axis.length && cols.every((v, i) => v === axis[i]))) throw new Error(`the header must be ${what} ${axis.join(', ')}`)
-  }
-
-  function values (r, n, label, blanks) {
+  function values (r, n, label) {
     const v = r.slice(1, n + 1)
     while (v.length < n) v.push('')
     if (r.slice(n + 1).some(c => c !== '')) throw new Error(`row "${r[0]}" has more than ${n} values`)
-    return v.map((c, j) => {
-      if (c === '') { if (blanks) return null; throw new Error(`row "${label}" needs a value in column ${j + 1}`) }
-      return number(c, `row "${label}", column ${j + 1}`)
-    })
+    return v.map((c, j) => c === '' ? null : number(c, `row "${label}", column ${j + 1}`))
   }
 
-  // STW table: rows heel -20, -10, 0, 10, 20 (+ = starboard side down), columns boat speed.
-  function parseStw (text) {
-    const rows = cells(text)
-    header(rows, AXES.stwSpeed, 'boat speed columns')
-    const add = {}
+  // Schema 6 row names, read as the rows they were.
+  const TWA_NAMES = { upwind: 40, reach: 90, reaching: 90, downwind: 165 }
+  const TWS_NAMES = { upwind: 'upwind', reach: 'reach', reaching: 'reach', downwind: 'downwind', upangle: 'upAngle', upwindangle: 'upAngle', downangle: 'downAngle', downwindangle: 'downAngle' }
+  const twsName = label => TWS_NAMES[label.toLowerCase().replace(/[^a-z]/g, '').replace(/correction$/, '')]
+
+  // A schema 6 TWS table as pasted: rows upwind, reach, downwind, up angle, down angle.
+  function parseTwsRows (rows, cols) {
+    const t = { tws: cols }
     for (const r of rows.slice(1)) {
-      const heel = number(r[0].replace(/heel/i, ''), `row "${r[0]}"`)
-      if (!AXES.stwHeel.includes(heel)) throw new Error(`row "${r[0]}": expected heel ${AXES.stwHeel.join(', ')}`)
-      add[heel] = values(r, AXES.stwSpeed.length, `heel ${heel}`, true)
+      const key = twsName(r[0])
+      if (!key) throw new Error(`row "${r[0]}": a TWS table is either rows by TWA, or the rows upwind, reach, downwind, up angle and down angle`)
+      t[key] = values(r, cols.length, r[0])
     }
-    const missing = AXES.stwHeel.filter(x => !add[x])
-    if (missing.length) throw new Error(`missing heel row${missing.length > 1 ? 's' : ''} ${missing.join(', ')}`)
-    return { heel: AXES.stwHeel.slice(), stw: AXES.stwSpeed.slice(), add: AXES.stwHeel.map(x => add[x]) }
+    const missing = Object.values(TWS_NAMES).filter((k, i, a) => a.indexOf(k) === i && !t[k])
+    if (missing.length) throw new Error(`missing row${missing.length > 1 ? 's' : ''} ${missing.join(', ')}`)
+    for (const k of ['upAngle', 'downAngle']) {
+      if (t[k].some(v => v == null)) throw new Error(`row ${k}: needs a value in every column`)
+    }
+    if (!t.upAngle.every(v => v >= 0 && v < REACH_DEG) || !t.downAngle.every(v => v > REACH_DEG && v <= 180)) throw new Error(`each up angle must be below ${REACH_DEG}° and each down angle above it`)
+    return twsFromRows(t).table
   }
 
-  // TWA table: rows keyed by their TWA (40, 90, 165) or name (upwind, reach, downwind).
-  function parseTwa (text) {
+  // A table pasted as text: any axes, each going up (rows may come in any order).
+  function parse (kind, text) {
+    const k = KINDS[kind]
+    if (!k) throw new Error(`no table "${kind}"`)
     const rows = cells(text)
-    header(rows, AXES.twaTws, 'TWS columns')
-    const out = { tws: AXES.twaTws.slice() }
-    for (const r of rows.slice(1)) {
-      const k = r[0].toLowerCase().replace(/[°º]|twa|\s/g, '').replace(/^reaching$/, 'reach')
-      const key = TWA_ROW_KEYS.find(n => k === n || k === String(AXES.twaRows[n]))
-      if (!key) throw new Error(`row "${r[0]}": expected 40, 90 or 165 (TWA)`)
-      out[key] = values(r, AXES.twaTws.length, r[0], true)
-    }
-    const missing = TWA_ROW_KEYS.filter(k => !out[k])
-    if (missing.length) throw new Error(`missing row${missing.length > 1 ? 's' : ''} ${missing.map(k => AXES.twaRows[k]).join(', ')}`)
-    return out
-  }
-
-  // TWS table: upwind, reach and downwind corrections (kn) and the up and down angles.
-  function parseTws (text) {
-    const rows = cells(text)
-    header(rows, AXES.twsTws, 'TWS columns')
-    const out = { tws: AXES.twsTws.slice() }
-    const names = { upwind: 'upwind', reach: 'reach', reaching: 'reach', downwind: 'downwind', upangle: 'upAngle', upwindangle: 'upAngle', downangle: 'downAngle', downwindangle: 'downAngle' }
-    for (const r of rows.slice(1)) {
-      const key = names[r[0].toLowerCase().replace(/[^a-z]/g, '').replace(/correction$/, '')]
-      const row = TWS_ROWS.find(([k]) => k === key)
-      if (!row) throw new Error(`row "${r[0]}": expected ${TWS_ROWS.map(x => `"${x[1]}"`).join(', ')}`)
-      out[key] = values(r, AXES.twsTws.length, r[0], row[2])
-    }
-    const missing = TWS_ROWS.filter(([key]) => !out[key])
-    if (missing.length) throw new Error(`missing row${missing.length > 1 ? 's' : ''} ${missing.map(x => `"${x[1]}"`).join(', ')}`)
-    return out
+    const cols = rows[0].slice(1).filter((c, j, a) => !(c === '' && j === a.length - 1)).map((c, j) => number(c, `column ${j + 1} of the header`))
+    const colErr = checkAxis(k.cols, cols)
+    if (colErr) throw new Error(`the header's ${colErr}`)
+    if (kind === 'tws' && rows.slice(1).some(r => twsName(r[0]))) return parseTwsRows(rows, cols)
+    const read = rows.slice(1).map(r => {
+      const label = r[0].toLowerCase().replace(/[°º]|heel|twa|\s/g, '')
+      const at = kind === 'twa' && label in TWA_NAMES ? TWA_NAMES[label] : number(label, `row "${r[0]}"`)
+      return [at, values(r, cols.length, r[0])]
+    }).sort((a, b) => a[0] - b[0])
+    const dup = read.find((x, i) => i > 0 && x[0] === read[i - 1][0])
+    if (dup) throw new Error(`two rows at ${dup[0]}`)
+    const at = read.map(x => x[0])
+    const rowErr = checkAxis(k.rows, at)
+    if (rowErr) throw new Error(`the ${rowErr}`)
+    return { [k.rows]: at, [k.cols]: cols, add: read.map(x => x[1]) }
   }
 
   // A table as text in the format above, ready to paste back in.
   function format (kind, t) {
+    const k = KINDS[kind]
+    if (!k) throw new Error(`no table "${kind}"`)
     const v = x => x == null ? '' : String(x)
     const line = (label, xs) => [label].concat(xs.map(v)).join(',')
-    if (kind === 'stw') return [line('heel\\stw', t.stw)].concat(t.heel.map((h, i) => line(h, t.add[i]))).join('\n')
-    if (kind === 'twa') return [line('TWA\\TWS', t.tws)].concat(TWA_ROW_KEYS.map(k => line(AXES.twaRows[k], t[k]))).join('\n')
-    if (kind === 'tws') return [line('TWS', t.tws)].concat(TWS_ROWS.map(([key, label]) => line(label, t[key]))).join('\n')
-    throw new Error(`no table "${kind}"`)
+    return [line(k.corner, t[k.cols])].concat(t[k.rows].map((r, i) => line(r, t.add[i]))).join('\n')
   }
 
-  const api = { AXES, TWA_ROW_KEYS, REACH_DEG, interp, fromZero, blendRows, fillGaps, twsCorrection, parseStw, parseTwa, parseTws, format }
+  const api = {
+    KINDS,
+    AXIS_RANGE,
+    MAX_AXIS,
+    REACH_DEG,
+    interp,
+    fromZero,
+    bracket,
+    lookup,
+    value,
+    blendRows,
+    fillGaps,
+    checkAxis,
+    twaFromRows,
+    twsFromRows,
+    parse,
+    parseStw: text => parse('stw', text),
+    parseTwa: text => parse('twa', text),
+    parseTws: text => parse('tws', text),
+    format
+  }
   if (typeof module !== 'undefined' && module.exports) module.exports = api
   else root.PPTables = api
 })(typeof self !== 'undefined' ? self : this)

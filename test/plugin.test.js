@@ -83,8 +83,8 @@ const paths = out => Object.fromEntries(out.flatMap(o => o.values).map(v => [v.p
 // Tables with something in them, so a test can tell corrected from uncorrected whatever
 // the defaults hold; and what the processor makes of the boat and wind above with them.
 const TABLES = {
-  stw: { add: [[0.16, 0.4, 0.2, 0, -0.1, -0.1, -0.2], [0.12, 0.3, 0.1, 0, 0, 0, 0], [0.12, 0.3, 0.05, 0, 0, 0, 0], [0.12, 0.3, 0.1, 0, 0, 0, 0], [0.14, 0.35, 0.15, -0.05, -0.1, -0.1, -0.1]] }, // 1 kn column at 0.4 x the 2.5 kn one: the straight line from zero
-  twa: { upwind: [-9, -7, -5, -2, -4, -6], reach: [-3, -2, -1, 0, 1, 2], downwind: [2, 1, 0, -1, -2, -3] }
+  stw: { heel: [-20, -10, 0, 10, 20], stw: [1, 2.5, 5, 7.5, 10, 12.5, 15], add: [[0.16, 0.4, 0.2, 0, -0.1, -0.1, -0.2], [0.12, 0.3, 0.1, 0, 0, 0, 0], [0.12, 0.3, 0.05, 0, 0, 0, 0], [0.12, 0.3, 0.1, 0, 0, 0, 0], [0.14, 0.35, 0.15, -0.05, -0.1, -0.1, -0.1]] }, // 1 kn column at 0.4 x the 2.5 kn one: the straight line from zero
+  twa: { twa: [40, 90, 165], tws: [5, 10, 15, 20, 25, 30], add: [[-9, -7, -5, -2, -4, -6], [-3, -2, -1, 0, 1, 2], [2, 1, 0, -1, -2, -3]] }
 }
 function model (stored = {}) {
   const { process, normalizeConfig } = require('../lib/processor')
@@ -125,7 +125,7 @@ test('replace mode publishes the standard paths', () => {
   assert.ok('environment.wind.angleTrueWater' in out)
   assert.ok('environment.wind.speedTrue' in out)
   assert.ok('environment.wind.speedOverGround' in out)
-  assert.deepStrictEqual(h.meta, ['environment.wind.directionGround'], 'meta only for the path the schema lacks')
+  assert.deepStrictEqual(h.meta, ['environment.wind.directionGround', 'navigation.speedThroughWaterRaw'], 'meta only for the paths the schema lacks')
 })
 
 test('corrected STW goes out when the paddlewheel reports', () => {
@@ -362,8 +362,8 @@ test('rejects implausible input rather than publishing it', () => {
 })
 
 test('reports a bad stored config instead of starting', () => {
-  const h = harness({ schema: 6, corrections: { twa: { upwind: [1] } } })
-  assert.ok(h.errors.some(e => e.includes('TWA table 40° row')))
+  const h = harness({ schema: 7, corrections: { twa: { twa: [40], tws: [5], add: [[1, 2]] } } })
+  assert.ok(h.errors.some(e => e.includes('TWA table 40° TWA row')))
 })
 
 test('GET /calibration returns the boat defaults on a fresh install', async () => {
@@ -377,7 +377,7 @@ test('GET /calibration sends the built-in limits the webapp describes', async ()
   const h = harness()
   const { json } = await h.call('GET', '/calibration')
   assert.deepStrictEqual(json.behaviour, {
-    maxLeewayDeg: 15, leewayFadeKn: [1.5, 3], twaTaperUpDeg: 30, twaTaperDownDeg: 10,
+    maxLeewayDeg: 15, leewayFadeKn: [1.5, 3], twaTaperUpDeg: 30, twaTaperDownDeg: 10, twaSlopeMax: 2,
     lightAirOffKn: 1.5, lightAirOnKn: 2, staleS: 3, maxPublishHz: 20
   })
 })
@@ -403,7 +403,7 @@ test('GET /live reports the last result, inputs and sources seen', async () => {
   assert.ok(r.json.running)
   assert.ok(r.json.result.steps.some(s => s.id === 'twa'))
   assert.deepStrictEqual(r.json.sources.apparentWind.map(s => s.source), ['h2000.II'])
-  assert.deepStrictEqual(r.json.sent.sort(), ['current', 'gwa', 'gwd', 'gws', 'hdt', 'leeway', 'stw', 'twa', 'twd', 'tws'], 'what has gone out, for the Live page to list')
+  assert.deepStrictEqual(r.json.sent.sort(), ['current', 'gwa', 'gwd', 'gws', 'hdt', 'leeway', 'stw', 'stwRaw', 'twa', 'twd', 'tws'], 'what has gone out, for the Live page to list')
   assert.strictEqual(r.json.outputPaths.tws, 'environment.wind.speedTrueCorrected')
 })
 
@@ -434,7 +434,7 @@ test('a 0.2.5 config keeps running after the upgrade, in Shadow mode, saying so 
   assert.strictEqual(r.json.config.sources.stw, 'h2000.II')
   assert.strictEqual(h.saved().schema, 3, 'the file is left as it was until Save')
   await h.call('PUT', '/calibration', r.json.config)
-  assert.strictEqual(h.saved().schema, 6)
+  assert.strictEqual(h.saved().schema, 7)
   h.feed(boat)
   assert.doesNotMatch(h.statuses[h.statuses.length - 1], /Upgraded/, 'the notice goes once saved')
 })
@@ -442,16 +442,16 @@ test('a 0.2.5 config keeps running after the upgrade, in Shadow mode, saying so 
 test('the saved file records its schema version', async () => {
   const h = harness()
   await h.call('PUT', '/calibration', { corrections: { leeway: { k: 6.5 } } })
-  assert.strictEqual(h.saved().schema, 6)
+  assert.strictEqual(h.saved().schema, 7)
 })
 
 test('a broken config file is reported, and the webapp can still load and fix it', async () => {
-  const h = harness({ corrections: { twa: { upwind: [1] } } })
+  const h = harness({ corrections: { twa: { twa: [40], tws: [5], add: [[1, 2]] } } })
   assert.ok(h.errors.some(e => e.includes('fix it in the webapp')))
   const r = await h.call('GET', '/calibration')
   assert.strictEqual(r.status, 200)
   const live = (await h.call('GET', '/live')).json
-  assert.ok(!live.running && /TWA table 40° row.*fix it in the webapp/.test(live.error), 'the webapp can say why it is not running')
+  assert.ok(!live.running && /TWA table 40° TWA row.*fix it in the webapp/.test(live.error), 'the webapp can say why it is not running')
 })
 
 test('variation: true heading first, then GPS variation, then the fallback', () => {
@@ -925,4 +925,15 @@ test('no value anywhere in a config makes validation throw', () => {
   }
   assert.ok(normalizeConfig({ corrections: { foo: null } }).errors.some(e => /foo/.test(e)))
   assert.ok(normalizeConfig({ corrections: { twa: { upwind: 5 } } }).errors.length > 0)
+})
+
+test('raw STW goes out on its own path, unchanged, in both modes and with the STW table off', () => {
+  for (const mode of ['replace', 'shadow']) {
+    for (const enabled of [true, false]) {
+      const h = harness({ mode, corrections: { ...TABLES, stw: { ...TABLES.stw, enabled } } })
+      h.feed([{ path: 'navigation.attitude', value: { roll: -20 * RAD } }])
+      const out = paths(h.feed([{ path: 'navigation.speedThroughWater', value: 5 / MS_TO_KN }]))
+      assert.ok(Math.abs(out['navigation.speedThroughWaterRaw'] - 5 / MS_TO_KN) < 1e-12, `${mode}, table ${enabled ? 'on' : 'off'}`)
+    }
+  }
 })

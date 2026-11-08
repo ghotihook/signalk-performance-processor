@@ -1,24 +1,25 @@
 # Specification: the maths
 
 The master record of every equation, interpolation, fade, limit and damping rule in
-signalk-performance-processor, and of how boatcal's `plugincal` fits the tables. The code is
+signalk-performance-processor, and of how boatcal fits the tables. The code is
 the implementation; this document is what it must do. **Change one, change the other**, in
 the same commit, and note the change in [CHANGELOG.md](CHANGELOG.md).
 
-Written for 0.2.17 (config schema 6) and plugincal 1.3.3.
+Written for the `dev` branch after 0.2.17 (config schema 7) and boatcal after 1.4.0 (fine grids, §9).
 
 | Section | Code |
 |---|---|
 | 1 Conventions | everywhere |
 | 2 Inputs | `index.js` (`onDelta`, `chooseSensor`, `windPairComplete`, `fresh`) |
 | 3 Heading, variation, COG, heel | `index.js` (`trueHeading`, `variationDeg`, `cogTrue`, `rollDeg`), `lib/processor.js` (`process`) |
-| 4 Table lookups | `public/tables.js` (`interp`, `fromZero`, `blendRows`, `fillGaps`, `twsCorrection`) |
+| 4 Table lookups | `public/tables.js` (`interp`, `fromZero`, `bracket`, `lookup`, `fillGaps`, `checkAxis`) |
 | 5 The pipeline | `lib/processor.js` (`CORRECTIONS`, `process`) |
 | 6 Damping | `lib/damping.js`, `index.js` (`onWind`, `onHeading`, `onStw`, `onDelta`) |
-| 7 Publishing | `index.js` (`onWind`, `onHeading`, `onStw`, `publish`) |
-| 8 Configuration | `lib/processor.js` (`normalizeConfig`, `addSlowColumn`), `lib/defaults.js` |
-| 9 Calibration fits | boatcal `plugincal/fit.py`, `plugincal/plugincal.py`, `plugincal/events.py` |
+| 7 Publishing | `index.js` (`onWind`, `onHeading`, `onStw`, `publish`, `OUTPUTS`) |
+| 8 Configuration | `lib/processor.js` (`normalizeConfig`, `upgrade`, `toGrids`, `addSlowColumn`, `checkTable`, `twaTooSteep`), `public/tables.js` (`twaFromRows`, `twsFromRows`), `lib/defaults.js` |
+| 9 Calibration fits | boatcal `boatcal/fit.py`, `boatcal/events.py`, `boatcal/decompose.py`, `boatcal/settings.py`; for a user's own data, [AGENTS.md](AGENTS.md) "Calibrating a boat" |
 | 10 Constants | all of the above |
+| 11 Learning (in progress) | `lib/history.js`, `lib/learn.js`, `index.js` (`runLearn`, `startLearn`) |
 
 ---
 
@@ -136,7 +137,7 @@ COG = COG_true                      if fresh
 
 ---
 
-## 4 Table lookups (shared by the plugin, the webapp and plugincal)
+## 4 Table lookups (shared by the plugin, the webapp and boatcal)
 
 ### 4.1 Linear interpolation, ends held
 
@@ -157,7 +158,27 @@ fromZero(xs, ys, x) = 0                        if x ≤ 0
 So nothing is added at 0 kn, the first column is reached in a straight line, and the last
 column is held beyond it.
 
-### 4.3 Blending three rows by |TWA|
+### 4.3 A table: rows, then speed
+
+Every table is a grid with its own axes: rows `R` (heel, or |TWA|), columns `C` (a speed),
+cells `add[i][j]`. Each axis has at least one entry and goes up strictly; columns start
+above 0 kn (§8.1).
+
+```
+bracket(R, r)      = [0, 0, 0]                       if r ≤ R[0]
+                   = [n, n, 0]                       if r ≥ R[n]
+                   = [i, i+1, (r − R[i])/(R[i+1] − R[i])]   with R[i] < r ≤ R[i+1]
+F                  = fillGaps(add)
+[i, j, f]          = bracket(R, r)
+lookup(r, s)       = fromZero(C, F[i], s)·(1 − f) + fromZero(C, F[j], s)·f
+```
+
+Along each row by speed from zero (§4.2), then linear between the rows either side, the end
+rows held beyond them. Linear in the cells, and continuous everywhere.
+
+### 4.3a Blending three rows by |TWA| (schema 6 only)
+
+Used only to read a schema 6 TWS table (§8.2):
 
 ```
 blendRows(a, A1, A2, A3, r1, r2, r3) = r1                                   if a ≤ A1
@@ -185,19 +206,17 @@ through unchanged.
 
 ### 5.1 Boat speed (STW) table
 
-Layout (fixed): rows **heel −20, −10, 0, 10, 20°**; columns **STW 1, 2.5, 5, 7.5, 10, 12.5,
-15 kn**. The H5000's layout, with the 1 kn column added for paddlewheel stall.
+Rows by **heel** (°, + = starboard side down), columns by **STW** (kn), any axes (§8.1).
+Default: heel −30 to 30 by 5°, STW 1 to 15 by 1 kn. A column at 1 kn catches the paddlewheel's
+stall, which the H5000's first column, 2.5 kn, misses.
 
 ```
-rows      = fillGaps(add)
-h         = clamp(heel, −20, 20)             (heel missing → 0)
-[i, j, f] = bracket of h in the heel rows    (f = (h − heel_i)/(heel_j − heel_i))
-add(h, v) = fromZero(cols, rows[i], v)·(1 − f) + fromZero(cols, rows[j], v)·f
+add(h, v) = lookup(heel table, h, v)          (§4.3; heel missing → 0)
 STW_c     = max(0, STW + add(h, STW))
 ```
 
-Below 1 kn the correction runs straight from 0 at 0 kn to the 1 kn cell: a stopped boat is
-never given speed.
+More heel than the end rows uses the end row. Below the first column the correction runs
+straight from 0 at 0 kn: a stopped boat is never given speed.
 
 ### 5.2 Leeway
 
@@ -223,13 +242,12 @@ TWS0 = √(x² + y²)
 
 ### 5.4 TWA table
 
-Layout (fixed): rows at **TWA 40° (upwind), 90° (reach), 165° (downwind)**; columns
-**TWS 5, 10, 15, 20, 25, 30 kn**. Degrees added to |TWA|; negative = TWA read too wide.
+Rows by **|TWA|** (°, 0 to 180), columns by **TWS** (kn), any axes (§8.1). Default: TWA 30 to
+180 by 10°, TWS 4 to 30 by 2 kn. Degrees added to |TWA|; negative = TWA read too wide.
 
 ```
 a       = |TWA0|
-[u,r,d] = fillGaps([upwind, reach, downwind]) each through fromZero(cols, row, TWS0)
-table   = blendRows(a, 40, 90, 165, u, r, d)
+table   = lookup(TWA table, a, TWS0)                            (§4.3)
 taper   = clamp(min(a / 30, (180 − a) / 10), 0, 1)
 TWA1    = sign(TWA0) · clamp(a + table · taper, 0, 180)        (sign(0) taken as +)
 ```
@@ -237,26 +255,30 @@ TWA1    = sign(TWA0) · clamp(a + table · taper, 0, 180)        (sign(0) taken 
 The taper fades the correction to none at 0° and 180°: in full from 30° to 170°, so TWA
 and TWD pass through tacks and gybes without a flat spot or a jump.
 
-**Constraint (checked on load and save):** every upwind-row value strictly inside ±30° and
-every downwind-row value strictly inside ±10° (the limits of the taper). Then `d(TWA1)/d(TWA0) > 0` near 0° and 180°:
-corrected TWA always moves the same way as uncorrected TWA.
+**Constraint (checked on load and save):** at every TWS, `0 < d(TWA1)/d(TWA0) < 2`: corrected
+TWA always moves the same way as TWA, and at most twice as fast. With `g(a) = a + taper(a)·table(a)`,
+
+```
+g'(a) = 1 + taper'(a)·table(a) + taper(a)·table'(a)
+```
+
+Between the knots {0, 30, 170, 180, every row inside (0, 180)}, both `taper` and `table` are
+straight lines, so `g'` is a straight line too: it is checked at both ends of each piece,
+which bounds it throughout. Between TWS columns the table is a weighted mix of the two columns
+either side (below the first column, of that column and zero), so `g'` is the same mix and
+checking each column is enough. Blanks are checked as what they take (§4.4). For rows at 40°
+and 165° this is exactly the H5000-style limit: upwind row within ±30°, downwind row within ±10°.
 
 ### 5.5 TWS table
 
-Layout (fixed): columns **TWS 5, 10, 15, 20, 25, 30 kn**; rows **upwind, reach, downwind**
-(kn added), **up angle**, **down angle** (deg, one per column, no blanks).
+Laid out like the TWA table: rows by **|TWA|**, columns by **TWS**, any axes; same default.
+Knots added to TWS.
 
 ```
-a       = |TWA1|                               (the TWA after its table)
-[u,r,d] = fillGaps([upwind, reach, downwind]) each through fromZero(cols, row, TWS0)
-A_up    = min(89, interp(cols, upAngle,   TWS0))
-A_down  = max(91, interp(cols, downAngle, TWS0))
-add     = blendRows(a, A_up, 90, A_down, u, r, d)
-TWS1    = max(0, TWS0 + add)
+a     = |TWA1|                               (the TWA after its table)
+add   = lookup(TWS table, a, TWS0)           (§4.3)
+TWS1  = max(0, TWS0 + add)
 ```
-
-**Constraint:** 0 ≤ up angle < 90 < down angle ≤ 180, so the correction blends everywhere
-and never steps. (The clamps to 89 and 91 only guard against division by zero.)
 
 ### 5.6 TWD
 
@@ -388,19 +410,70 @@ When apparent wind is not fresh, nothing from the wind calculation (§5) is publ
 heading and STW still go out with their own sensors. The status says
 "No apparent wind for N s", checked on every other input and once a second.
 
+### 7.5 Raw STW
+
+Every plausible STW from the sensor in use (§2.2, §2.5) also goes out unchanged, undamped and
+without the STW table, on `navigation.speedThroughWaterRaw` (sent with `meta`), in the same
+delta as corrected STW, in both modes and with the STW table off. It is the sensor's value, not
+an output: in Replace mode a source priority on `navigation.speedThroughWater` puts this
+plugin first, so instruments see only corrected STW. The server drops the losing sources before
+anything downstream sees them, history providers included, so without this path raw STW never
+reaches history (§11.2). Paths with no priority are recorded from every source. The plugin reads it back only for learning, never live.
+
 ---
 
 ## 8 Configuration
 
-### 8.1 Schema 6 layout
+### 8.1 Schema 7 layout
 
-Fixed axes, as in §5. Saved in `config.json` with `"schema": 6`. Blank cells are `null`
-(§4.4). Validation refuses: an axis that differs from the layout, a row of the wrong length,
-a non-number (blanks allowed only in correction rows, not angle rows), an STW table with no
-values, the TWA and TWS constraints of §5.4 and §5.5, damping outside its limits,
-variation outside ±180°, a section that is not an object, a source that is not a name.
+Saved in `config.json` with `"schema": 7`. Each table carries its axes:
 
-### 8.2 Upgrading a schema 5 file (0.2.7 to 0.2.11)
+```
+stw: { enabled, heel: [...], stw: [...], add: [[...], ...] }     add[heel row][speed column]
+twa: { enabled, twa:  [...], tws: [...], add: [[...], ...] }     add[TWA row][TWS column]
+tws: { enabled, twa:  [...], tws: [...], add: [[...], ...] }
+```
+
+| Axis | Range | |
+|---|---|---|
+| `heel` | −90 to 90° | |
+| `stw` | above 0, to 60 kn | from zero below the first (§4.2) |
+| `twa` | 0 to 180° | |
+| `tws` | above 0, to 120 kn | from zero below the first |
+
+Each axis has 1 to 100 entries, all numbers, going up strictly. Blank cells are `null` (§4.4).
+Validation refuses: an axis outside that, a table with fields other than `enabled`, its two
+axes and `add`, the wrong number of rows or of values in a row, a non-number, an STW table with
+no values, the TWA constraint of §5.4, damping outside its limits, variation outside ±180°, a
+section that is not an object, a source that is not a name.
+
+The text format (`public/tables.js` `format`, `parse`): a header row `heel\stw` or `TWA\TWS`
+then the columns; then one row per table row, its heel or TWA first. Rows may come in any
+order and are sorted; two rows at the same value are refused.
+
+### 8.2 Upgrading a schema 6 file (0.2.12 to 0.2.17)
+
+Schema 6 was the H5000's 2018 layout: STW table heel −20 to 20 by 10 × 1, 2.5 … 15 kn; TWA
+table rows `upwind`, `reach`, `downwind` by TWS 5 … 30, blended by `blendRows(a, 40, 90, 165, …)`;
+TWS table the same rows blended by `blendRows(a, upAngle(TWS), 90, downAngle(TWS), …)`, with
+an up and a down angle per column. Each becomes the grid that looks up the same:
+
+- **STW:** unchanged (its axes are now its own).
+- **TWA:** `twa = [40, 90, 165]`, `add = [upwind, reach, downwind]`. Exact: `blendRows` with
+  the end rows held is `lookup` along those rows.
+- **TWS**, when every up angle is the same and every down angle is the same: `twa = [up, 90,
+  down]`, `add = [upwind, reach, downwind]`. Exact.
+- **TWS**, when the angles change with TWS: `twa` = every up angle, 90 and every down angle,
+  sorted, each cell the schema 6 value at that TWA and column (from the filled rows, rounded
+  to 0.001 kn). The same at each column, and close between them. The status asks for a refit.
+- A schema 6 TWS table that cannot be read that way (rows of different lengths, angles that
+  are not 0 ≤ up < 90 < down ≤ 180) is reset to the defaults, and the status says so.
+
+Blanks are kept as blanks, except in the last case. Nothing changes the mode. A schema 6 TWS
+table pasted as text (rows `upwind`, `reach`, `downwind`, `up angle`, `down angle`) and TWA rows
+named `upwind`, `reach`, `downwind` (40°, 90°, 165°) are read the same way.
+
+### 8.2a Upgrading a schema 5 file (0.2.7 to 0.2.11)
 
 Schema 5's STW table had columns 2.5 … 15 kn. It gains a 1 kn column that leaves every
 lookup unchanged:
@@ -413,10 +486,12 @@ row'    = [ round(filled[i][0] · 1/2.5, 0.001), filled[i][0], row[1..] ]   (a r
 
 A straight line from 0 through the 2.5 kn value passes 1 kn at 0.4 of that value, so the
 new cell lies on the line the table already used. The first cell is filled explicitly
-because a blank there would now take the new 1 kn cell's value instead.
+because a blank there would now take the new 1 kn cell's value instead. It then upgrades as
+schema 6.
 
 Older schemas (3: 0.1.0–0.2.5; 4: 0.2.6) keep their settings and leeway K; their tables are
-reset to the defaults (schema 4 keeps its STW and TWS tables), and the mode goes to Shadow.
+reset to the defaults (schema 4 keeps its STW and TWS tables, which then upgrade as schema 6),
+and the mode goes to Shadow.
 
 ### 8.3 Loading and saving
 
@@ -431,63 +506,29 @@ kept but nothing starts.
 
 ---
 
-## 9 Calibration fits (boatcal `plugincal`)
+## 9 Calibration fits (boatcal)
+
+A summary. **boatcal's SPECIFICATION.md is the master of the method** and of every threshold,
+smoothing weight and support rule; it is not repeated here, so the two cannot drift. An agent
+fitting a user's tables follows [AGENTS.md](AGENTS.md) "Calibrating a boat", which uses the same
+method on the user's data.
 
 Each item is fitted on the output of the ones before, in the order the plugin applies them,
-through the plugin's own arithmetic (`plugincal/pipeline.js` calls `lib/processor.js` and
-`public/tables.js`). The table lookups are linear in the cell values, so each fit is a
-least-squares problem in the cells, with the plugin's lookup as the design matrix (probed
-one cell at a time). "Held out" scores each day with a fit made without it.
+through the plugin's own arithmetic (boatcal's `boatcal/pipeline.js` calls `lib/processor.js`
+and `public/tables.js`). The table lookups (§4.3) are linear in the cell values, so each fit is
+a least-squares problem in the cells, with the plugin's lookup as the design matrix (probed one
+cell at a time). Neighbouring cells are tied together; a cell with too little data is left blank
+(§4.4). "Held out" scores each day with a fit made without it.
 
-### 9.1 STW table and leeway K (from the GPS)
-
-Data: 5 s samples; `--labelled` uses race legs plus the sailing under 2.5 kn from all days.
-The manual boat speed factor (`man_bsp_adj`) is applied throughout; |TWA| > 30°; STW and SOG > 0.5 kn.
-
-1. **Current** is fitted per 20-minute window where the headings vary enough (circular
-   spread ≥ 0.15, ≥ 60 samples, drift ≤ 4 kn), by `stw_leeway`.
-2. The heading for the boat's frame is magnetic plus the offset that makes the water track
-   symmetric across tacks (falling back to the GPS variation when too few tacks). In that
-   frame, `ground − current − STW` gives the paddlewheel's **forward error** `o_x` and the
-   **sideways slip** `o_y`.
-3. **STW table:** cells `c` minimise
-   ```
-   Σ softL1(W·c − o_x; 0.25 kn) + 0.5 Σ_neighbours (c_a − c_b)² + Σ (0.01·c)²
-   ```
-   with `W` the plugin's lookup weights. A cell weighted by under 200 samples is left blank.
-4. **K:** upwind samples (|TWA| < 70°), minimise `Σ softL1(o_y − STW_c·sin λ(K); 0.25 kn)`,
-   K in [0, 30], with λ from §5.2.
-
-### 9.2 TWA table (from manoeuvres)
-
-TWD should not step across a tack (TWA crosses 0°), gybe (crosses 180°) or rounding (|TWA|
-crosses 90°). Found on TWA0 smoothed over 15 s. Windows before and after (s from the
-crossing): tacks and gybes (−50, −20) and (30, 60); roundings (−120, −30) and (45, 135).
-Each window needs ≥ 50% good data, heading s.d. ≤ 12°, mean STW ≥ 2.5 kn, and mean |heel| ≥ 4°
-when upwind (not motoring).
-
-Per manoeuvre `i`: `step_i` = circular-mean TWD after − before (no TWA table);
-`dA_i` = the change across it of `sign(TWA)·W_TWA` (the lookup weights with the taper);
-`d|TWA|_i` = the change of |TWA|. Cells `c` and a wind-shift term `k` per kind minimise
-
-```
-Σ w_i · huber(step_i + dA_i·c + k_kind·d|TWA|_i; 4°)
-  + 32 Σ_columns (c_a − c_b)² + 0.5 Σ_rows (c_a − c_b)² + Σ (0.03·c)²
-```
-
-with weights tack 1, gybe 1, rounding 0.5; bounds inside the §5.4 constraints by 0.1°; k in
-±3. A cell with under 0.5 manoeuvres' worth of support is left blank.
-
-### 9.3 TWS table (from off-wind legs)
-
-TWS should not change when the boat bears away. Each reaching or downwind leg (|TWA| > 80°,
-≥ 3 min) is compared with the upwind legs (|TWA| < 70°) either side, within 30 min, with
-2 min trimmed from each leg end and TWS ≥ 3 kn, band by band of |TWA| (10° bands, ≥ 60 s
-each). The upwind row is the reference (0) with up angle 50°; the reach and downwind rows are
-fitted with the plugin's blend (§5.5), Huber 0.5 kn, neighbouring columns tied with weight 4.
-The down angle is chosen from 95°, 100° … 180° as the one that does best held out. A cell
-with under 15 minutes of sailing is 0 when lighter than its row's first fitted cell, blank
-beyond it; a row with no fitted cell is 0.
+1. **STW table and leeway K, from the GPS.** Current fitted per 20-minute window where headings
+   vary; ground − current − STW in the boat's frame gives the paddlewheel's forward error, fitted
+   by the table, and the sideways slip upwind, fitted by K (§5.2).
+2. **TWA table, from manoeuvres.** TWD should not step across a tack (TWA crosses 0°), gybe
+   (180°) or mark rounding (|TWA| crosses 90°). On true wind with the new STW table and no wind
+   tables, the cells are fitted (Huber) so that the TWD steps vanish, held to §5.4's limit.
+3. **TWS table, from off-wind legs.** TWS should not change when the boat bears away: each
+   reaching or downwind leg is compared with the upwind legs either side, band by band of |TWA|,
+   on TWA corrected by the new TWA table. Rows under 80° are the upwind reference and stay 0.
 
 ---
 
@@ -509,7 +550,168 @@ beyond it; a row with no fitted cell is 0.
 | Leeway cap | 15° | `lib/processor.js` `MAX_LEEWAY_DEG` |
 | Leeway fade | 1.5 → 3 kn | `lib/processor.js` `LEEWAY_FADE_KN` |
 | TWA taper | 30° off the wind, 10° short of dead downwind | `lib/processor.js` `TWA_TAPER_UP_DEG`, `TWA_TAPER_DOWN_DEG` |
-| TWS reach angle | 90° | `public/tables.js` `REACH_DEG` |
-| Table layout | §5.1, §5.4, §5.5 | `public/tables.js` `AXES` |
+| TWA slope limit | 0 < slope < 2 | `lib/processor.js` `TWA_SLOPE_MAX` |
+| Schema 6 TWS reach angle | 90° | `public/tables.js` `REACH_DEG` |
+| Table axes | §8.1 | `public/tables.js` `AXIS_RANGE`, `MAX_AXIS` |
+| Default table axes | §5.1, §5.4 | `lib/defaults.js` |
 | Fallback variation | 12.8° E | `lib/defaults.js` |
-| Config schema | 6 | `lib/processor.js` `CONFIG_SCHEMA` |
+| Config schema | 7 | `lib/processor.js` `CONFIG_SCHEMA` |
+
+---
+
+## 11 Learning (in progress)
+
+The plugin reads the boat's sailing from the Signal K v2 History API, reduces it to what
+boatcal's fits need, and fits the tables on request. Built so far: reading history
+(`lib/history.js`), classes, events, legs and day files (`lib/learn.js`), and the scan
+(`index.js`, `PUT /learn/scan`, `GET /learn/status`). Not yet: the fits, the Learn page. Definitions follow boatcal's specification (sections 5, 7 and 8 there) so the two give
+the same tables from the same data.
+
+### 11.1 Rules
+
+- **Raw inputs only.** Every path is read from the sensor in use (§2), named in the request
+  (`path|sourceRef`), never unfiltered: the plugin publishes corrected STW and true heading on
+  the same paths as the raw inputs. STW is read from `navigation.speedThroughWaterRaw` (§7.5).
+  Nothing has a table applied. Classes come from the raw true wind (11.3), so a saved table
+  cannot change how the data is classed.
+- **Scan, then fit on request.** A scan reads the chosen local days and writes day files; a
+  fit runs only from the Learn page, over the days of one setup, and a table changes only on
+  **Save** (§8.3).
+- `lib/history.js` and `lib/learn.js` stay free of Signal K, like `lib/processor.js`; the
+  History API is called in-process (`app.getHistoryApi()`) from `index.js`. (Over REST the
+  server strips `-` from a sourceRef, as of 2.36, so `|n2k-tcp.0` matches nothing there.)
+
+### 11.2 Reading history: the 1 Hz row
+
+A scan takes one local day at a time (the server's time zone).
+
+1. **Where the sailing is:** STW's highest value per minute (`max`, 60 s), from
+   `navigation.speedThroughWaterRaw` of this plugin, or, where a day has none (history from
+   before §7.5, or recorded in Shadow mode), from `navigation.speedThroughWater` of the STW
+   sensor in use. Minutes over 0.5 kn are sailing; each is padded by 4 minutes either side
+   (the buffer's context, 11.4), and touching spans are joined.
+2. **The sailing, at 1 s** with `first` (one sample, never an average across 0/360 or ±180),
+   in requests of at most an hour: AWA and AWS (`environment.wind.angleApparent`,
+   `speedApparent`), STW (as in 1), heel (`navigation.attitude.roll`: providers store the
+   attitude object's members as paths), heading (`navigation.headingTrue`, else
+   `headingMagnetic` + variation), SOG, COG (`courseOverGroundTrue`, else magnetic +
+   variation), variation (else `config.variation`).
+3. **Carry forward:** a provider may record only changes (signalk-questdb), so an empty second
+   takes the input's last value from up to 3 s before (`STALE`, §2.3); after that it is missing.
+
+Required: a sensor in use for apparent wind, STW, heading and heel (a good second needs heel,
+11.5). GPS and variation are optional. Without a history provider, or without those sensors,
+the scan stops and says why.
+
+### 11.3 Raw true wind
+
+§5.3 with the STW table off (`STW_c = STW`): `TWA_r`, `TWS_r`, `TWD_r = norm360(H + TWA_r)`.
+Used for classes and events only. Fits recompute true wind from the recorded inputs with the
+tables being fitted.
+
+### 11.4 Cadence
+
+Every 60 s, on a buffer of the last `LEARN_BUFFER` = 7 minutes of 1 Hz rows, the **middle
+minute** is classed. The 3 minutes either side are context: a rounding needs 135 s after its
+crossing plus the 5 s isolation check. Each second and each event is classed once, by the
+run whose middle minute holds it (an event by its crossing). Records lag the boat by about
+3.5 minutes.
+
+### 11.5 Classes and events
+
+A second is **good** when AWA, AWS, STW, heading and heel are present and STW > 1 kn; other
+seconds are gaps. Per good second of the middle minute, on `|TWA_r|` as a trailing 30 s
+median over good seconds:
+
+| Class | Rule |
+|---|---|
+| `sailUp` | median < 70° |
+| `sailReach` | 80° to 120° |
+| `sailDown` | > 120° |
+| `other` | 70° to 80°, between upwind and off the wind; and every second that is not good |
+
+Events, on `TWA_r` of good seconds smoothed over 15 s (sine and cosine, centred, at least 8
+seconds), at a sign change between consecutive seconds; a crossing under 10 s after the last
+one of the same kind is the same crossing:
+
+| Event | Crossing | Windows (s from the crossing) |
+|---|---|---|
+| `mnvTack` | TWA crosses 0° | (−50, −20), (30, 60) |
+| `mnvGybe` | TWA crosses 180° | (−50, −20), (30, 60) |
+| `mnvComeDown` | \|TWA\| crosses 90°: < 80° before, > 100° after | (−120, −30), (45, 135) |
+| `mnvComeUp` | \|TWA\| crosses 90°: > 100° before, < 80° after | (−120, −30), (45, 135) |
+
+An event counts only if good data goes on past its after window, no other crossing is
+within its windows (± 5 s), each window has good
+data for at least half its seconds and a mean STW of 2.5 kn or more, and an upwind window has
+a mean |heel| of 4° or more (not motoring). A tack must have mean |TWA_r| under 90° in both
+windows with the sign changed, a gybe over 90° in both with the sign changed, and a rounding
+under 80° on one side and over 100° on the other.
+
+**Legs** are joined across minutes, as boatcal's TWS legs: pieces of `sailUp`, or of
+`sailReach` and `sailDown` together (off the wind), split at gaps over 10 s; an `other` piece
+between two pieces of the same kind no more than 90 s apart takes their kind; a leg ends at a
+change of kind or a gap over 90 s, and is kept with 180 good seconds or more. A leg is
+written when it closes.
+
+**K uses inferred `sailUp` legs.** The plugin cannot see documented legs. boatcal tested this
+(its section 11): on 2025 to March 2026, inferred upwind legs gave K 8.36 against 8.44 from
+documented legs, with no difference held out.
+
+### 11.6 Day files
+
+One file per local day scanned, `learn/YYYY-MM-DD.jsonl` in the plugin's data directory, one
+record per line, rewritten when the day is scanned again (deleted when it has no sailing). The
+history stays the source; the day files only save reading it again:
+
+| Record | Holds | Used by |
+|---|---|---|
+| `s5` | 5 s medians of the 1 Hz rows (angles through their sine and cosine): AWA, AWS, STW, heel, H, SOG, COG, variation; the class | STW table, current, K, TWS legs |
+| `mnv` | the event, its crossing time, and the 1 Hz rows of its two windows | TWA table |
+| `leg` | class, start and end | TWS table, K |
+| `setup` | (planned, with the Learn page) a **New setup**, with its time | which days a fit uses |
+
+About 15 MB for 44 race days (2025 to March 2026) as JSON lines. Days before the current setup can be deleted from
+the Learn page.
+
+### 11.7 Fit
+
+The fits of §9, on the records of the setup's days, in pipeline order, held out by day.
+Nothing is applied until **Save**.
+
+### 11.8 Before it ships
+
+The module is replayed on boatcal's logged history through boatcal's `pipeline.js`, both
+setups (2025 to March 2026; since October 2026), and must match boatcal: the same tacks,
+gybes and roundings, centred within a few seconds; legs against the documented ones; and the
+tables fitted from day files equal to boatcal's within a stated tolerance: every cell within
+half its 95% range in boatcal, and the same cells blank.
+
+Shown so far (2026-11-07): the manoeuvres and legs match boatcal exactly on both setups
+(251 and 25 manoeuvres, 189 and 20 legs). The TWS table, boatcal's fit on the 5 s records held
+for their 5 seconds against its fit on the 1 Hz rows, with boatcal's STW, K and TWA tables:
+
+| Setup | Cells, \|5 s − 1 Hz\| | Largest share of a cell's 95% half-range | Held-out RMS, 1 Hz / 5 s |
+|---|---|---|---|
+| 2025 to March 2026 (66 / 68 legs) | mean 0.19 kn, max 0.70 kn (downwind, 5 kn) | 0.39 | 1.75 / 1.77 kn |
+| Since October 2026 (9 legs) | mean 0.04 kn, max 0.13 kn | under 0.1 | 1.96 / 2.10 kn |
+
+So the 5 s records are enough for the TWS table: the differences are well inside each cell's
+uncertainty, and no cell changes from fitted to blank.
+
+Against a live server (sk.local, Signal K 2.36, signalk-questdb 2.4, a looping log replay):
+2 hours read in 4 s, every second with AWA, AWS, STW, heel and heading after the carry
+forward, and tacks, gybes, a rounding and six legs found. The same check showed why §7.5 is
+needed: questdb holds two or three sources for paths with no priority (apparent and true
+wind, attitude), but `navigation.speedThroughWater` only from this plugin (corrected). The
+server's priority group for STW lists this plugin, derived-data and NMEA 0183 talkers; the
+paddlewheel (NMEA 2000, PGN 128259) is not listed, so it never wins and is never recorded.
+
+| Constant | Value |
+|---|---|
+| `LEARN_BUFFER` | 7 min, classed every 60 s, middle minute |
+| Class thresholds | 70°, 80°, 120° on a trailing 30 s median of \|TWA_r\| |
+| Event smoothing, merge | 15 s, 10 s |
+| Leg rules | 10 s split, 90 s join, 3 min minimum |
+| `s5` bucket | 5 s |
+| History: probe, padding, request, aggregate, carry forward | 60 s `max`, 4 min, ≤ 1 h at 1 s, `first`, 3 s |

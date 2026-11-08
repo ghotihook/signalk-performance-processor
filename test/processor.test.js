@@ -14,8 +14,12 @@ const { fromZero, fillGaps } = T
 // schema 5 file is given, so it gives the same corrections.
 const STW6 = { heel: [-20, -10, 0, 10, 20], stw: [2.5, 5, 7.5, 10, 12.5, 15], add: [[0.4, 0.2, 0, -0.1, -0.1, -0.2], [0.3, 0.1, 0, 0, 0, 0], [0.3, 0.05, 0, 0, 0, 0], [0.3, 0.1, 0, 0, 0, 0], [0.35, 0.15, -0.05, -0.1, -0.1, -0.1]] }
 const STW = { heel: [-20, -10, 0, 10, 20], stw: [1, 2.5, 5, 7.5, 10, 12.5, 15], add: [[0.16, 0.4, 0.2, 0, -0.1, -0.1, -0.2], [0.12, 0.3, 0.1, 0, 0, 0, 0], [0.12, 0.3, 0.05, 0, 0, 0, 0], [0.12, 0.3, 0.1, 0, 0, 0, 0], [0.14, 0.35, 0.15, -0.05, -0.1, -0.1, -0.1]] }
-const TWA = { tws: [5, 10, 15, 20, 25, 30], upwind: [-9, -7, -5, -2, 3, 6], reach: [-3, -2, -1, 0, 1, 2], downwind: [2, 1, 0, -1, -2, -3] }
-const TWS = { tws: [5, 10, 15, 20, 25, 30], upwind: [0, 0, 0, 0, 0, 0], reach: [-0.2, -0.4, -0.6, -0.8, -1, -1.2], downwind: [-0.8, -1.5, -2.3, -3, -3.8, -4.5], upAngle: [50, 50, 50, 50, 50, 50], downAngle: [110, 110, 110, 110, 110, 110] }
+// The TWA and TWS tables in schema 6's three rows (TWA6, TWS6), and as the grids they become:
+// rows at 40, 90 and 165 for TWA; at the up angle, 90 and the down angle for TWS.
+const TWA6 = { tws: [5, 10, 15, 20, 25, 30], upwind: [-9, -7, -5, -2, 3, 6], reach: [-3, -2, -1, 0, 1, 2], downwind: [2, 1, 0, -1, -2, -3] }
+const TWS6 = { tws: [5, 10, 15, 20, 25, 30], upwind: [0, 0, 0, 0, 0, 0], reach: [-0.2, -0.4, -0.6, -0.8, -1, -1.2], downwind: [-0.8, -1.5, -2.3, -3, -3.8, -4.5], upAngle: [50, 50, 50, 50, 50, 50], downAngle: [110, 110, 110, 110, 110, 110] }
+const TWA = { twa: [40, 90, 165], tws: TWA6.tws, add: [TWA6.upwind, TWA6.reach, TWA6.downwind] }
+const TWS = { twa: [50, 90, 110], tws: TWS6.tws, add: [TWS6.upwind, TWS6.reach, TWS6.downwind] }
 function withTables (over = {}) {
   const { config, errors } = normalizeConfig({ corrections: { stw: STW, twa: TWA, tws: { ...TWS, enabled: true }, leeway: { k: 8 }, ...over } })
   assert.deepStrictEqual(errors, [])
@@ -114,9 +118,9 @@ test('TWA table narrows TWA by the table value', () => {
   config.corrections.twa = { enabled: true, ...TWA }
   const plain = process({ awa: 30, aws: 16, stw: 6 }, allOff()).out
   const r = process({ awa: 30, aws: 16, stw: 6 }, config).out
-  // Below 40 the upwind row applies alone; beyond, it blends towards the 90 row.
-  const up = fromZero(TWA.tws, TWA.upwind, plain.tws)
-  const reach = fromZero(TWA.tws, TWA.reach, plain.tws)
+  // Below 40 the first row applies alone; beyond, it blends towards the 90 row.
+  const up = fromZero(TWA.tws, TWA.add[0], plain.tws)
+  const reach = fromZero(TWA.tws, TWA.add[1], plain.tws)
   const a = Math.abs(plain.twa)
   const expected = a <= 40 ? up : up + (reach - up) * (a - 40) / 50
   close(Math.abs(r.twa), a + expected, 1e-9)
@@ -166,10 +170,23 @@ test('TWA correction is in full from 30 degrees off the wind to 10 short of dead
   assert.strictEqual(twaTaper(180), 0)
 })
 
-test('config: TWA table values must stay inside the taper', () => {
-  const bad = (twa, msg) => assert.ok(normalizeConfig({ corrections: { twa } }).errors.some(e => msg.test(e)), msg)
-  bad({ upwind: [-30, -12, -5, -5, 0, null] }, /40° row: values must be within/)
-  bad({ downwind: [1, -10, 1, null, null, null] }, /165° row: values must be within/)
+test('config: the TWA table keeps corrected TWA moving with TWA, at most twice as fast', () => {
+  const errs = (twa, tws, add) => normalizeConfig({ corrections: { twa: { twa, tws, add } } }).errors
+  const bad = (twa, tws, add, msg) => { const e = errs(twa, tws, add); assert.ok(e.some(x => msg.test(x)), `${msg}: ${JSON.stringify(e)}`) }
+  const ok = (twa, tws, add) => assert.deepStrictEqual(errs(twa, tws, add), [])
+  // Rows at 40 and 165, as schema 6: the limits are the taper's, ±30 upwind and ±10 downwind.
+  const rows = [40, 90, 165]
+  ok(rows, [5, 10], [[-29.9, 29.9], [0, 0], [-9.9, 9.9]])
+  bad(rows, [5, 10], [[-30, -12], [0, 0], [1, 1]], /at 5 kn TWS, between 0° and 30° TWA.*go backwards/)
+  bad(rows, [5, 10], [[0, -12], [0, 0], [1, 10]], /at 10 kn TWS, between 170° and 180° TWA.*go backwards/)
+  bad(rows, [5, 10], [[0, -12], [0, 0], [-10, 1]], /at 5 kn TWS, between 170° and 180°.*over 2 times as fast/)
+  // Between rows, the change must be less than the rows are apart.
+  ok([90, 100, 110], [10], [[0], [-9], [0]])
+  bad([90, 100, 110], [10], [[0], [-10], [0]], /between 90° and 100° TWA.*go backwards/)
+  bad([90, 100, 110], [10], [[0], [10], [0]], /between 90° and 100° TWA.*over 2 times/)
+  // A blank is checked as what it takes: here the -9 to its left, 18° below the 90° row's 9.
+  ok([90, 100, 110], [10, 20], [[0, 0], [-9, -9], [0, 0]])
+  bad([90, 100, 110], [10, 20], [[0, 9], [-9, null], [0, 0]], /at 20 kn TWS, between 90° and 100°.*go backwards/)
 })
 
 test('leeway fades in between 1.5 and 3 kn, with no step', () => {
@@ -188,29 +205,34 @@ test('leeway fades in between 1.5 and 3 kn, with no step', () => {
   }
 })
 
-test('TWS table: upwind row to the up angle, reach at 90, downwind from the down angle', () => {
+test('TWS table: rows by TWA, linear between, the end rows held beyond them', () => {
   const config = allOff()
   config.corrections.tws = { enabled: true, ...TWS }
   const at = awa => [process({ awa, aws: 12, stw: 0 }, config).out.tws, process({ awa, aws: 12, stw: 0 }, allOff()).out.tws]
-  const reach = fromZero(TWS.tws, TWS.reach, 12)
-  const down = fromZero(TWS.tws, TWS.downwind, 12)
-  let [c, p] = at(40); close(c, p, 1e-9, 'upwind row (0) up to the up angle')
-  ;[c, p] = at(90); close(c, p + reach, 1e-9, 'reach row at 90')
-  ;[c, p] = at(70); close(c, p + reach / 2, 1e-9, 'half way from the up angle to 90')
-  ;[c, p] = at(100); close(c, p + (reach + down) / 2, 1e-9, 'half way from 90 to the down angle')
-  ;[c, p] = at(170); close(c, p + down, 1e-9, 'downwind row beyond the down angle')
+  const reach = fromZero(TWS.tws, TWS.add[1], 12)
+  const down = fromZero(TWS.tws, TWS.add[2], 12)
+  let [c, p] = at(40); close(c, p, 1e-9, 'the first row (0) held below it')
+  ;[c, p] = at(90); close(c, p + reach, 1e-9, 'the 90 row at 90')
+  ;[c, p] = at(70); close(c, p + reach / 2, 1e-9, 'half way from 50 to 90')
+  ;[c, p] = at(100); close(c, p + (reach + down) / 2, 1e-9, 'half way from 90 to 110')
+  ;[c, p] = at(170); close(c, p + down, 1e-9, 'the last row held beyond it')
   const none = [null, null, null, null, null, null]
-  const half = { ...config, corrections: { ...config.corrections, tws: { ...config.corrections.tws, downwind: none } } }
+  const half = { ...config, corrections: { ...config.corrections, tws: { ...TWS, enabled: true, add: [TWS.add[0], TWS.add[1], none] } } }
   close(process({ awa: 170, aws: 12, stw: 0 }, half).out.tws, 12 + reach, 1e-9, 'a blank row takes the nearest row')
-  const blank = { ...config, corrections: { ...config.corrections, tws: { ...config.corrections.tws, upwind: none, reach: none, downwind: none } } }
+  const blank = { ...config, corrections: { ...config.corrections, tws: { ...TWS, enabled: true, add: [none, none, none] } } }
   close(process({ awa: 170, aws: 12, stw: 0 }, blank).out.tws, 12, 1e-9, 'a blank table = no correction')
 })
 
-test('config: TWS up angles must be below 90 deg and down angles above', () => {
-  const errs = tws => normalizeConfig({ corrections: { tws } }).errors
-  assert.ok(errs({ downAngle: [110, 110, 80, 110, 110, 110] }).some(e => /down angle row/.test(e)))
-  assert.ok(errs({ upAngle: [50, 165, 50, 50, 50, 50] }).some(e => /up angle row: each must be below 90/.test(e)), 'an H5000 up angle of 165 would step at 90')
-  assert.ok(errs({ upAngle: [50, null, 50, 50, 50, 50] }).some(e => /up angle/.test(e)), 'angles cannot be blank')
+test('a fine table: exact at its cells, bilinear between, from zero below the first column', () => {
+  const t = DEFAULTS.corrections.twa
+  const { tableLookup } = _internals
+  const f = fillGaps(t.add)
+  const [i, j] = [t.twa.indexOf(60), t.tws.indexOf(10)]
+  close(tableLookup(t, 60, 10), f[i][j], 1e-12, 'a cell')
+  close(tableLookup(t, 65, 11), (f[i][j] + f[i][j + 1] + f[i + 1][j] + f[i + 1][j + 1]) / 4, 1e-12, 'the middle of four cells')
+  close(tableLookup(t, 60, t.tws[0] / 2), f[i][0] / 2, 1e-12, 'half the first column at half its TWS')
+  close(tableLookup(t, 10, 10), f[0][j], 1e-12, 'the first row held below it')
+  assert.ok(t.twa.length >= 10 && t.tws.length >= 10 && DEFAULTS.corrections.stw.heel.length >= 10, 'the defaults are fine grids')
 })
 
 test('TWD and current need heading; current needs SOG and COG', () => {
@@ -265,11 +287,11 @@ test('a worked example, every correction on', () => {
   const y = 16.9 * Math.sin(32 * Math.PI / 180)
   const tws0 = Math.hypot(x, y)
   const twa0 = Math.atan2(y, x) * 180 / Math.PI
-  const up = fromZero(TWA.tws, TWA.upwind, tws0)
-  const reach = fromZero(TWA.tws, TWA.reach, tws0)
+  const up = fromZero(TWA.tws, TWA.add[0], tws0)
+  const reach = fromZero(TWA.tws, TWA.add[1], tws0)
   const twa = twa0 + (twa0 <= 40 ? up : up + (reach - up) * (twa0 - 40) / 50)
   close(r.twa, twa, 1e-9)
-  close(r.tws, tws0 + T.twsCorrection(TWS, twa, tws0), 1e-9, 'TWS table at the corrected TWA: upwind row, 0')
+  close(r.tws, tws0 + T.value('tws', TWS, twa, tws0), 1e-9, 'TWS table at the corrected TWA: first row, 0')
 })
 
 test('config: strings from forms become numbers, sources stay text', () => {
@@ -287,26 +309,40 @@ test('config: bad tables are reported, not accepted', () => {
     assert.ok(errors.some(e => e.includes(match)), `expected an error mentioning "${match}", got ${JSON.stringify(errors)}`)
   }
   bad({ mode: 'loud' }, 'mode')
-  bad({ corrections: { twa: { tws: [2.5, 5, 7.5, 10, 12.5, 15] } } }, 'H5000 layout')
-  bad({ corrections: { twa: { upwind: [1, 2] } } }, 'needs 6 values')
-  bad({ corrections: { stw: { heel: [0, 10, 20] } } }, 'H5000 layout')
-  bad({ corrections: { stw: { add: [[0, 0, 0, 0, 0, 0]] } } }, 'one row per heel')
-  bad({ corrections: { stw: { add: STW.add.map((r, i) => i === 2 ? [0, 0] : r) } } }, 'heel 0° row: needs 7 values')
-  bad({ corrections: { stw: { add: STW.add.map(r => r.map(() => null)) } } }, 'no values')
-  bad({ corrections: { twa: { upwind: [0, 'x', 0, 0, 0, 0] } } }, 'number or blank')
-  bad({ corrections: { tws: { reach: [0, 0, 0] } } }, 'needs 6 values')
+  bad({ corrections: { twa: { ...TWA, tws: [5, 5, 15, 20, 25, 30] } } }, 'TWA table TWS columns: must go up')
+  bad({ corrections: { twa: { add: [[1, 2]] } } }, 'TWA table: needs 16 rows of values')
+  bad({ corrections: { twa: { ...TWA, add: [[1, 2], TWA.add[1], TWA.add[2]] } } }, 'TWA table 40° TWA row: needs 6 values')
+  bad({ corrections: { stw: { heel: [0, 10, 20] } } }, 'STW table: needs 3 rows of values')
+  bad({ corrections: { stw: { ...STW, add: STW.add.map((r, i) => i === 2 ? [0, 0] : r) } } }, 'heel 0° row: needs 7 values')
+  bad({ corrections: { stw: { ...STW, add: STW.add.map(r => r.map(() => null)) } } }, 'no values')
+  bad({ corrections: { stw: { ...STW, stw: [0, 2.5, 5, 7.5, 10, 12.5, 15] } } }, 'boat speed columns: must be above 0')
+  bad({ corrections: { stw: { ...STW, heel: ['x', -10, 0, 10, 20] } } }, 'heel rows: every one must be a number')
+  bad({ corrections: { twa: { ...TWA, add: [[0, 'x', 0, 0, 0, 0], TWA.add[1], TWA.add[2]] } } }, 'number or blank')
+  bad({ corrections: { tws: { ...TWS, twa: [50, 90, 200] } } }, 'TWS table TWA rows: must be from 0 to 180')
+  bad({ corrections: { tws: { ...TWS, twa: [] } } }, 'TWA rows: needs at least one')
+  bad({ corrections: { twa: { upwind: [1, 1, 1, 1, 1, 1] } } }, 'TWA table: unknown field upwind')
   bad({ corrections: { leeway: { k: 'x' } } }, 'Leeway K')
 })
 
-test('config carries its schema version, now 6', () => {
+test('config carries its schema version, now 7', () => {
   const { CONFIG_SCHEMA } = require('../lib/processor')
-  assert.strictEqual(CONFIG_SCHEMA, 6)
-  assert.strictEqual(normalizeConfig({}).config.schema, 6)
-  assert.strictEqual(normalizeConfig({ schema: 6, variation: 11 }).config.variation, 11)
+  assert.strictEqual(CONFIG_SCHEMA, 7)
+  assert.strictEqual(normalizeConfig({}).config.schema, 7)
+  assert.strictEqual(normalizeConfig({ schema: 7, variation: 11 }).config.variation, 11)
+})
+
+test('a table may have any axes: coarse, fine, or uneven', () => {
+  const t = { twa: [35, 45, 60, 120, 150, 175], tws: [3, 6, 9, 14, 22], add: Array.from({ length: 6 }, (_, i) => [-4, -3, -2, null, null].map(v => v == null ? v : v + i / 2)) }
+  const s = { heel: [-25, -15, -5, 0, 5, 15, 25], stw: [0.5, 2, 4, 6, 9], add: Array.from({ length: 7 }, () => [0.3, 0.2, 0.1, 0, null]) }
+  const one = { twa: [90], tws: [10], add: [[-1]] }
+  const { config, errors } = normalizeConfig({ corrections: { twa: t, stw: s, tws: one } })
+  assert.deepStrictEqual(errors, [])
+  assert.deepStrictEqual(config.corrections.twa.twa, t.twa)
+  close(process({ awa: 150, aws: 20, stw: 0 }, config).out.tws, 20 - 1, 1e-9, 'a one-cell table is one value everywhere above its TWS')
 })
 
 test('a config from a newer release is refused, not guessed at', () => {
-  const { config, errors } = normalizeConfig({ schema: 7, corrections: { leeway: { k: 6 } } })
+  const { config, errors } = normalizeConfig({ schema: 8, corrections: { leeway: { k: 6 } } })
   assert.ok(errors[0].includes('newer version'))
   assert.strictEqual(config.corrections.leeway.k, DEFAULTS.corrections.leeway.k, 'falls back to defaults')
 })
@@ -320,7 +356,7 @@ test('a schema 3 config (0.1.0 to 0.2.5) moves forward: settings and K kept, tab
   const { config, errors, notices } = normalizeConfig(old)
   assert.deepStrictEqual(errors, [])
   assert.match(notices[0], /settings kept; the boat speed, TWA and TWS tables reset.*Shadow mode/)
-  assert.strictEqual(config.schema, 6)
+  assert.strictEqual(config.schema, 7)
   assert.strictEqual(config.mode, 'shadow', 'never Replace with tables from another boat')
   assert.strictEqual(config.variation, 11.5)
   assert.deepStrictEqual(config.damping, old.damping)
@@ -333,7 +369,7 @@ test('a schema 3 config (0.1.0 to 0.2.5) moves forward: settings and K kept, tab
 
 test('a schema 4 config (0.2.6) moves forward: only the TWA table, whose columns changed, is reset', () => {
   const stw = { ...STW6, enabled: true }
-  const tws = { ...TWS, enabled: true }
+  const tws = { ...TWS6, enabled: true }
   const old = { schema: 4, mode: 'replace', damping: { heelS: 2, headingS: 2, trueWindS: 3, stwS: 1, currentS: 10 },
     corrections: { stw, leeway: { enabled: true, k: 7 }, twa: { enabled: true, tws: [2.5, 5, 7.5, 10, 12.5, 15], upwind: [1, 1, 1, 1, 1, 1], reach: [0, 0, 0, 0, 0, 0], downwind: [0, 0, 0, 0, 0, 0] }, tws } }
   const { config, errors, notices } = normalizeConfig(old)
@@ -342,7 +378,8 @@ test('a schema 4 config (0.2.6) moves forward: only the TWA table, whose columns
   assert.strictEqual(config.mode, 'shadow')
   assert.strictEqual(config.damping.headingS, 2, 'settings kept as saved')
   assert.deepStrictEqual(config.corrections.stw, { ...STW, enabled: true }, 'with the 1 kn column, working as before')
-  assert.deepStrictEqual(config.corrections.tws, tws)
+  assert.strictEqual(notices.length, 1, 'one notice: it already asks for a refit')
+  assert.deepStrictEqual(config.corrections.tws, { ...TWS, enabled: true }, 'as a grid')
   assert.strictEqual(config.corrections.leeway.k, 7)
   assert.deepStrictEqual(config.corrections.twa, DEFAULTS.corrections.twa)
 })
@@ -361,7 +398,7 @@ test('a schema 5 config (0.2.7 to 0.2.11) moves forward: its boat speed table ga
   t.add[4] = [null, null, null, null, null, null] // a blank row, filled from its neighbour
   const { config, errors, notices } = normalizeConfig({ schema: 5, mode: 'replace', variation: 11, corrections: { stw: { ...t, enabled: true } } })
   assert.deepStrictEqual(errors, [])
-  assert.strictEqual(config.schema, 6)
+  assert.strictEqual(config.schema, 7)
   assert.strictEqual(config.mode, 'replace', 'nothing is reset, so the mode stays')
   assert.strictEqual(config.variation, 11)
   assert.match(notices[0], /new 1 kn column, set so it works as before. Refit/)
@@ -383,4 +420,55 @@ test("STW: the 1 kn column takes the paddlewheel's stall: from zero at 0 kn to t
   close(stwGridLookup(t, 0, 1), 0.6, 1e-9)
   close(stwGridLookup(t, 0, 1.75), (0.6 + 0.3) / 2, 1e-9, 'half way from 1 to 2.5 kn')
   close(stwGridLookup(t, 0, 2.5), 0.3, 1e-9)
+})
+
+// The schema 6 lookups, as 0.2.17 had them: three rows blended by |TWA|.
+const T6 = require('../public/tables')
+function twa6 (t, a, s) {
+  const [u, r, d] = fillGaps([t.upwind, t.reach, t.downwind]).map(row => fromZero(t.tws, row, s))
+  return T6.blendRows(a, 40, 90, 165, u, r, d)
+}
+function tws6 (t, a, s) {
+  const [u, r, d] = fillGaps([t.upwind, t.reach, t.downwind]).map(row => fromZero(t.tws, row, s))
+  const up = Math.min(89, T6.interp(t.tws, t.upAngle, s))
+  const down = Math.max(91, T6.interp(t.tws, t.downAngle, s))
+  return T6.blendRows(a, up, 90, down, u, r, d)
+}
+
+test('a schema 6 config (0.2.12 to 0.2.17) moves forward: its TWA and TWS tables become grids that look up exactly the same', () => {
+  const twa = { ...TWA6, upwind: [-9, null, -5, -2, 3, null], downwind: [null, null, null, null, null, null] }
+  const tws = { ...TWS6, reach: [-0.2, null, -0.6, -0.8, null, null] }
+  const { config, errors, notices } = normalizeConfig({ schema: 6, mode: 'replace', corrections: { stw: { ...STW, enabled: true }, twa: { ...twa, enabled: false }, tws: { ...tws, enabled: true } } })
+  assert.deepStrictEqual(errors, [])
+  assert.strictEqual(config.schema, 7)
+  assert.strictEqual(config.mode, 'replace', 'nothing changes, so the mode stays')
+  assert.match(notices[0], /now grids.*work exactly as before/)
+  assert.strictEqual(config.corrections.twa.enabled, false, 'kept off')
+  assert.deepStrictEqual(config.corrections.twa.twa, [40, 90, 165])
+  assert.deepStrictEqual(config.corrections.twa.add[0], twa.upwind, 'blanks kept')
+  assert.deepStrictEqual(config.corrections.stw, { ...STW, enabled: true }, 'the boat speed table as it was')
+  const { tableLookup } = _internals
+  for (let a = 0; a <= 180; a += 2.5) {
+    for (let s = 0; s <= 35; s += 0.5) {
+      close(tableLookup(config.corrections.twa, a, s), twa6(twa, a, s), 1e-12, `TWA table at ${a}°, ${s} kn`)
+      close(tableLookup(config.corrections.tws, a, s), tws6(tws, a, s), 1e-12, `TWS table at ${a}°, ${s} kn`)
+    }
+  }
+})
+
+test('a schema 6 TWS table whose angles change with TWS becomes a grid at every angle: the same at each column', () => {
+  const tws = { ...TWS6, upAngle: [45, 50, 50, 55, 55, 55], downAngle: [110, 110, 120, 130, 130, 130] }
+  const { config, errors, notices } = normalizeConfig({ schema: 6, corrections: { tws } })
+  assert.deepStrictEqual(errors, [])
+  assert.match(notices[0], /up and down angles changed with TWS.*refit/)
+  assert.deepStrictEqual(config.corrections.tws.twa, [45, 50, 55, 90, 110, 120, 130])
+  const { tableLookup } = _internals
+  for (const s of tws.tws) for (let a = 0; a <= 180; a += 2.5) close(tableLookup(config.corrections.tws, a, s), tws6(tws, a, s), 6e-4, `${a}°, ${s} kn`)
+})
+
+test('a schema 6 TWS table that cannot be read is reset to the defaults, saying so', () => {
+  const { config, errors, notices } = normalizeConfig({ schema: 6, corrections: { tws: { ...TWS6, upAngle: [50, 95, 50, 50, 50, 50] } } })
+  assert.deepStrictEqual(errors, [])
+  assert.match(notices[0], /TWS table could not be read.*reset to the defaults/)
+  assert.deepStrictEqual(config.corrections.tws, DEFAULTS.corrections.tws)
 })

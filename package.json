@@ -1,11 +1,11 @@
 {
   "name": "signalk-performance-processor",
-  "version": "0.2.17",
+  "version": "0.3.0-beta.0",
   "description": "Stops true wind direction swinging every time you tack or gybe. Calibrates true wind in Signal K the way a B&G H5000 does: boat speed, TWA and TWS correction tables fitted from your own sailing logs, then damping, with every step shown live in a webapp.",
   "main": "index.js",
   "scripts": {
     "test": "node --test",
-    "prepublishOnly": "npm test"
+    "prepublishOnly": "node scripts/check-publish-tag.js && npm test"
   },
   "keywords": [
     "signalk-node-server-plugin",
