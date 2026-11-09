@@ -618,12 +618,14 @@
     if (st) {
       lines.push(`<p>${st.enabled ? `Runs every ${st.everyMin} minutes` : '<span class="warn">Paused</span>'}${a.busy || st.running ? ' · <b>running now…</b>' : ''}</p>`)
       if (st.lastRunAt) {
-        lines.push(`<p>Last run ${esc(ago(st.lastRunAt))} (${esc(clock(st.lastRunAt / 1000))}): read ${st.lastRows} s of sailing, ${st.lastFound} new findings.` +
-          (st.readTo ? ` Read up to ${esc(clock(st.readTo / 1000))}; tacks and gybes show about 4 minutes after, a leg when it ends.` : '') + '</p>')
+        const c = st.lastChunk
+        lines.push(`<p>Last run ${esc(ago(st.lastRunAt))}` + (c ? `: the chunk ${esc(clock(c.from))}–${esc(clock(c.to))}, ${mins(st.lastRows)} min of sailing, ${st.lastFound} findings.` : ': nothing new.') +
+          (st.doneTo ? ` Done up to ${esc(clock(st.doneTo))}: each chunk ends 4 minutes back, so a tack has its 2 minutes after it.` : '') + '</p>')
       } else lines.push('<p class="muted">Not run yet: the first run is a minute after the plugin starts.</p>')
       if (st.sources) {
-        lines.push('<p class="muted">Reading from history: ' + Object.entries(st.sources).map(([g, src]) => `${esc(SOURCE_LABELS[g] || g)} <code>${esc(src)}</code>`).join(' · ') +
-          '. The source chosen in Settings, else the sensor that has sent most since the plugin started.</p>')
+        const names = v => (Array.isArray(v) ? v : [v]).map(n => `<code>${esc(n)}</code>`).join(' or ')
+        lines.push('<p class="muted">Reading from history: ' + Object.entries(st.sources).map(([g, src]) => `${esc(SOURCE_LABELS[g] || g)} ${names(src)}`).join(' · ') +
+          '. The source chosen in Settings, else the sensor that has sent most since the plugin started; an NMEA 2000 device under both the names the server has recorded it by.</p>')
       }
       if (st.lastError) lines.push(`<p class="warn">${esc(st.lastError)}</p>`)
     }
@@ -659,7 +661,7 @@
     const R = g[rowsKey]; const C = g[colsKey]
     const ri = R.map((_, i) => i).filter(i => g.cells[i].some(Boolean))
     const cs = C.map((_, j) => j).filter(j => ri.some(i => g.cells[i][j]))
-    if (!ri.length) return '<p class="muted sub">No findings for this table yet.</p>'
+    if (!ri.length) return ''
     const c0 = Math.min(...cs); const c1 = Math.max(...cs)
     const cols = C.map((_, j) => j).filter(j => j >= c0 && j <= c1)
     const head = `<tr><th>${esc(corner)}</th>${cols.map(j => `<th class="num">${C[j]}</th>`).join('')}</tr>`
@@ -679,13 +681,16 @@
   function renderAnalysisFits (s) {
     if (!s) { $('anFits').innerHTML = ''; return }
     const k = s.leeway
-    const panel = (title, note, inner) => `<div class="panel"><h2>${esc(title)}</h2><p class="muted sub">${esc(note)}</p>${inner}</div>`
+    const state = p => !p ? '' : p.waiting
+      ? `<p class="warn sub">Waiting: ${esc(p.waiting)}.</p>`
+      : p.withData != null ? `<p class="sub"><b>${p.proposed} of ${p.withData}</b> cell${p.withData === 1 ? '' : 's'} with data ${p.proposed === 1 ? 'has' : 'have'} enough to propose.</p>` : ''
+    const panel = (title, note, inner, p) => `<div class="panel"><h2>${esc(title)}</h2>${state(p)}<p class="muted sub">${esc(note)}</p>${inner}</div>`
     $('anFits').innerHTML =
-      '<p class="muted sub intro">Fitted from raw data in the pipeline\'s order, as boatcal does: the boat speed table and K from the GPS, then the TWA table from tacks and gybes using that boat speed table, then the TWS table from legs using both. Each cell: the median of what the data says (bold), how much it rests on, and your table now. Faded cells have too little to propose. Hover for the spread.</p>' +
-      panel('1. Boat speed (STW) table', s.stw.note, fitGrid('stw', s.stw, 'heel\\stw', 'heel', 'stw', 2)) +
-      panel('2. Leeway K', s.leeway.note, k.n ? `<p><b>K ${fmt(k.median, 2)}</b> from ${mins(k.n * 5)} min of upwind over ${k.days} day${k.days === 1 ? '' : 's'} (middle half ${fmt(k.p25, 2)} to ${fmt(k.p75, 2)}); now ${fmt(k.now, 2)}.${k.proposed == null ? ` Not proposed until ${k.minDays} days.` : ''}</p>` : '<p class="muted sub">No upwind sailing with a current yet.</p>') +
-      panel('3. TWA table', s.twa.note, fitGrid('twa', s.twa, 'TWA\\TWS', 'twa', 'tws', 1)) +
-      panel('4. TWS table', s.tws.note, fitGrid('tws', s.tws, 'TWA\\TWS', 'twa', 'tws', 2))
+      '<h2 class="section">Calibration so far</h2><p class="muted sub intro">Fitted again after every chunk, from raw data in the pipeline\'s order, as boatcal does: the boat speed table and K from the GPS, then the TWA table from tacks and gybes using that boat speed table, then the TWS table from legs using both. Each cell: the median of what the data says (bold), how much it rests on, and your table now. Faded cells have too little to propose. Hover for the spread.</p>' +
+      panel('1. Boat speed (STW) table', s.stw.note, fitGrid('stw', s.stw, 'heel\\stw', 'heel', 'stw', 2), s.stw.progress) +
+      panel('2. Leeway K', s.leeway.note, (k.n ? `<p><b>K ${fmt(k.median, 2)}</b> from ${mins(k.n * 5)} min of upwind over ${k.days} day${k.days === 1 ? '' : 's'} (middle half ${fmt(k.p25, 2)} to ${fmt(k.p75, 2)}); now ${fmt(k.now, 2)}.${k.proposed == null ? ` Not proposed until ${k.minDays} days.` : ''}</p>` : ''), k.progress) +
+      panel('3. TWA table', s.twa.note, fitGrid('twa', s.twa, 'TWA\\TWS', 'twa', 'tws', 1), s.twa.progress) +
+      panel('4. TWS table', s.tws.note, fitGrid('tws', s.tws, 'TWA\\TWS', 'twa', 'tws', 2), s.tws.progress)
   }
 
   // Manoeuvres and legs as they are; the 5 s records summed into BLOCK_S blocks.
@@ -693,7 +698,7 @@
     if (!fs) { $('anRecent').innerHTML = '<tr><td colspan="7" class="muted center">Loading…</td></tr>'; return }
     const rows = []
     const blocks = new Map()
-    for (const f of fs.filter(x => x.v === 3)) {
+    for (const f of fs.filter(x => x.v === 4)) {
       if (f.type === 's5') {
         const b = Math.floor(f.t / BLOCK_S) * BLOCK_S
         if (!blocks.has(b)) blocks.set(b, [])

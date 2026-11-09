@@ -742,42 +742,46 @@ paddlewheel (NMEA 2000, PGN 128259) is not listed, so it never wins and is never
 
 ## 12 Analysis (beta)
 
-Every few minutes the plugin reads the latest sailing from the History API, as §11.2, and
-writes **findings**: what each stretch of sailing was, in raw inputs only, as 5-second
-medians, manoeuvres and legs (boatcal's units). Over days the findings add up, and the tables are fitted from them on request, in
-the pipeline's order, each cell with its histogram. Nothing here changes a table.
+boatcal's calibration (§9) on the boat's own sailing as it is recorded. Every few minutes the
+plugin reads the chunk of history since the last, as §11.2, takes out what boatcal fits from
+(**findings**: 5-second samples and manoeuvres, raw), adds them to what it has, and fits the
+tables again from all of it, in the pipeline's order, each cell with its histogram. Nothing
+here changes a table.
 
 **Raw only.** A finding holds STW (raw, §7.5), AWA, AWS, heading, heel, SOG and COG, and true
-wind worked out from them with no tables (§11.3). Classes and compliance are on raw values. The tables in use are never applied, so they cannot change what is learned:
-a fit from the same findings is the same whatever tables are in use.
+wind worked out from them with no tables (§11.3). Classes and compliance are on raw values.
+The tables in use are never applied, so they cannot change what is learned: a fit from the
+same findings is the same whatever tables are in use.
 
-### 12.1 Cadence
+### 12.1 Chunks
 
-Every `ANALYSIS_EVERY` = 5 minutes (the first a minute after start), the history from where the
-last run read up to `ANALYSIS_LAG` = 1 minute ago (providers write in batches) is read as
-1 Hz rows (§11.2) and fed, a second at a time, to one long-lived analyser (`lib/learn.js`):
-its buffer, manoeuvres and legs carry across runs, so a run boundary changes nothing. When the last row
-is more than 7 minutes old (the boat stopped), what is open is closed.
+Every 5 minutes (the first a minute after start), one **chunk**: from where the last ended to
+`ANALYSIS_LAG` (1 minute, as providers write in batches) and `MARGIN` (3 minutes) ago. It is
+read as 1 Hz rows (§11.2) from `CONTEXT` (7 minutes, §11.4's buffer) before it to the margin
+after, through `lib/learn.js`, and keeps the 5 s records and manoeuvres timed inside it: the
+context gives the first minutes their classes, the margin gives a manoeuvre near the end its
+after window (a rounding needs 135 s). Nothing is carried from one chunk to the next but where
+it ended (`analysis/state.json`), so a restart carries on from there, and 5-minute chunks find
+what one long read would. Legs are found when fitting, from the 5 s records (12.3). The first
+chunk ever starts an hour back; after the plugin was off, at most 24 hours back.
 
 **Which sensor.** Each input is read from the source chosen in Settings, else from the
 sensor that has sent it most since the plugin started, of those that sent in the last minute
 (any, if none has). Never Auto's choice of the moment (§2.2): it moves to another sensor when
-one goes quiet for 3 s, and the server records an NMEA 2000 device under a temporary name
-(`n2k-tcp.100`) until it learns its CAN name, so that name holds only the first seconds after
-each restart. History providers may hold a sparse source's last value through the empty
-seconds after it (signalk-questdb, up to twice its heartbeat), so reading such a name gives a
-value frozen for minutes. `GET /analysis/status` names the sensors of the last run.
-
-After a restart (or a Save, which restarts the pipeline) it resumes from the saved state
-(`analysis/state.json`): from the learner's next minute, fed from 7 minutes (§11.4's buffer)
-before, with anything found before that point dropped, so nothing is written twice. A leg open
-at the restart is lost (its `s5` records are kept), and at most one `s5` record. The first run ever looks back
-1 hour; after the plugin was off, at most 24 hours.
+one goes quiet for 3 s. **An NMEA 2000 device has two names in history**: the server records it
+by its address (`n2k-tcp.100`) until it learns its CAN name, then by that
+(`n2k-tcp.c079be00ffd20dcb`), so after each restart the first minutes are under the address.
+The plugin learns both from the source of each update (`src` and `canName`) and reads the
+device under both, each second from its main name where it has a value, else the other: one
+device, never two sensors merged. History providers may hold a sparse source's last value
+through the empty seconds after it (signalk-questdb, up to twice its heartbeat), which is why a
+name must never be read on its own when it is not the device's main one. `GET /analysis/status`
+names the sensors of the last chunk.
 
 ### 12.2 Findings
 
 Appended to `analysis/YYYY-MM-DD.jsonl` (local day of the finding) in the plugin's data
-directory, one JSON object per line, each with `v` (layout, 3) and `t` (epoch s). Findings of
+directory, one JSON object per line, each with `v` (layout, 4) and `t` (epoch s). Findings of
 another layout are ignored. They are boatcal's units (its sections 5 to 8), from `lib/learn.js`
 (§11.5), all raw:
 
@@ -785,11 +789,10 @@ another layout are ignored. They are boatcal's units (its sections 5 to 8), from
 |---|---|---|---|
 | `s5` | each 5 seconds of sailing (§11.6) | the medians of AWA (through its sine and cosine), AWS, STW, heel, heading, the velocity over the ground (`gN`, `gE`, kn north and east, from SOG and COG), variation; `cls` (§11.5, on the 30 s median of raw \|TWA\|: `sailUp`, `sailReach`, `sailDown`, `other`); `n` seconds, `good` seconds | STW table, K, TWS table |
 | `mnv` | each tack, gybe or rounding (§11.5, boatcal's windows) | `kind`, `from` (side before, + starboard); `before` and `after`: the means of the good seconds of each window (AWA, AWS, STW, heel, heading), raw TWA, TWS, TWD; `step` = raw TWD after − before; `twaAdd` (below) | TWA table |
-| `leg` | each upwind (`up`) or off-wind (`off`) leg of 3 minutes or more (§11.5) | start `t`, end `t1`, good seconds | TWS table |
 
 **Compliant** (for now, the inputs only): an `s5` record with 4 or more good seconds of its 5
 (§11.5: AWA, AWS, STW, heading and heel all there and STW over 1 kn). A manoeuvre is compliant
-by construction (§11.5 keeps only those with good data either side), and so is a leg. Motoring,
+by construction (§11.5 keeps only those with good data either side). Motoring,
 a fouled paddlewheel and the like are not yet tested. Nothing is filtered for being steady:
 as boatcal, the fits use medians, which turns and gusts do not move.
 
@@ -809,7 +812,10 @@ its support; `need`, the support it must reach; `table`, the cell's value now), 
 scales with a cell's area, as boatcal's (its section 10): a cell's width along an axis is half
 the gap to each neighbour (the gap to its one neighbour at an end), and a cell needs
 `support × its area ÷ the reference area`. With it come seconds of sailing by class (all, and
-good in compliant records), manoeuvres by kind, legs by kind, and the days.
+good in compliant records), manoeuvres by kind, legs by kind, and the days. Each table also
+carries `progress`: how many cells have data, how many have enough to propose, and what it
+is waiting for if it has nothing yet (GPS, upright sailing on two headings, tacks or gybes,
+an upwind leg, an off-wind leg near one).
 
 1. **STW table**, from the `s5` samples with SOG and COG, STW and SOG over 0.5 kn and raw
    \|TWA\| over 30° (boatcal 5). In the boat's frame, ground velocity less current, along
@@ -841,7 +847,9 @@ good in compliant records), manoeuvres by kind, legs by kind, and the days.
    looked up, before the TWA table). A rounding is not used: two cells share its step. A cell
    needs 3: boatcal's support (half a manoeuvre per 50° × 5 kn) assumes its least-squares fit,
    in which a manoeuvre informs several cells.
-4. **TWS table**, from legs (boatcal 8), each trimmed by 2 minutes at either end, its `s5`
+4. **TWS table**, from legs (boatcal 8): found from the compliant `s5` records as §11.5
+   finds them from seconds (each record 5 good seconds of its class, any other record a gap;
+   `sailUp` up, `sailReach` and `sailDown` off), each trimmed by 2 minutes at either end, its `s5`
    samples through `process` with the proposed STW and TWA tables, the TWS table off. An
    upwind leg with 60 s or more gives its median TWS. An off-wind leg's reference is that of
    the upwind leg ending before it and of the one starting after it, each within 30 minutes
@@ -853,22 +861,23 @@ good in compliant records), manoeuvres by kind, legs by kind, and the days.
 
 These are binned, weighted medians, not boatcal's regularised least squares: a guide to what
 the findings say, cell by cell, to set against boatcal on the same days before a table is
-changed. The summary is kept until a run adds findings, they are cleared, or the tables change.
+changed. The summary is kept until a chunk adds findings, they are cleared, or the tables
+change.
 
 ### 12.4 Routes
 
 | Route | |
 |---|---|
-| `GET /analysis/status` | enabled, running, last run, rows read, findings written, error |
+| `GET /analysis/status` | enabled, running, last run and its chunk, minutes read, findings written, done up to, the sensors read, error |
 | `PUT /analysis` `{ enabled }` | pause or resume; kept across restarts |
 | `PUT /analysis/run` | run now |
-| `PUT /analysis/clear` | delete every finding; the read position is kept |
+| `PUT /analysis/clear` | delete every finding; where the chunks have got to is kept |
 | `GET /analysis/findings?since=&until=&type=&kind=&after=` | the findings as written (`after`: epoch s) |
 | `GET /analysis/summary?since=&until=` | 12.3 |
 
 | Constant | Value |
 |---|---|
-| Run every, first run after start, lag | 5 min, 1 min, 1 min |
+| Chunk every, first after start, lag, margin, context | 5 min, 1 min, 1 min, 3 min, 7 min |
 | Sensor read | chosen, else most messages since start of those sent within 1 min |
 | Look back: first run, after being off | 1 h, 24 h |
 | Compliant `s5` | 4 good seconds of 5 |

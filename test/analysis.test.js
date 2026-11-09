@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert')
-const { Analyst, fit, RESUME_CONTEXT_S, _internals: { VERSION, width, wstats } } = require('../lib/analysis')
+const { analyseChunk, fit, CONTEXT_S, MARGIN_S, _internals: { VERSION, width, wstats, legsOf } } = require('../lib/analysis')
 const { normalizeConfig } = require('../lib/processor')
 
 const R = Math.PI / 180
@@ -32,11 +32,19 @@ function row (t, twa, o = {}) {
   }
 }
 
-function run (rows) {
+// All the rows as one chunk.
+const run = rows => analyseChunk(rows, -Infinity, Infinity)
+
+// The rows in chunks of `size` seconds, as the plugin reads them every few minutes: each
+// with CONTEXT_S before and MARGIN_S after, keeping only its own stretch.
+function chunked (rows, size) {
   const out = []
-  const a = new Analyst(f => out.push(f))
-  rows.forEach(r => a.add(r))
-  a.flush()
+  const t0 = rows[0].t; const t1 = rows[rows.length - 1].t + 1
+  for (let a = t0; a < t1; a += size) {
+    const b = Math.min(a + size, t1)
+    const last = b === t1
+    out.push(...analyseChunk(rows.filter(r => r.t >= a - CONTEXT_S && r.t < b + MARGIN_S), a, last ? Infinity : b))
+  }
   return out
 }
 
@@ -82,36 +90,23 @@ test('5 s records: one per 5 seconds, compliant with 4 good seconds, raw values'
   assert.ok(Math.abs(Math.hypot(f.gN, f.gE) - 6) < 0.01)
 })
 
-test('fed in chunks, as every few minutes, the findings are the same as all at once', () => {
+test('in 5-minute chunks, the findings are the same as all at once', () => {
   const rows = []
-  for (let i = 0; i < 1800; i++) rows.push(row(T0 + i, Math.floor(i / 450) % 2 ? -40 : 40, { twaErr: 2 }))
+  for (let i = 0; i < 3600; i++) rows.push(row(T0 + i, Math.floor(i / 450) % 2 ? -40 : 40, { twaErr: 2 }))
+  const key = f => `${f.type} ${f.t}`
   const once = run(rows)
-  const out = []
-  const a = new Analyst(f => out.push(f))
-  for (let k = 0; k < rows.length; k += 300) rows.slice(k, k + 300).forEach(r => a.add(r))
-  a.flush()
-  assert.deepStrictEqual(out, once)
-  assert.strictEqual(once.filter(f => f.type === 'mnv').length, 3)
+  const parts = chunked(rows, 300)
+  assert.deepStrictEqual(parts.map(key).sort(), once.map(key).sort())
+  assert.strictEqual(new Set(parts.map(key)).size, parts.length, 'nothing twice')
+  assert.strictEqual(once.filter(f => f.type === 'mnv').length, 7)
 })
 
-test('resuming from safe(): nothing twice, at most one 5 s record lost', () => {
+test('legs from the 5 s records: a stretch of one kind, joined across a short gap', () => {
   const rows = []
-  for (let i = 0; i < 1800; i++) rows.push(row(T0 + i, Math.floor(i / 450) % 2 ? -40 : 40))
-  const key = f => `${f.type} ${f.t}`
-  const all = run(rows).filter(f => f.type !== 'leg').map(key)
-  const first = []
-  const a = new Analyst(f => first.push(f))
-  rows.slice(0, 1000).forEach(r => a.add(r)) // stopped here, no flush
-  const safe = a.safe()
-  assert.ok(safe.learn <= T0 + 1000 && safe.learn > T0 + 600, JSON.stringify(safe))
-  const second = []
-  const b = new Analyst(f => second.push(f), { resume: safe })
-  rows.filter(r => r.t >= safe.learn - RESUME_CONTEXT_S).forEach(r => b.add(r))
-  b.flush()
-  const got = [...first, ...second].filter(f => f.type !== 'leg').map(key)
-  assert.strictEqual(new Set(got).size, got.length, 'nothing twice')
-  const lost = all.filter(k => !got.includes(k))
-  assert.ok(lost.length <= 1 && lost.every(k => k.startsWith('s5')), `lost ${lost}`)
+  for (let i = 0; i < 1800; i++) rows.push(row(T0 + i, i < 900 ? 40 : 150))
+  const legs = legsOf(run(rows).filter(f => f.type === 's5' && f.compliant))
+  assert.deepStrictEqual(legs.map(L => L.kind), ['up', 'off'])
+  assert.ok(Math.abs(legs[0].t - T0) <= 30 && legs[1].t1 >= T0 + 1790, JSON.stringify(legs))
 })
 
 test('support scales with a cell\'s area, as boatcal', () => {

@@ -7,7 +7,7 @@ const { Smooth, SmoothAngle, SmoothVector } = require('./lib/damping')
 const { process, correctInputs, normalizeConfig, salvage, CORRECTIONS, CONFIG_SCHEMA, MAX_LEEWAY_DEG, LEEWAY_FADE_KN, TWA_TAPER_UP_DEG, TWA_TAPER_DOWN_DEG, TWA_SLOPE_MAX } = require('./lib/processor')
 const { Learner } = require('./lib/learn')
 const history = require('./lib/history')
-const { Analyst, fit, RESUME_CONTEXT_S } = require('./lib/analysis')
+const { analyseChunk, fit, CONTEXT_S, MARGIN_S } = require('./lib/analysis')
 
 const MS_TO_KN = 1.94384
 const RAD_TO_DEG = 180 / Math.PI
@@ -250,6 +250,20 @@ module.exports = function (app) {
     while (s.times.length && now - s.times[0] > RATE_WINDOW_MS) s.times.shift()
   }
   const sourcesOf = group => Object.values(sources).filter(s => s.group === group)
+
+  // The names the server has given each NMEA 2000 device: its address (n2k-tcp.100) until it
+  // learns the device's CAN name, then the CAN name (n2k-tcp.c079be00ffd20dcb). History holds
+  // a device under both, so analysis reads both: one device, never two sensors merged.
+  let aliases = {} // $source -> Set of every name of the same device
+  function noteAlias (update) {
+    const s = update.source
+    if (!s || typeof s !== 'object' || !s.label || s.src == null || !s.canName) return
+    const names = [`${s.label}.${s.src}`, `${s.label}.${s.canName}`]
+    for (const n of names) {
+      aliases[n] = aliases[n] || new Set()
+      for (const m of names) aliases[n].add(m)
+    }
+  }
   const inUse = group => config.sources[group] || locked[group]
   // Rate over the last RATE_WINDOW_MS, from the times of each message (a source) or each
   // value sent (an output): one that stopped falls to 0.
@@ -510,6 +524,7 @@ module.exports = function (app) {
         const src = String(update.$source || '')
         const sensor = fromSensor(update)
         noteSource(group, src, sensor, update.timestamp, now)
+        if (sensor) noteAlias(update)
         // The chosen source; or, with none chosen, the sensor sending it most often
         // (chooseSensor). Another plugin's output is never used unless chosen: it is a copy,
         // later and slower than the sensor (derived-data's true heading), or already
@@ -781,9 +796,7 @@ module.exports = function (app) {
   // findings, appended to a file per local day in analysis/. The data itself is not kept.
   const analysisDir = () => path.join(app.getDataDirPath(), 'analysis')
   const analysisStateFile = () => path.join(analysisDir(), 'state.json')
-  let analysis = { enabled: true, running: false, lastRunAt: null, lastError: '', lastRows: 0, lastFound: 0, readTo: null, resume: null, sources: null }
-  let analyst = null
-  let analysisSink = [] // this run's findings: the Analyst lives across runs
+  let analysis = { enabled: true, running: false, lastRunAt: null, lastError: '', lastRows: 0, lastFound: 0, lastChunk: null, doneTo: null, sources: null }
   let analysisTimer = null
   let findingsVersion = 0 // changes whenever findings are written or cleared
   let summaryCache = null
@@ -792,7 +805,7 @@ module.exports = function (app) {
   function loadAnalysisState () {
     try {
       const st = JSON.parse(fs.readFileSync(analysisStateFile(), 'utf8'))
-      analysis = { ...analysis, enabled: st.enabled !== false, readTo: st.readTo ?? null, resume: st.resume ?? null }
+      analysis = { ...analysis, enabled: st.enabled !== false, doneTo: Number.isFinite(st.doneTo) ? st.doneTo : null }
     } catch (e) {
       if (e.code !== 'ENOENT') app.error(`analysis: could not read ${analysisStateFile()} (${e.message}); starting afresh`)
     }
@@ -802,7 +815,7 @@ module.exports = function (app) {
   function saveAnalysisState () {
     fs.mkdirSync(analysisDir(), { recursive: true })
     const f = analysisStateFile()
-    fs.writeFileSync(f + '.tmp', JSON.stringify({ enabled: analysis.enabled, readTo: analysis.readTo, resume: analysis.resume }))
+    fs.writeFileSync(f + '.tmp', JSON.stringify({ enabled: analysis.enabled, doneTo: analysis.doneTo }))
     fs.renameSync(f + '.tmp', f)
   }
 
@@ -841,23 +854,27 @@ module.exports = function (app) {
   function analysisSources (now) {
     const out = {}
     for (const g of Object.keys(INPUTS)) {
-      if (config.sources[g]) { out[g] = config.sources[g]; continue }
+      const named = n => [n, ...[...(aliases[n] || [])].filter(a => a !== n)] // the device's other names after its own
+      if (config.sources[g]) { out[g] = named(config.sources[g]); continue }
       // Still sending if any is (a renamed device's old name has stopped); else any, so the
       // sailing already recorded is still read after the instruments go off.
       const seen = sourcesOf(g).filter(x => x.sensor)
       const live = seen.filter(x => now - x.at < ANALYSIS_SOURCE_MAX_AGE_MS)
       const pick = live.length ? live : seen
-      if (pick.length) out[g] = pick.reduce((a, b) => b.count > a.count ? b : a).src
+      if (pick.length) out[g] = named(pick.reduce((a, b) => b.count > a.count ? b : a).src)
     }
     return out
   }
 
+  // One chunk: everything since the last chunk up to ANALYSIS_LAG_MS and MARGIN_S ago, read
+  // with CONTEXT_S before it and the margin after, through lib/analysis.js; its findings
+  // appended, and the next chunk starts where it ended.
   async function analyseOnce () {
     if (analysis.running || !config) return
     analysis.running = true
     analysis.lastRunAt = Date.now()
     analysis.lastError = ''
-    const found = analysisSink = []
+    let found = []
     try {
       let api
       try { api = typeof app.getHistoryApi === 'function' ? await app.getHistoryApi() : null } catch (e) { api = null }
@@ -866,27 +883,17 @@ module.exports = function (app) {
       analysis.sources = sources
       const lack = history.missing(sources)
       if (lack.length) throw new Error(`No sensor in use for ${lack.map(g => INPUT_LABELS[g]).join(', ')}`)
-      const now = Date.now()
-      const to = now - ANALYSIS_LAG_MS
-      let from
-      if (!analyst) {
-        // A new start: from where the last one left off, or ANALYSIS_FIRST_MS back.
-        const floor = Math.floor((now - (analysis.resume ? ANALYSIS_BACK_MS : ANALYSIS_FIRST_MS)) / 1000)
-        const r = analysis.resume || {}
-        const resume = { learn: Math.max(r.learn ?? floor, floor) }
-        analyst = new Analyst(f => analysisSink.push(f), { resume })
-        from = (resume.learn - RESUME_CONTEXT_S) * 1000
-      } else {
-        from = analysis.readTo ?? to - ANALYSIS_EVERY_MS
+      const now = Date.now() / 1000
+      const keepTo = Math.floor(now - ANALYSIS_LAG_MS / 1000 - MARGIN_S)
+      const floor = Math.floor(now - (analysis.doneTo ? ANALYSIS_BACK_MS : ANALYSIS_FIRST_MS) / 1000)
+      const keepFrom = Math.max(analysis.doneTo ?? floor, floor)
+      if (keepTo > keepFrom) {
+        const rows = await history.dayRows(api, (keepFrom - CONTEXT_S) * 1000, (keepTo + MARGIN_S) * 1000, sources, config.variation, plugin.id)
+        found = analyseChunk(rows, keepFrom, keepTo)
+        analysis.lastRows = rows.filter(r => r.t >= keepFrom && r.t < keepTo).length
+        analysis.lastChunk = { from: keepFrom, to: keepTo }
+        analysis.doneTo = keepTo
       }
-      const rows = from < to ? await history.dayRows(api, from, to, sources, config.variation, plugin.id) : []
-      for (const r of rows) analyst.add(r)
-      // The boat has stopped: close what is open rather than wait for the next sailing.
-      if (analyst.last != null && to / 1000 - analyst.last > RESUME_CONTEXT_S) analyst.flush()
-      analysis.lastRows = rows.length
-      analysis.readTo = to
-      const safe = analyst.safe()
-      analysis.resume = { learn: safe.learn ?? Math.floor(to / 1000) }
     } catch (e) {
       analysis.lastError = e.message
     } finally {
@@ -911,7 +918,6 @@ module.exports = function (app) {
 
   function stopAnalysis () {
     if (analysisTimer) { clearTimeout(analysisTimer); analysisTimer = null }
-    analyst = null // the next start resumes from the saved state
   }
 
   function readBody (req) {

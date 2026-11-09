@@ -1201,7 +1201,7 @@ test('analysis: every few minutes, findings from history, written once each, and
   assert.ok(first.filter(f => f.type === 'mnv' && f.kind === 'tack').length >= 6)
   assert.ok(first.filter(f => f.type === 's5' && f.compliant).every(f => f.cls === 'sailUp' || f.cls === 'other'))
 
-  // Later, nothing new: what was still open closes, nothing is written twice.
+  // Later, nothing new: the last minutes come in, nothing is written twice.
   clock += 10 * 60000
   r = await h.call('PUT', '/analysis/run')
   assert.strictEqual(r.json.lastError, '')
@@ -1210,7 +1210,7 @@ test('analysis: every few minutes, findings from history, written once each, and
   assert.strictEqual(new Set(keys).size, keys.length, 'no finding twice')
   assert.ok(all.length >= first.length)
 
-  // A restart resumes from the saved state, again without repeats.
+  // A restart carries on from where the last chunk ended, again without repeats.
   h.plugin.stop(); h.plugin.start({})
   for (let i = 0; i < 30; i++) h.feed([...wind, ...boat])
   r = await h.call('PUT', '/analysis/run')
@@ -1226,7 +1226,7 @@ test('analysis: every few minutes, findings from history, written once each, and
   r = await h.call('PUT', '/analysis/clear')
   assert.ok(r.json.removed >= 1)
   assert.deepStrictEqual((await h.call('GET', '/analysis/findings', undefined, {})).json, [])
-  assert.ok(r.json.resume, 'the read position is kept')
+  assert.ok(r.json.doneTo, 'the read position is kept')
 
   r = await h.call('PUT', '/analysis', { enabled: false })
   assert.strictEqual(r.json.enabled, false)
@@ -1236,7 +1236,7 @@ test('analysis: every few minutes, findings from history, written once each, and
 test('analysis: the saved position is read at start, after the server gives the data directory', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spp-'))
   fs.mkdirSync(path.join(dir, 'analysis'))
-  fs.writeFileSync(path.join(dir, 'analysis', 'state.json'), JSON.stringify({ enabled: true, readTo: 123000, resume: { win: 120, learn: 60 } }))
+  fs.writeFileSync(path.join(dir, 'analysis', 'state.json'), JSON.stringify({ enabled: false, doneTo: 1790000000 }))
   // As the server does it: the plugin is made first, getDataDirPath added after.
   const app = { debug () {}, error () {}, setPluginError () {}, setPluginStatus () {}, handleMessage () {}, subscriptionmanager: { subscribe: (s, u) => { u.push(() => {}) } } }
   const plugin = factory(app)
@@ -1246,8 +1246,8 @@ test('analysis: the saved position is read at start, after the server gives the 
   plugin.start({})
   let json
   routes['/analysis/status']({}, { set () {}, json (b) { json = b } })
-  assert.deepStrictEqual(json.resume, { win: 120, learn: 60 })
-  assert.strictEqual(json.readTo, 123000)
+  assert.strictEqual(json.doneTo, 1790000000)
+  assert.strictEqual(json.enabled, false)
   plugin.stop()
 })
 
@@ -1261,6 +1261,23 @@ test('analysis: reads each input from the sensor that has sent it most, not the 
   for (let i = 0; i < 40; i++) h.feed([...wind, ...boat], 'n2k-tcp.c079be00ffd20dcb')
   h.feed(wind, 'n2k-tcp.100') // a late straggler under the old name: Auto may take it
   const r = await h.call('PUT', '/analysis/run')
-  assert.strictEqual(r.json.sources.apparentWind, 'n2k-tcp.c079be00ffd20dcb')
-  assert.ok(!asked.includes('n2k-tcp.100'), 'never the temporary name')
+  assert.strictEqual(r.json.sources.apparentWind[0], 'n2k-tcp.c079be00ffd20dcb')
+  assert.ok(!asked.includes('n2k-tcp.100'), 'never another sensor')
+})
+
+test('analysis: an NMEA 2000 device is read under both its names, its address and its CAN name', async () => {
+  const h = harness()
+  const asked = []
+  const api = beatingHistory(clock - 3 * 60000)
+  h.app.getHistoryApi = async () => ({ getValues: q => { asked.push(...q.pathSpecs.map(s => `${s.path}|${s.sourceRef}`)); return api.getValues(q) } })
+  for (let i = 0; i < 30; i++) h.feed([...wind, ...boat]) // the other inputs
+  // The masthead as the server sends it once it knows the CAN name: both names in its source.
+  for (let i = 0; i < 40; i++) {
+    clock += 100
+    h.deliver({ updates: [{ $source: 'n2k-tcp.c079be00ffd20dcb', source: { label: 'n2k-tcp', type: 'NMEA2000', pgn: 130306, src: '100', canName: 'c079be00ffd20dcb' }, timestamp: new Date(clock).toISOString(), values: wind }] })
+  }
+  const r = await h.call('PUT', '/analysis/run')
+  assert.deepStrictEqual(r.json.sources.apparentWind, ['n2k-tcp.c079be00ffd20dcb', 'n2k-tcp.100'])
+  assert.ok(asked.includes('environment.wind.angleApparent|n2k-tcp.100'))
+  assert.deepStrictEqual(r.json.sources.heading, ['h2000.II'], 'a device with no CAN name: just its one name')
 })

@@ -79,3 +79,19 @@ test('history: the inputs learning cannot do without', () => {
   assert.deepStrictEqual(missing({ apparentWind: 'a', stw: 'b' }), ['heading', 'attitude'])
   assert.deepStrictEqual(missing(SOURCES), [])
 })
+
+test('history: one device under two names (before and after the server learns its CAN name), each second from the first with a value', async () => {
+  const api = fakeApi({
+    ...base,
+    'environment.wind.angleApparent|n2k.1': t => t < 300 ? null : 30 * RAD, // the CAN name: from 300 s
+    'environment.wind.speedApparent|n2k.1': t => t < 300 ? null : 15 * KN,
+    'environment.wind.angleApparent|n2k.100': t => t < 300 ? 31 * RAD : null, // the address: until then
+    'environment.wind.speedApparent|n2k.100': t => t < 300 ? 14 * KN : null,
+    [`${RAW_STW}|spp`]: () => 6 * KN
+  })
+  const rows = await dayRows(api, T0 - 3600000, T0 + 3600000, { ...SOURCES, apparentWind: ['n2k.1', 'n2k.100'] }, 12.8, 'spp')
+  const at = s => rows.find(x => x.t === T0 / 1000 + s)
+  assert.ok(Math.abs(at(100).awa - 31) < 1e-9 && Math.abs(at(100).aws - 14) < 1e-9, 'before: the address')
+  assert.ok(Math.abs(at(400).awa - 30) < 1e-9 && Math.abs(at(400).aws - 15) < 1e-9, 'after: the CAN name')
+  assert.ok(api.asked.flat().includes('environment.wind.angleApparent|n2k.100'))
+})

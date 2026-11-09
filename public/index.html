@@ -108,11 +108,12 @@
     </section>
 
     <section id="view-analysis" class="view" hidden>
-      <p class="muted sub intro">Beta. Every few minutes the plugin reads the latest sailing from the history (signalk-questdb or another provider), classes it and keeps what it found, never the data itself. From raw inputs only (paddlewheel, masthead, compass, heel, GPS), so the tables in use change nothing here. Over days the findings build up a histogram per table cell. Nothing here changes a table: compare, then paste a proposed table into Calibration if you trust it.</p>
+      <p class="muted sub intro">Beta. boatcal's calibration, on your sailing as it is recorded. Every 5 minutes the plugin takes the chunk of history since the last (signalk-questdb or another provider), takes out what boatcal fits from (5-second samples, tacks and gybes), adds it to what it has, and fits the tables again. From raw inputs only (paddlewheel, masthead, compass, heel, GPS), so the tables in use change nothing here. Nothing here changes a table: compare, then paste a proposed table into Calibration if you trust it.</p>
       <div class="panel">
         <div class="panel-head"><h2>Status</h2><span><button id="anRun" type="button" class="ghost">Run now</button> <button id="anToggle" type="button" class="ghost">Pause</button> <button id="anClear" type="button" class="ghost">Clear findings</button></span></div>
         <div id="anStatus" class="sub"><p class="muted">Loading…</p></div>
       </div>
+      <div id="anFits"></div>
       <div class="panel">
         <div class="panel-head"><h2>What it has seen</h2>
           <label class="sub muted">From <select id="anRange">
@@ -123,7 +124,6 @@
         <div class="table-wrap"><table><thead><tr><th>Sailing</th><th class="num">Minutes</th><th class="num">Usable</th></tr></thead><tbody id="anCounts"></tbody></table></div>
         <p id="anEvents" class="sub"></p>
       </div>
-      <div id="anFits"></div>
       <div class="panel">
         <div class="panel-head"><h2>Latest findings</h2><span class="muted sub">the last 2 hours, newest first</span></div>
         <div class="table-wrap"><table><thead><tr><th>Time</th><th>What</th><th class="num">Raw TWA</th><th class="num">Raw TWS</th><th class="num">STW</th><th class="num">Heel</th><th>Notes</th></tr></thead><tbody id="anRecent"></tbody></table></div>

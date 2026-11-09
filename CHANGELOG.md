@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased (dev)
+
+- **Analysis in plain chunks** (findings layout 4): every 5 minutes, the chunk since the last is read with 7 minutes before and 3 after, its 5 s samples and manoeuvres kept, and the tables fitted again. Nothing carried between runs but where the last chunk ended; legs are found from the 5 s samples when fitting. Chunks find what one long read would.
+- **Fixed: no wind or heel for the first minutes after a restart.** The server records an NMEA 2000 device by its address (`n2k-tcp.100`) until it learns its CAN name, and the analysis read the CAN name only. It now reads a device under both names, learned from each update's source.
+- **Analysis tab leads with the tables**, each saying how many cells have enough to propose or what it is still waiting for (GPS, upright sailing on two headings, tacks or gybes, legs).
+
 ## 0.3.3-beta.3 — 2026-11-09 (beta)
 
 - **Analysis in boatcal's units** (findings layout 3; layouts 1 and 2 are ignored). The 2-minute windows and the "stable" filters are gone. Findings are 5-second medians of the raw inputs (boat speed table, K, TWS), tacks, gybes and roundings with boatcal's windows (TWA), and legs (TWS). The TWS table now compares off-wind legs, trimmed by 2 minutes and in 10° bands, against the upwind legs before and after, as boatcal does. Support per cell scales with its area as boatcal's; K is proposed only from 5 days of upwind.
