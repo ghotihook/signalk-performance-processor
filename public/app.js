@@ -74,7 +74,9 @@
   }
 
   const VIEWS = ['live', 'calibration', 'settings', 'analysis']
-  const ANALYSIS_MS = 15000
+  const ANALYSIS_MS = 30000
+  const RECENT_S = 2 * 3600 // the latest findings shown
+  const BLOCK_S = 10 * 60 // 5 s records summed into blocks of this
   const $ = id => document.getElementById(id)
   const clone = o => JSON.parse(JSON.stringify(o))
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
@@ -580,7 +582,7 @@
       const [status, summary, recent] = await Promise.all([
         getJson('/analysis/status'),
         getJson('/analysis/summary' + since),
-        getJson(`/analysis/findings?since=${daysAgo(0)}`)
+        getJson(`/analysis/findings?since=${daysAgo(1)}&after=${Math.floor(Date.now() / 1000) - RECENT_S}`)
       ])
       Object.assign(a, { status, summary, recent, error: '', loadedAt: Date.now() })
     } catch (e) {
@@ -631,30 +633,28 @@
     renderAnalysisRecent(a.recent)
   }
 
-  const KIND_LABEL = { up: 'Window: upwind', between: 'Window: between', reach: 'Window: reaching', down: 'Window: downwind', none: 'Window: no wind', tack: 'Tack', gybe: 'Gybe', comeUp: 'Rounding up', comeDown: 'Bearing away' }
-  const KIND_ORDER = ['win up', 'win between', 'win reach', 'win down', 'win none', 'mnv tack', 'mnv gybe', 'mnv comeUp', 'mnv comeDown', 'leg up', 'leg off']
+  const CLS_LABEL = { sailUp: 'Upwind', sailReach: 'Reaching', sailDown: 'Downwind', other: 'Other (70°–80°, turning, or an input missing)' }
+  const CLS_SHORT = { sailUp: 'up', sailReach: 'reach', sailDown: 'down', other: 'other' }
+  const MNV_LABEL = { tack: 'Tack', gybe: 'Gybe', comeUp: 'Rounding up', comeDown: 'Bearing away' }
+  const mins = s => Math.round(s / 60)
 
   function renderAnalysisCounts (s) {
-    if (!s) { $('anCounts').innerHTML = '<tr><td colspan="5" class="muted center">Loading…</td></tr>'; return }
-    const rows = {}
-    for (const [key, n] of Object.entries(s.counts)) {
-      const [type, kind, comp, stab] = key.split(' ')
-      const r = rows[`${type} ${kind}`] = rows[`${type} ${kind}`] || { all: 0, compliant: 0, used: 0, unstable: 0 }
-      r.all += n
-      if (comp === 'compliant') { r.compliant += n; if (stab === 'stable') r.used += n; else r.unstable += n }
-    }
-    const keys = KIND_ORDER.filter(k => rows[k]).concat(Object.keys(rows).filter(k => !KIND_ORDER.includes(k)))
-    if (!keys.length) { $('anCounts').innerHTML = '<tr><td colspan="5" class="muted center">Nothing yet</td></tr>'; return }
-    $('anCounts').innerHTML = keys.map(k => {
-      const r = rows[k]; const [type, kind] = k.split(' ')
-      const label = type === 'leg' ? `Leg: ${kind === 'up' ? 'upwind' : 'off the wind'}` : (KIND_LABEL[kind] || k)
-      const why = [r.all - r.compliant ? `${r.all - r.compliant} missing inputs` : '', r.unstable ? `${r.unstable} not steady` : ''].filter(Boolean).join(', ')
-      return `<tr><td>${esc(label)}</td><td class="num">${r.all}</td><td class="num">${r.compliant}</td><td class="num"><b>${r.used}</b></td><td class="muted sub">${esc(why)}</td></tr>`
-    }).join('')
+    if (!s) { $('anCounts').innerHTML = '<tr><td colspan="3" class="muted center">Loading…</td></tr>'; $('anEvents').textContent = ''; return }
+    const sec = s.counts.seconds
+    const keys = ['sailUp', 'sailReach', 'sailDown', 'other'].filter(k => sec[k]).concat(Object.keys(sec).filter(k => !CLS_LABEL[k]))
+    $('anCounts').innerHTML = keys.length
+      ? keys.map(k => `<tr><td>${esc(CLS_LABEL[k] || k)}</td><td class="num">${mins(sec[k].all)}</td><td class="num"><b>${mins(sec[k].compliant)}</b></td></tr>`).join('')
+      : '<tr><td colspan="3" class="muted center">Nothing yet</td></tr>'
+    const m = s.counts.manoeuvres; const l = s.counts.legs
+    const list = Object.entries(MNV_LABEL).map(([k, name]) => `${m[k] || 0} ${name.toLowerCase()}${(m[k] || 0) === 1 || k.startsWith('come') ? '' : 's'}`)
+    $('anEvents').innerHTML = `Over ${s.days} day${s.days === 1 ? '' : 's'}: ${esc(list.join(', '))}; ${l.up || 0} upwind and ${l.off || 0} off-wind legs.`
   }
 
+  // How much a cell rests on, in its table's unit.
+  const support = (unit, w) => unit === 'seconds' ? `${mins(w)} min` : unit === 'samples' ? `${mins(w * 5)} min` : `${w}`
+
   // A fitted table as a grid: only the rows and columns with data, each cell its median,
-  // how many findings it rests on, and the table in use there.
+  // how much it rests on, and the table in use there.
   function fitGrid (kind, g, corner, rowsKey, colsKey, d) {
     const R = g[rowsKey]; const C = g[colsKey]
     const ri = R.map((_, i) => i).filter(i => g.cells[i].some(Boolean))
@@ -667,13 +667,13 @@
       const c = g.cells[i][j]
       if (!c) return '<td></td>'
       const used = g.proposed[i][j] != null
-      const tip = `${c.n} finding${c.n === 1 ? '' : 's'}; middle half ${fmt(c.p25, d)} to ${fmt(c.p75, d)}; table now ${c.table == null ? 'blank' : fmt(c.table, d)}${used ? '' : `; needs ${g.minN} to propose`}`
-      return `<td class="acell${used ? '' : ' thin'}" title="${esc(tip)}"><b>${fmt(c.median, d)}</b><span>n ${c.n} · now ${c.table == null ? '–' : fmt(c.table, d)}</span></td>`
+      const tip = `${support(g.unit, c.weight)} (needs ${support(g.unit, c.need)}); middle half ${fmt(c.p25, d)} to ${fmt(c.p75, d)}; table now ${c.table == null ? 'blank' : fmt(c.table, d)}`
+      return `<td class="acell${used ? '' : ' thin'}" title="${esc(tip)}"><b>${fmt(c.median, d)}</b><span>${esc(support(g.unit, c.weight))} · now ${c.table == null ? '–' : fmt(c.table, d)}</span></td>`
     }).join('')}</tr>`)
     const any = g.proposed.some(r => r.some(v => v != null))
     const text = any ? PPTables.format(kind, { [rowsKey]: R, [colsKey]: C, add: g.proposed }) : ''
     return `<div class="table-wrap"><table class="agrid">${head}${body.join('')}</table></div>` +
-      (any ? `<details class="paste"><summary>Proposed table, to paste into Calibration</summary><p class="muted sub">Cells with too few findings are blank. Compare with boatcal on the same days before using it.</p><textarea readonly rows="6">${esc(text)}</textarea></details>` : `<p class="muted sub">Too few findings to propose a table (a cell needs ${g.minN}).</p>`)
+      (any ? `<details class="paste"><summary>Proposed table, to paste into Calibration</summary><p class="muted sub">Cells with too little support are blank. Compare with boatcal on the same days before using it.</p><textarea readonly rows="6">${esc(text)}</textarea></details>` : '<p class="muted sub">Not enough yet to propose a table: faded cells need more support (hover for how much).</p>')
   }
 
   function renderAnalysisFits (s) {
@@ -681,36 +681,50 @@
     const k = s.leeway
     const panel = (title, note, inner) => `<div class="panel"><h2>${esc(title)}</h2><p class="muted sub">${esc(note)}</p>${inner}</div>`
     $('anFits').innerHTML =
-      '<p class="muted sub intro">Fitted from raw data in the pipeline\'s order: the boat speed table and K from the GPS, then the TWA table from tacks and gybes using that boat speed table, then the TWS table using both. Each cell: the median of what the findings say (bold), how many, and your table now. Faded cells have too few to propose. Hover for the spread.</p>' +
+      '<p class="muted sub intro">Fitted from raw data in the pipeline\'s order, as boatcal does: the boat speed table and K from the GPS, then the TWA table from tacks and gybes using that boat speed table, then the TWS table from legs using both. Each cell: the median of what the data says (bold), how much it rests on, and your table now. Faded cells have too little to propose. Hover for the spread.</p>' +
       panel('1. Boat speed (STW) table', s.stw.note, fitGrid('stw', s.stw, 'heel\\stw', 'heel', 'stw', 2)) +
-      panel('2. Leeway K', s.leeway.note, k.n ? `<p><b>K ${fmt(k.median, 2)}</b> from ${k.n} windows (middle half ${fmt(k.p25, 2)} to ${fmt(k.p75, 2)}); now ${fmt(k.now, 2)}.${k.proposed == null ? ' Too few to propose.' : ''}</p>` : '<p class="muted sub">No findings for K yet.</p>') +
+      panel('2. Leeway K', s.leeway.note, k.n ? `<p><b>K ${fmt(k.median, 2)}</b> from ${mins(k.n * 5)} min of upwind over ${k.days} day${k.days === 1 ? '' : 's'} (middle half ${fmt(k.p25, 2)} to ${fmt(k.p75, 2)}); now ${fmt(k.now, 2)}.${k.proposed == null ? ` Not proposed until ${k.minDays} days.` : ''}</p>` : '<p class="muted sub">No upwind sailing with a current yet.</p>') +
       panel('3. TWA table', s.twa.note, fitGrid('twa', s.twa, 'TWA\\TWS', 'twa', 'tws', 1)) +
       panel('4. TWS table', s.tws.note, fitGrid('tws', s.tws, 'TWA\\TWS', 'twa', 'tws', 2))
   }
 
+  // Manoeuvres and legs as they are; the 5 s records summed into BLOCK_S blocks.
   function renderAnalysisRecent (fs) {
-    if (!fs) { $('anRecent').innerHTML = '<tr><td colspan="8" class="muted center">Loading…</td></tr>'; return }
-    const list = fs.filter(f => f.v === 2).sort((a, b) => b.t - a.t).slice(0, 40)
-    if (!list.length) { $('anRecent').innerHTML = '<tr><td colspan="8" class="muted center">Nothing today yet</td></tr>'; return }
-    $('anRecent').innerHTML = list.map(f => {
-      const used = f.compliant && f.stable
-      const why = !f.compliant ? f.why.join(', ') : !f.stable ? `not steady: ${f.unsteady.join(', ')}` : ''
-      let what; let twa = null; let tws = f.tws; let stw = null; let heel = null; let note = ''
-      if (f.type === 'win') {
-        what = KIND_LABEL[f.cls || 'none']
-        twa = f.twa; stw = f.stw; heel = f.heel
-        note = f.gps ? '' : 'no GPS'
-      } else if (f.type === 'mnv') {
-        what = KIND_LABEL[f.kind] || f.kind
-        twa = f.before && f.after ? `${fmt(f.before.twa, 0)} → ${fmt(f.after.twa, 0)}` : null
-        note = `TWD step ${fmt(f.step, 1)}°` + (f.twaAdd != null ? ` (raw TWA ${f.twaAdd > 0 ? '+' : ''}${fmt(f.twaAdd, 1)}°)` : '')
-      } else {
-        what = `Leg: ${f.kind === 'up' ? 'upwind' : 'off the wind'}, ${Math.round((f.t1 - f.t) / 60)} min`
-        tws = null
+    if (!fs) { $('anRecent').innerHTML = '<tr><td colspan="7" class="muted center">Loading…</td></tr>'; return }
+    const rows = []
+    const blocks = new Map()
+    for (const f of fs.filter(x => x.v === 3)) {
+      if (f.type === 's5') {
+        const b = Math.floor(f.t / BLOCK_S) * BLOCK_S
+        if (!blocks.has(b)) blocks.set(b, [])
+        blocks.get(b).push(f)
+      } else rows.push(f)
+    }
+    const med = xs => { const v = xs.filter(x => x != null && Number.isFinite(x)).sort((a, b) => a - b); return v.length ? v[v.length >> 1] : null }
+    const twOf = f => { const a = f.awa * Math.PI / 180; const x = f.aws * Math.cos(a) - f.stw; const y = f.aws * Math.sin(a); return [Math.atan2(y, x) * 180 / Math.PI, Math.hypot(x, y)] }
+    for (const [b, list] of blocks) rows.push({ type: 'block', t: b, list })
+    rows.sort((a, b) => b.t - a.t)
+    if (!rows.length) { $('anRecent').innerHTML = '<tr><td colspan="7" class="muted center">Nothing in the last 2 hours</td></tr>'; return }
+    const n = (v, d = 1) => typeof v === 'string' ? esc(v) : fmt(v, d)
+    $('anRecent').innerHTML = rows.map(f => {
+      if (f.type === 'block') {
+        const ok = f.list.filter(x => x.compliant && x.awa != null)
+        const by = {}
+        for (const x of f.list) by[x.cls] = (by[x.cls] || 0) + x.n
+        const mix = Object.entries(by).sort((a, b) => b[1] - a[1]).map(([c, s]) => `${CLS_SHORT[c] || c} ${mins(s)}`).join(', ')
+        const tw = ok.map(twOf)
+        const total = f.list.reduce((a, x) => a + x.n, 0)
+        const usable = ok.reduce((a, x) => a + x.good, 0)
+        return `<tr class="${usable ? '' : 'off'}"><td>${esc(clock(f.t))}–${esc(clock(f.t + BLOCK_S))}</td><td>Sailing: ${esc(mix)} min</td>` +
+          `<td class="num">${n(med(tw.map(x => Math.abs(x[0]))), 0)}</td><td class="num">${n(med(tw.map(x => x[1])))}</td><td class="num">${n(med(ok.map(x => x.stw)), 2)}</td><td class="num">${n(med(ok.map(x => Math.abs(x.heel))), 0)}</td>` +
+          `<td class="muted sub">${mins(usable)} of ${mins(total)} min usable${ok.some(x => x.gN != null) ? '' : '; no GPS'}</td></tr>`
       }
-      const n = (v, d = 1) => typeof v === 'string' ? esc(v) : fmt(v, d)
-      return `<tr class="${used ? '' : 'off'}"><td>${esc(clock(f.t))}</td><td>${esc(what)}</td><td>${used ? '<span class="good">yes</span>' : `<span class="sub">${esc(why)}</span>`}</td>` +
-        `<td class="num">${n(twa, 0)}</td><td class="num">${n(tws)}</td><td class="num">${n(stw, 2)}</td><td class="num">${n(heel, 0)}</td><td class="muted sub">${esc(note)}</td></tr>`
+      if (f.type === 'mnv') {
+        const twa = f.before && f.after ? `${fmt(f.before.twa, 0)} → ${fmt(f.after.twa, 0)}` : null
+        const note = `TWD step ${fmt(f.step, 1)}°` + (f.twaAdd != null ? ` (raw TWA ${f.twaAdd > 0 ? '+' : ''}${fmt(f.twaAdd, 1)}°)` : '')
+        return `<tr><td>${esc(clock(f.t))}</td><td>${esc(MNV_LABEL[f.kind] || f.kind)}</td><td class="num">${n(twa, 0)}</td><td class="num">${n(f.before && f.before.tws)}</td><td class="num">${n(f.before && f.before.stw, 2)}</td><td class="num">${n(f.before && Math.abs(f.before.heel), 0)}</td><td class="muted sub">${esc(note)}</td></tr>`
+      }
+      return `<tr><td>${esc(clock(f.t))}</td><td>Leg: ${f.kind === 'up' ? 'upwind' : 'off the wind'}, ${Math.round((f.t1 - f.t) / 60)} min</td><td></td><td></td><td></td><td></td><td class="muted sub">ended ${esc(clock(f.t1))}</td></tr>`
     }).join('')
   }
 

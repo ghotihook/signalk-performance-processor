@@ -119,13 +119,14 @@
             <option value="0">today</option><option value="6">the last 7 days</option><option value="29">the last 30 days</option><option value="all">all</option>
           </select></label>
         </div>
-        <p class="muted sub">Windows are 2 minutes, classed on raw TWA: up under 70°, between 70°–80°, reach 80°–120°, down beyond. <b>Compliant</b>: apparent wind, STW, heading and heel all there, sailing over 1 kn. <b>Stable</b>: steady enough to average (heading, TWA, TWD, STW and TWS each within a spread). Only findings that are both are used for the tables.</p>
-        <div class="table-wrap"><table><thead><tr><th>Finding</th><th class="num">All</th><th class="num">Compliant</th><th class="num">Used</th><th>Not used because</th></tr></thead><tbody id="anCounts"></tbody></table></div>
+        <p class="muted sub">As boatcal does: every second of sailing, classed on raw TWA (a 30 s median): upwind under 70°, reaching 80°–120°, downwind beyond; 70°–80° and seconds with an input missing are "other". Kept as 5-second medians. <b>Usable</b>: apparent wind, STW, heading and heel all there and over 1 kn, in at least 4 of the 5 seconds. Tacks, gybes and roundings, and legs of 3 minutes or more, as boatcal finds them.</p>
+        <div class="table-wrap"><table><thead><tr><th>Sailing</th><th class="num">Minutes</th><th class="num">Usable</th></tr></thead><tbody id="anCounts"></tbody></table></div>
+        <p id="anEvents" class="sub"></p>
       </div>
       <div id="anFits"></div>
       <div class="panel">
-        <div class="panel-head"><h2>Latest findings</h2><span class="muted sub">today, newest first</span></div>
-        <div class="table-wrap"><table><thead><tr><th>Time</th><th>What</th><th>Used</th><th class="num">TWA</th><th class="num">TWS</th><th class="num">STW</th><th class="num">Heel</th><th>Notes</th></tr></thead><tbody id="anRecent"></tbody></table></div>
+        <div class="panel-head"><h2>Latest findings</h2><span class="muted sub">the last 2 hours, newest first</span></div>
+        <div class="table-wrap"><table><thead><tr><th>Time</th><th>What</th><th class="num">Raw TWA</th><th class="num">Raw TWS</th><th class="num">STW</th><th class="num">Heel</th><th>Notes</th></tr></thead><tbody id="anRecent"></tbody></table></div>
       </div>
     </section>
   </main>

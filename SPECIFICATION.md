@@ -688,7 +688,7 @@ history stays the source; the day files only save reading it again:
 
 | Record | Holds | Used by |
 |---|---|---|
-| `s5` | 5 s medians of the 1 Hz rows (angles through their sine and cosine): AWA, AWS, STW, heel, H, SOG, COG, variation; the class | STW table, current, K, TWS legs |
+| `s5` | 5 s medians of the 1 Hz rows (angles through their sine and cosine): AWA, AWS, STW, heel, H, SOG, COG, variation; the class; good seconds | STW table, current, K, TWS legs |
 | `mnv` | the event, its crossing time, and the 1 Hz rows of its two windows | TWA table |
 | `leg` | class, start and end | TWS table, K |
 | `setup` | (planned, with the Learn page) a **New setup**, with its time | which days a fit uses |
@@ -743,21 +743,20 @@ paddlewheel (NMEA 2000, PGN 128259) is not listed, so it never wins and is never
 ## 12 Analysis (beta)
 
 Every few minutes the plugin reads the latest sailing from the History API, as §11.2, and
-writes **findings**: what each stretch of sailing was, in raw inputs only, never the data
-itself. Over days the findings add up, and the tables are fitted from them on request, in
+writes **findings**: what each stretch of sailing was, in raw inputs only, as 5-second
+medians, manoeuvres and legs (boatcal's units). Over days the findings add up, and the tables are fitted from them on request, in
 the pipeline's order, each cell with its histogram. Nothing here changes a table.
 
 **Raw only.** A finding holds STW (raw, §7.5), AWA, AWS, heading, heel, SOG and COG, and true
-wind worked out from them with no tables (§11.3). Classes, compliance and stability are all
-on raw values. The tables in use are never applied, so they cannot change what is learned:
+wind worked out from them with no tables (§11.3). Classes and compliance are on raw values. The tables in use are never applied, so they cannot change what is learned:
 a fit from the same findings is the same whatever tables are in use.
 
 ### 12.1 Cadence
 
 Every `ANALYSIS_EVERY` = 5 minutes (the first a minute after start), the history from where the
 last run read up to `ANALYSIS_LAG` = 1 minute ago (providers write in batches) is read as
-1 Hz rows (§11.2) and fed, a second at a time, to one long-lived analyser: windows,
-manoeuvres and legs carry across runs, so a run boundary changes nothing. When the last row
+1 Hz rows (§11.2) and fed, a second at a time, to one long-lived analyser (`lib/learn.js`):
+its buffer, manoeuvres and legs carry across runs, so a run boundary changes nothing. When the last row
 is more than 7 minutes old (the boat stopped), what is open is closed.
 
 **Which sensor.** Each input is read from the source chosen in Settings, else from the
@@ -770,89 +769,91 @@ seconds after it (signalk-questdb, up to twice its heartbeat), so reading such a
 value frozen for minutes. `GET /analysis/status` names the sensors of the last run.
 
 After a restart (or a Save, which restarts the pipeline) it resumes from the saved state
-(`analysis/state.json`): from the earlier of the open window and the learner's next minute,
-fed from 7 minutes (§11.4's buffer) before, with anything found before that point dropped, so
-nothing is written twice. A leg open at the restart is lost. The first run ever looks back
+(`analysis/state.json`): from the learner's next minute, fed from 7 minutes (§11.4's buffer)
+before, with anything found before that point dropped, so nothing is written twice. A leg open
+at the restart is lost (its `s5` records are kept), and at most one `s5` record. The first run ever looks back
 1 hour; after the plugin was off, at most 24 hours.
 
 ### 12.2 Findings
 
 Appended to `analysis/YYYY-MM-DD.jsonl` (local day of the finding) in the plugin's data
-directory, one JSON object per line, each with `v` (layout, 2), `t` (epoch s), `compliant`,
-`why`, `stable`, `unsteady`. Findings of another layout are ignored.
+directory, one JSON object per line, each with `v` (layout, 3) and `t` (epoch s). Findings of
+another layout are ignored. They are boatcal's units (its sections 5 to 8), from `lib/learn.js`
+(§11.5), all raw:
 
-**Compliant** (for now, the inputs only): apparent wind, STW, heading and heel each present in
-at least 80% of the window's seconds, and at least 80% of its seconds good (§11.5: all present
-and STW over 1 kn). `why` lists what failed (`no attitude`, `STW ≤ 1 kn`, …). Motoring, a
-fouled paddlewheel and the like are not yet tested. A window with no input at all (the
-reader's padding, §11.2) is not written.
+| Type | What | Holds | For |
+|---|---|---|---|
+| `s5` | each 5 seconds of sailing (§11.6) | the medians of AWA (through its sine and cosine), AWS, STW, heel, heading, the velocity over the ground (`gN`, `gE`, kn north and east, from SOG and COG), variation; `cls` (§11.5, on the 30 s median of raw \|TWA\|: `sailUp`, `sailReach`, `sailDown`, `other`); `n` seconds, `good` seconds | STW table, K, TWS table |
+| `mnv` | each tack, gybe or rounding (§11.5, boatcal's windows) | `kind`, `from` (side before, + starboard); `before` and `after`: the means of the good seconds of each window (AWA, AWS, STW, heel, heading), raw TWA, TWS, TWD; `step` = raw TWD after − before; `twaAdd` (below) | TWA table |
+| `leg` | each upwind (`up`) or off-wind (`off`) leg of 3 minutes or more (§11.5) | start `t`, end `t1`, good seconds | TWS table |
 
-**Stable**: at least 80% of the window's seconds good, and on them, standard deviation
-(circular for angles) of heading ≤ 6°, raw TWA ≤ 6°, raw TWD ≤ 8°, STW ≤ 0.5 kn, and raw TWS
-sd / mean ≤ 0.2. `unsteady` lists what failed; each spread is kept (`hdgSd`, `twaSd`, …) so
-the limits can be tuned from the findings.
+**Compliant** (for now, the inputs only): an `s5` record with 4 or more good seconds of its 5
+(§11.5: AWA, AWS, STW, heading and heel all there and STW over 1 kn). A manoeuvre is compliant
+by construction (§11.5 keeps only those with good data either side), and so is a leg. Motoring,
+a fouled paddlewheel and the like are not yet tested. Nothing is filtered for being steady:
+as boatcal, the fits use medians, which turns and gusts do not move.
 
-| Type | When | Holds |
-|---|---|---|
-| `win` | each 2-minute window (on the clock) | `cls` on the median raw \|TWA\|: `up` (< 70°), `between` (70°–80°), `reach` (80°–120°), `down` (> 120°); `side`; the raw means (below); raw TWA, TWS, TWD; the spreads |
-| `mnv` | each tack, gybe or rounding (`comeUp`, `comeDown`) of §11.5 | `from` (side before, + starboard); `before` and `after`: the raw means of each window, raw TWA, TWS, TWD; `step` = raw TWD after − before; `twaAdd` for a tack or gybe |
-| `leg` | each upwind or off-wind leg of §11.5 | kind, start, end, good seconds |
+`twaAdd` = `s · step / 2` (12.3), raw: to read one tack by eye. The fit recomputes it.
 
-**Raw means** of the good seconds: AWA (circular), AWS, STW, heel, heading (circular); the
-velocity over the ground (`gN`, `gE`, kn north and east, from SOG and COG) and through the water
-(`wN`, `wE`, raw STW along the heading), each the mean of its vectors; `gps`, the seconds with
-SOG and COG.
-
-A manoeuvre is compliant by construction (§11.5 keeps only those with good data either side);
-it is stable when raw TWD's sd is ≤ 8° in each window and TWS changes by no more than 20%.
-`twaAdd` = `s · step / 2` (below), raw: for a look at a single tack only. The fit recomputes it.
+About 150 kB an hour of sailing: a reduced copy of the data, as the learning scan's day files
+(§11.6), so a table of any layout can be fitted later.
 
 ### 12.3 Fit
 
-`GET /analysis/summary?since=&until=` (local days) fits the tables from the compliant, stable
+`GET /analysis/summary?since=&until=` (local days) fits the tables from the compliant
 findings, in the order of §5, after boatcal (its sections 5 to 8). Each table comes as a
 histogram on the axes of the table in use (each value to the nearest row and column): each
-cell `{ n, median, p25, p75, table }` (`table`: the cell's value now), and `proposed`, the
-medians of the cells with enough support, blank (`null`) otherwise. Counts by type, class or
-kind, compliant and stable come with it.
+cell `{ n, weight, median, p25, p75, table, need }` (weighted median and quartiles; `weight`,
+its support; `need`, the support it must reach; `table`, the cell's value now), and
+`proposed`, the medians of the cells with enough support, blank (`null`) otherwise. Support
+scales with a cell's area, as boatcal's (its section 10): a cell's width along an axis is half
+the gap to each neighbour (the gap to its one neighbour at an end), and a cell needs
+`support × its area ÷ the reference area`. With it come seconds of sailing by class (all, and
+good in compliant records), manoeuvres by kind, legs by kind, and the days.
 
-1. **STW table**, from the GPS. In the boat's frame, ground velocity less current, along the
-   heading, less raw STW: the paddlewheel's forward error, at raw STW and heel (as it is looked
-   up, §5.1). **Current**: per 20 minutes, the median of ground − water velocity (water with the
-   forward correction so far) over the **upright** windows (\|heel\| < 5°), at least 5 with
-   headings spread (1 − \|mean unit heading\|) ≥ 0.05 and under 4 kn; else the day's; else none,
-   and the windows of that group are not used. Current and table in turn, from no table,
-   until no cell moves more than 0.002 kn (at most 200 passes).
+1. **STW table**, from the `s5` samples with SOG and COG, STW and SOG over 0.5 kn and raw
+   \|TWA\| over 30° (boatcal 5). In the boat's frame, ground velocity less current, along
+   the heading, less raw STW: the paddlewheel's forward error, at raw STW and heel (as it is
+   looked up, §5.1). **Current**: per 20 minutes, ground − water velocity (water with the
+   forward correction so far), averaged over the **upright** samples (\|heel\| < 5°), 60 or
+   more with headings spread (1 − \|mean unit heading\|) ≥ 0.05 and under 4 kn; else the day's;
+   else none, and those samples are not used. A mean, trimmed by 10% at each end: a group is
+   often just the two gybes' headings, and a median would sit inside whichever has more
+   samples, leaving part of the paddlewheel's error in the current. Current and table in turn,
+   from no table, unrounded, until no cell moves more than 0.001 kn (at most 500 passes).
+   A cell needs 200 samples per 10° × 2.5 kn (boatcal), 40 on the default 5° × 1 kn.
 
    Upright only, because on a beat a current up the middle of the two headings looks
    exactly like a paddlewheel error plus leeway mirrored on each tack: a beat alone cannot
    tell them apart, whatever the method. On a run both gybes share the upright cells and
    leeway is next to nothing, so the current is found there and used for the beats around
    it. With no upright sailing there is no STW table. boatcal estimates current from all its
-   rows, tying neighbouring cells; its heading spread is 0.15 (gybes 40° apart are 0.12).
-2. **K**, from steady `up` windows with \|heel\| ≥ 4° and corrected STW ≥ 3 kn: leeway =
-   atan2(sideways, forward) of ground − current, K = leeway × STW² ÷ heel; the median.
-3. **TWA table**, from steady tacks and gybes: true wind of each side's raw means again
-   through `process` (§5) with the proposed STW table, the wind tables off. Either side is at
-   the same \|TWA\|; if \|TWA\| reads `e` too wide, TWD reads `TWD + s·e` on side `s` (+1
-   starboard), so the step is `−2·s·e` and the cell needs `s · step / 2`, at the sides' mean
-   \|TWA\| and TWS (as looked up, before the TWA table). A rounding is not used: two cells share
-   its step.
-4. **TWS table**, from steady `reach` and `down` windows through `process` with the proposed
-   STW and TWA tables, the TWS table off: the reference is the median TWS of the steady `up`
-   windows within 30 minutes before, and of those within 30 minutes after, the mean of the two
-   where there are both, and at least 3 kn; the cell needs reference − TWS, at the window's
-   corrected \|TWA\| and TWS. Rows under 80° are 0 (upwind is the reference).
+   rows with a median, tying neighbouring cells; its heading spread is 0.15 (gybes 40° apart
+   are 0.06). What leeway there is on the runs reads as a little current, so K comes out a
+   little low (heel 1° on the runs: about 5%).
+2. **K**, from the `sailUp` samples with a current, \|heel\| ≥ 4° and corrected STW ≥ 3 kn:
+   leeway = atan2(sideways, forward) of ground − current, K = leeway × STW² ÷ heel; the median.
+   Proposed only from 5 or more days of upwind (boatcal 6: one day's K scatters by ±1.7).
+3. **TWA table**, from tacks and gybes: true wind of each side's means again through `process`
+   (§5) with the proposed STW table, the wind tables off. Either side is at the same \|TWA\|;
+   if \|TWA\| reads `e` too wide, TWD reads `TWD + s·e` on side `s` (+1 starboard), so the
+   step is `−2·s·e` and the cell needs `s · step / 2`, at the sides' mean \|TWA\| and TWS (as
+   looked up, before the TWA table). A rounding is not used: two cells share its step. A cell
+   needs 3: boatcal's support (half a manoeuvre per 50° × 5 kn) assumes its least-squares fit,
+   in which a manoeuvre informs several cells.
+4. **TWS table**, from legs (boatcal 8), each trimmed by 2 minutes at either end, its `s5`
+   samples through `process` with the proposed STW and TWA tables, the TWS table off. An
+   upwind leg with 60 s or more gives its median TWS. An off-wind leg's reference is that of
+   the upwind leg ending before it and of the one starting after it, each within 30 minutes
+   and on the same day, the mean of the two where there are both, and at least 3 kn. Each
+   10° band of its corrected \|TWA\| with 60 s or more gives reference − median TWS, at the
+   band's median \|TWA\| and TWS, weighted by its seconds. A cell needs 15 minutes per
+   40° × 5 kn (boatcal), 90 s on the default 10° × 2 kn. Rows under 80° are 0 (upwind is the
+   reference).
 
-| Cell proposed with | |
-|---|---|
-| STW | 8 windows (16 minutes) |
-| K | 8 windows |
-| TWA | 3 tacks or gybes |
-| TWS | 8 windows |
-
-These are binned medians, not boatcal's regularised least squares: a guide to what the
-findings say, cell by cell, to set against boatcal on the same days before a table is changed.
+These are binned, weighted medians, not boatcal's regularised least squares: a guide to what
+the findings say, cell by cell, to set against boatcal on the same days before a table is
+changed. The summary is kept until a run adds findings, they are cleared, or the tables change.
 
 ### 12.4 Routes
 
@@ -862,7 +863,7 @@ findings say, cell by cell, to set against boatcal on the same days before a tab
 | `PUT /analysis` `{ enabled }` | pause or resume; kept across restarts |
 | `PUT /analysis/run` | run now |
 | `PUT /analysis/clear` | delete every finding; the read position is kept |
-| `GET /analysis/findings?since=&until=&type=&kind=` | the findings as written |
+| `GET /analysis/findings?since=&until=&type=&kind=&after=` | the findings as written (`after`: epoch s) |
 | `GET /analysis/summary?since=&until=` | 12.3 |
 
 | Constant | Value |
@@ -870,9 +871,9 @@ findings say, cell by cell, to set against boatcal on the same days before a tab
 | Run every, first run after start, lag | 5 min, 1 min, 1 min |
 | Sensor read | chosen, else most messages since start of those sent within 1 min |
 | Look back: first run, after being off | 1 h, 24 h |
-| Window | 2 min, on the clock |
-| Compliant | each required input ≥ 80%, good seconds ≥ 80% |
-| Stable | good seconds ≥ 80%; sd heading 6°, raw TWA 6°, raw TWD 8°, STW 0.5 kn; TWS sd/mean 0.2 |
-| Current | 20 min, upright \|heel\| < 5°, ≥ 5 windows, heading spread ≥ 0.05, < 4 kn; converged 0.002 kn, ≤ 200 passes |
-| K | \|heel\| ≥ 4°, STW ≥ 3 kn |
-| TWS reference | 30 min either side, ≥ 3 kn |
+| Compliant `s5` | 4 good seconds of 5 |
+| STW samples | STW and SOG > 0.5 kn, raw \|TWA\| > 30° |
+| Current | 20 min, upright \|heel\| < 5°, ≥ 60 samples, heading spread ≥ 0.05, < 4 kn, 10% trimmed mean; converged 0.001 kn, ≤ 500 passes |
+| Support | STW 200 samples per 10° × 2.5 kn; TWA 3; TWS 15 min per 40° × 5 kn |
+| K | \|heel\| ≥ 4°, STW ≥ 3 kn, 5 days |
+| TWS legs | trimmed 2 min each end; bands 10°, ≥ 60 s; reference ≥ 60 s, within 30 min, same day, ≥ 3 kn |

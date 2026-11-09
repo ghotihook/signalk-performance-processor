@@ -1199,7 +1199,7 @@ test('analysis: every few minutes, findings from history, written once each, and
   const day = new Date(clock).toISOString().slice(0, 10)
   const first = (await h.call('GET', '/analysis/findings', undefined, {})).json
   assert.ok(first.filter(f => f.type === 'mnv' && f.kind === 'tack').length >= 6)
-  assert.ok(first.filter(f => f.type === 'win').every(f => f.cls === 'up' || !f.stable))
+  assert.ok(first.filter(f => f.type === 's5' && f.compliant).every(f => f.cls === 'sailUp' || f.cls === 'other'))
 
   // Later, nothing new: what was still open closes, nothing is written twice.
   clock += 10 * 60000
@@ -1220,7 +1220,7 @@ test('analysis: every few minutes, findings from history, written once each, and
   const tacks = (await h.call('GET', '/analysis/findings', undefined, { type: 'mnv', kind: 'tack' })).json
   assert.ok(tacks.length >= 6 && tacks.every(f => f.kind === 'tack'))
   const s = (await h.call('GET', '/analysis/summary', undefined, { since: day })).json
-  assert.ok(s.counts['mnv tack compliant stable'] >= 6, JSON.stringify(s.counts))
+  assert.ok(s.counts.manoeuvres.tack >= 6 && s.counts.seconds.sailUp.compliant > 1800, JSON.stringify(s.counts))
   assert.strictEqual((await h.call('GET', '/analysis/summary', undefined, { since: 'yesterday' })).status, 400)
 
   r = await h.call('PUT', '/analysis/clear')

@@ -785,6 +785,8 @@ module.exports = function (app) {
   let analyst = null
   let analysisSink = [] // this run's findings: the Analyst lives across runs
   let analysisTimer = null
+  let findingsVersion = 0 // changes whenever findings are written or cleared
+  let summaryCache = null
   // Read at start, not when the plugin is made: the server gives the plugin its data
   // directory (getDataDirPath) only after making it.
   function loadAnalysisState () {
@@ -806,6 +808,7 @@ module.exports = function (app) {
 
   function appendFindings (found) {
     if (!found.length) return
+    findingsVersion++
     fs.mkdirSync(analysisDir(), { recursive: true })
     const byDay = {}
     for (const f of found) {
@@ -870,9 +873,9 @@ module.exports = function (app) {
         // A new start: from where the last one left off, or ANALYSIS_FIRST_MS back.
         const floor = Math.floor((now - (analysis.resume ? ANALYSIS_BACK_MS : ANALYSIS_FIRST_MS)) / 1000)
         const r = analysis.resume || {}
-        const resume = { win: Math.max(r.win ?? floor, floor), learn: Math.max(r.learn ?? floor, floor) }
+        const resume = { learn: Math.max(r.learn ?? floor, floor) }
         analyst = new Analyst(f => analysisSink.push(f), { resume })
-        from = (Math.min(resume.win, resume.learn) - RESUME_CONTEXT_S) * 1000
+        from = (resume.learn - RESUME_CONTEXT_S) * 1000
       } else {
         from = analysis.readTo ?? to - ANALYSIS_EVERY_MS
       }
@@ -883,7 +886,7 @@ module.exports = function (app) {
       analysis.lastRows = rows.length
       analysis.readTo = to
       const safe = analyst.safe()
-      analysis.resume = { win: safe.win ?? Math.floor(to / 1000), learn: safe.learn ?? Math.floor(to / 1000) }
+      analysis.resume = { learn: safe.learn ?? Math.floor(to / 1000) }
     } catch (e) {
       analysis.lastError = e.message
     } finally {
@@ -985,7 +988,7 @@ module.exports = function (app) {
       let removed = 0
       try {
         for (const n of fs.readdirSync(analysisDir())) {
-          if (/^\d{4}-\d{2}-\d{2}\.jsonl$/.test(n)) { fs.unlinkSync(path.join(analysisDir(), n)); removed++ }
+          if (/^\d{4}-\d{2}-\d{2}\.jsonl$/.test(n)) { fs.unlinkSync(path.join(analysisDir(), n)); removed++; findingsVersion++ }
         }
       } catch (e) {
         if (e.code !== 'ENOENT') return res.status(500).json({ errors: [`could not clear: ${e.message}`] })
@@ -1001,8 +1004,8 @@ module.exports = function (app) {
       res.json(analysisView())
     })
 
-    // Findings as written. ?since=&until= (local days, YYYY-MM-DD), &type=win|mnv|leg, &kind=
-    // (a manoeuvre's or leg's kind, or a window's class).
+    // Findings as written. ?since=&until= (local days, YYYY-MM-DD), &type=s5|mnv|leg, &kind=
+    // (a manoeuvre's or leg's kind, or a 5 s record's class), &after= (epoch s).
     const daysOf = q => {
       const day = s => s === undefined || /^\d{4}-\d{2}-\d{2}$/.test(s)
       return day(q.since) && day(q.until) ? [q.since, q.until] : null
@@ -1012,7 +1015,8 @@ module.exports = function (app) {
       const d = daysOf(q)
       if (!d) return res.status(400).json({ errors: ['since and until must be local dates (YYYY-MM-DD)'] })
       res.set('Cache-Control', 'no-store')
-      res.json(readFindings(...d).filter(f => (!q.type || f.type === q.type) && (!q.kind || f.kind === q.kind || f.cls === q.kind)))
+      const after = Number(q.after)
+      res.json(readFindings(...d).filter(f => (!q.type || f.type === q.type) && (!q.kind || f.kind === q.kind || f.cls === q.kind) && (!(after > 0) || f.t >= after)))
     })
 
     // Counts, and the tables fitted from the findings (raw inputs only), in pipeline order,
@@ -1022,7 +1026,11 @@ module.exports = function (app) {
       const d = daysOf(q)
       if (!d) return res.status(400).json({ errors: ['since and until must be local dates (YYYY-MM-DD)'] })
       res.set('Cache-Control', 'no-store')
-      res.json(fit(readFindings(...d), current()))
+      // A season of 5 s records takes a while to fit: kept until a run adds findings, the
+      // findings are cleared, or the tables change.
+      const key = JSON.stringify([d, findingsVersion, current().corrections])
+      if (!summaryCache || summaryCache.key !== key) summaryCache = { key, body: fit(readFindings(...d), current()) }
+      res.json(summaryCache.body)
     })
 
     router.get('/live', (req, res) => {
