@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (dev)
+## 0.3.3-beta.2 — 2026-11-09 (beta)
 
 - **Analysis tab** in the webapp: status (Run now, Pause, Clear findings, the sensors read), what has been seen by class with how much is used, the four tables fitted from raw data cell by cell (median, support, your table now; thin cells faded) with each proposed table in paste format, and the latest findings.
 - **Fixed: analysis read a sensor's temporary name.** It read whichever sensor Auto held that second, and after a restart that can be an NMEA 2000 device's name before the server learns its CAN name (`n2k-tcp.100`), whose few values the history provider holds for minutes: findings with frozen wind and heel. It now reads the source chosen in Settings, else the sensor that has sent most since start. Clear the findings from beta.1's first run.
