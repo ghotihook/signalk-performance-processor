@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased (dev)
+
+- **Analysis learns from raw inputs only** (findings layout 2; layout 1 findings are ignored). Findings hold raw STW, AWA, AWS, heading, heel and the ground and water velocities; nothing passes through the tables in use, so they cannot change what is learned. `GET /analysis/summary` now fits every table from them in the pipeline's order, after boatcal: the STW table and K from the GPS (current from upright sailing, where it can be told from a paddlewheel error and leeway), the TWA table from tacks and gybes with that STW table, the TWS table from off-wind windows against the beats with both. Each cell comes with its histogram and the table's value now; a proposed table keeps thin cells blank.
+- No window is written for the reader's padding (no input at all), and a window needs 80% good seconds to be stable.
+
 ## 0.3.3-beta.0 — 2026-11-09 (beta)
 
 - **Analysis (beta, SPECIFICATION.md §12).** Every 5 minutes the plugin reads the latest sailing from the History API and writes findings to `analysis/YYYY-MM-DD.jsonl` in its data directory: each 2-minute window classed up, between, reach or down; each tack, gybe and rounding with its TWD step; each leg. Each is marked compliant (the inputs were there) and stable (steady enough to average). From a tack or gybe it says how many degrees the TWA table still needs; off-wind windows against nearby beats say the same for TWS. Not the data, only the findings, so over days they build up histograms on the tables' cells. `GET /analysis/summary`, `/analysis/findings`, `/analysis/status`; `PUT /analysis {enabled}`, `/analysis/run`. Nothing changes a table.

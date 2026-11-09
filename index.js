@@ -7,7 +7,7 @@ const { Smooth, SmoothAngle, SmoothVector } = require('./lib/damping')
 const { process, correctInputs, normalizeConfig, salvage, CORRECTIONS, CONFIG_SCHEMA, MAX_LEEWAY_DEG, LEEWAY_FADE_KN, TWA_TAPER_UP_DEG, TWA_TAPER_DOWN_DEG, TWA_SLOPE_MAX } = require('./lib/processor')
 const { Learner } = require('./lib/learn')
 const history = require('./lib/history')
-const { Analyst, summarise, RESUME_CONTEXT_S } = require('./lib/analysis')
+const { Analyst, fit, RESUME_CONTEXT_S } = require('./lib/analysis')
 
 const MS_TO_KN = 1.94384
 const RAD_TO_DEG = 180 / Math.PI
@@ -843,12 +843,11 @@ module.exports = function (app) {
         const floor = Math.floor((now - (analysis.resume ? ANALYSIS_BACK_MS : ANALYSIS_FIRST_MS)) / 1000)
         const r = analysis.resume || {}
         const resume = { win: Math.max(r.win ?? floor, floor), learn: Math.max(r.learn ?? floor, floor) }
-        analyst = new Analyst(f => analysisSink.push(f), config, { resume })
+        analyst = new Analyst(f => analysisSink.push(f), { resume })
         from = (Math.min(resume.win, resume.learn) - RESUME_CONTEXT_S) * 1000
       } else {
         from = analysis.readTo ?? to - ANALYSIS_EVERY_MS
       }
-      analyst.setConfig(config)
       const rows = from < to ? await history.dayRows(api, from, to, sources, config.variation, plugin.id) : []
       for (const r of rows) analyst.add(r)
       // The boat has stopped: close what is open rather than wait for the next sailing.
@@ -973,14 +972,14 @@ module.exports = function (app) {
       res.json(readFindings(...d).filter(f => (!q.type || f.type === q.type) && (!q.kind || f.kind === q.kind || f.cls === q.kind)))
     })
 
-    // Counts, and the corrections the findings point to, binned on the tables' own axes.
-    // &tables= a tables id, for the corrections still needed on top of those tables.
+    // Counts, and the tables fitted from the findings (raw inputs only), in pipeline order,
+    // each cell's histogram beside the table in use; thin cells blank.
     router.get('/analysis/summary', (req, res) => {
       const q = req.query || {}
       const d = daysOf(q)
       if (!d) return res.status(400).json({ errors: ['since and until must be local dates (YYYY-MM-DD)'] })
       res.set('Cache-Control', 'no-store')
-      res.json(summarise(readFindings(...d), current(), { tables: q.tables }))
+      res.json(fit(readFindings(...d), current()))
     })
 
     router.get('/live', (req, res) => {
