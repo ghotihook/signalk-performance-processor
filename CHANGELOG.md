@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (dev)
+## 0.3.3-beta.4 — 2026-11-09 (beta)
 
 - **Analysis in plain chunks** (findings layout 4): every 5 minutes, the chunk since the last is read with 7 minutes before and 3 after, its 5 s samples and manoeuvres kept, and the tables fitted again. Nothing carried between runs but where the last chunk ended; legs are found from the 5 s samples when fitting. Chunks find what one long read would.
 - **Fixed: no wind or heel for the first minutes after a restart.** The server records an NMEA 2000 device by its address (`n2k-tcp.100`) until it learns its CAN name, and the analysis read the CAN name only. It now reads a device under both names, learned from each update's source.
