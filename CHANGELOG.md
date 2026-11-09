@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (dev)
+## 0.3.3-beta.1 — 2026-11-09 (beta)
 
 - **Analysis learns from raw inputs only** (findings layout 2; layout 1 findings are ignored). Findings hold raw STW, AWA, AWS, heading, heel and the ground and water velocities; nothing passes through the tables in use, so they cannot change what is learned. `GET /analysis/summary` now fits every table from them in the pipeline's order, after boatcal: the STW table and K from the GPS (current from upright sailing, where it can be told from a paddlewheel error and leeway), the TWA table from tacks and gybes with that STW table, the TWS table from off-wind windows against the beats with both. Each cell comes with its histogram and the table's value now; a proposed table keeps thin cells blank.
 - No window is written for the reader's padding (no input at all), and a window needs 80% good seconds to be stable.
