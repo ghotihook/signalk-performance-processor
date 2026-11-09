@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (dev)
+## 0.3.3-beta.3 — 2026-11-09 (beta)
 
 - **Analysis in boatcal's units** (findings layout 3; layouts 1 and 2 are ignored). The 2-minute windows and the "stable" filters are gone. Findings are 5-second medians of the raw inputs (boat speed table, K, TWS), tacks, gybes and roundings with boatcal's windows (TWA), and legs (TWS). The TWS table now compares off-wind legs, trimmed by 2 minutes and in 10° bands, against the upwind legs before and after, as boatcal does. Support per cell scales with its area as boatcal's; K is proposed only from 5 days of upwind.
 - **Fixed: the current came out a little wrong**, taking part of a paddlewheel error with it: cells were rounded between passes, so they stopped moving early, and a median over the two gybes' headings sat inside one of them. Now unrounded, and a trimmed mean.

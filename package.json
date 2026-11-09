@@ -1,6 +1,6 @@
 {
   "name": "signalk-performance-processor",
-  "version": "0.3.3-beta.2",
+  "version": "0.3.3-beta.3",
   "description": "True wind you can trust in Signal K: TWD steady through tacks and gybes, TWS the same upwind and down, TWA at your compass's rate. Works true wind out again from raw apparent wind, boat speed and heading, corrects it with boat speed / heel, TWA and TWS tables of any shape (an H5000 or H2000 calibration, or a fine grid) fitted from your own sailing logs, damps it, and shows every step live. Also leeway, current and ground wind. Runs beside your instruments in Shadow mode until you trust it.",
   "main": "index.js",
   "scripts": {
