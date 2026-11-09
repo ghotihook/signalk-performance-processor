@@ -754,11 +754,20 @@ a fit from the same findings is the same whatever tables are in use.
 
 ### 12.1 Cadence
 
-Every `ANALYSIS_EVERY` = 5 minutes (the first 30 s after start), the history from where the
+Every `ANALYSIS_EVERY` = 5 minutes (the first a minute after start), the history from where the
 last run read up to `ANALYSIS_LAG` = 1 minute ago (providers write in batches) is read as
 1 Hz rows (§11.2) and fed, a second at a time, to one long-lived analyser: windows,
 manoeuvres and legs carry across runs, so a run boundary changes nothing. When the last row
 is more than 7 minutes old (the boat stopped), what is open is closed.
+
+**Which sensor.** Each input is read from the source chosen in Settings, else from the
+sensor that has sent it most since the plugin started, of those that sent in the last minute
+(any, if none has). Never Auto's choice of the moment (§2.2): it moves to another sensor when
+one goes quiet for 3 s, and the server records an NMEA 2000 device under a temporary name
+(`n2k-tcp.100`) until it learns its CAN name, so that name holds only the first seconds after
+each restart. History providers may hold a sparse source's last value through the empty
+seconds after it (signalk-questdb, up to twice its heartbeat), so reading such a name gives a
+value frozen for minutes. `GET /analysis/status` names the sensors of the last run.
 
 After a restart (or a Save, which restarts the pipeline) it resumes from the saved state
 (`analysis/state.json`): from the earlier of the open window and the learner's next minute,
@@ -852,12 +861,14 @@ findings say, cell by cell, to set against boatcal on the same days before a tab
 | `GET /analysis/status` | enabled, running, last run, rows read, findings written, error |
 | `PUT /analysis` `{ enabled }` | pause or resume; kept across restarts |
 | `PUT /analysis/run` | run now |
+| `PUT /analysis/clear` | delete every finding; the read position is kept |
 | `GET /analysis/findings?since=&until=&type=&kind=` | the findings as written |
 | `GET /analysis/summary?since=&until=` | 12.3 |
 
 | Constant | Value |
 |---|---|
-| Run every, first run after start, lag | 5 min, 30 s, 1 min |
+| Run every, first run after start, lag | 5 min, 1 min, 1 min |
+| Sensor read | chosen, else most messages since start of those sent within 1 min |
 | Look back: first run, after being off | 1 h, 24 h |
 | Window | 2 min, on the clock |
 | Compliant | each required input ≥ 80%, good seconds ≥ 80% |

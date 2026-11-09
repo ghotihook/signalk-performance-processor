@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased (dev)
+
+- **Analysis tab** in the webapp: status (Run now, Pause, Clear findings, the sensors read), what has been seen by class with how much is used, the four tables fitted from raw data cell by cell (median, support, your table now; thin cells faded) with each proposed table in paste format, and the latest findings.
+- **Fixed: analysis read a sensor's temporary name.** It read whichever sensor Auto held that second, and after a restart that can be an NMEA 2000 device's name before the server learns its CAN name (`n2k-tcp.100`), whose few values the history provider holds for minutes: findings with frozen wind and heel. It now reads the source chosen in Settings, else the sensor that has sent most since start. Clear the findings from beta.1's first run.
+- **Fixed: analysis lost its place on restart.** The saved position was read before the server gave the plugin its data directory, so each restart looked back an hour again.
+- `PUT /analysis/clear`: delete every finding, keeping the read position. First run a minute after start (was 30 s).
+
 ## 0.3.3-beta.1 — 2026-11-09 (beta)
 
 - **Analysis learns from raw inputs only** (findings layout 2; layout 1 findings are ignored). Findings hold raw STW, AWA, AWS, heading, heel and the ground and water velocities; nothing passes through the tables in use, so they cannot change what is learned. `GET /analysis/summary` now fits every table from them in the pipeline's order, after boatcal: the STW table and K from the GPS (current from upright sailing, where it can be told from a paddlewheel error and leeway), the TWA table from tacks and gybes with that STW table, the TWS table from off-wind windows against the beats with both. Each cell comes with its histogram and the table's value now; a proposed table keeps thin cells blank.

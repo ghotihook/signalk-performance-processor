@@ -21,10 +21,11 @@ const STATUS_INTERVAL_MS = 1000
 // ANALYSIS_LAG_MS ago (providers write in batches). The first run looks back
 // ANALYSIS_FIRST_MS; after the plugin was off, it catches up at most ANALYSIS_BACK_MS.
 const ANALYSIS_EVERY_MS = 5 * 60 * 1000
-const ANALYSIS_START_MS = 30 * 1000
+const ANALYSIS_START_MS = 60 * 1000 // long enough for each sensor's count to tell
 const ANALYSIS_LAG_MS = 60 * 1000
 const ANALYSIS_FIRST_MS = 60 * 60 * 1000
 const ANALYSIS_BACK_MS = 24 * 3600 * 1000
+const ANALYSIS_SOURCE_MAX_AGE_MS = 60 * 1000 // a sensor read from history has sent within this
 // Bounds for sanity-checking sensor input. Anything outside these is a fault, not a reading.
 const MAX_PLAUSIBLE_STW_KN = 60
 const MAX_PLAUSIBLE_AWS_KN = 120
@@ -242,10 +243,10 @@ module.exports = function (app) {
   // (apparent wind's angle and speed share a timestamp).
   function noteSource (group, src, sensor, ts, now) {
     const key = `${group}|${src}`
-    const s = sources[key] = sources[key] || { group, src, sensor, times: [] }
+    const s = sources[key] = sources[key] || { group, src, sensor, times: [], count: 0 }
     s.at = now
     s.sensor = sensor // as of its latest message: a name can start out without a source object
-    if (ts == null || ts !== s.ts) { s.ts = ts; s.times.push(now) }
+    if (ts == null || ts !== s.ts) { s.ts = ts; s.times.push(now); s.count++ }
     while (s.times.length && now - s.times[0] > RATE_WINDOW_MS) s.times.shift()
   }
   const sourcesOf = group => Object.values(sources).filter(s => s.group === group)
@@ -674,6 +675,7 @@ module.exports = function (app) {
 
   plugin.start = function () {
     started = true
+    loadAnalysisState()
     const { raw, error } = loadStored()
     if (error) {
       startError = `Configuration: could not read ${CONFIG_FILE} (${error}). Not running: Save in the webapp to start from the values shown, or restore your backup`
@@ -779,14 +781,20 @@ module.exports = function (app) {
   // findings, appended to a file per local day in analysis/. The data itself is not kept.
   const analysisDir = () => path.join(app.getDataDirPath(), 'analysis')
   const analysisStateFile = () => path.join(analysisDir(), 'state.json')
-  let analysis = { enabled: true, running: false, lastRunAt: null, lastError: '', lastRows: 0, lastFound: 0, readTo: null, resume: null }
+  let analysis = { enabled: true, running: false, lastRunAt: null, lastError: '', lastRows: 0, lastFound: 0, readTo: null, resume: null, sources: null }
   let analyst = null
   let analysisSink = [] // this run's findings: the Analyst lives across runs
   let analysisTimer = null
-  try {
-    const st = JSON.parse(fs.readFileSync(analysisStateFile(), 'utf8'))
-    analysis = { ...analysis, enabled: st.enabled !== false, readTo: st.readTo ?? null, resume: st.resume ?? null }
-  } catch (e) {} // none yet
+  // Read at start, not when the plugin is made: the server gives the plugin its data
+  // directory (getDataDirPath) only after making it.
+  function loadAnalysisState () {
+    try {
+      const st = JSON.parse(fs.readFileSync(analysisStateFile(), 'utf8'))
+      analysis = { ...analysis, enabled: st.enabled !== false, readTo: st.readTo ?? null, resume: st.resume ?? null }
+    } catch (e) {
+      if (e.code !== 'ENOENT') app.error(`analysis: could not read ${analysisStateFile()} (${e.message}); starting afresh`)
+    }
+  }
   const analysisView = () => ({ ...analysis, everyMin: ANALYSIS_EVERY_MS / 60000 })
 
   function saveAnalysisState () {
@@ -822,6 +830,25 @@ module.exports = function (app) {
     return out
   }
 
+  // The sensor to read from history for each input: the one chosen in Settings, else the
+  // sensor that has sent it most since the plugin started, of those still sending. Never
+  // Auto's choice of the moment: it moves to another sensor when one goes quiet for a few
+  // seconds, and the server records an NMEA 2000 device under a temporary name (n2k-tcp.100)
+  // until it learns its CAN name, so that name holds only the first seconds after a restart.
+  function analysisSources (now) {
+    const out = {}
+    for (const g of Object.keys(INPUTS)) {
+      if (config.sources[g]) { out[g] = config.sources[g]; continue }
+      // Still sending if any is (a renamed device's old name has stopped); else any, so the
+      // sailing already recorded is still read after the instruments go off.
+      const seen = sourcesOf(g).filter(x => x.sensor)
+      const live = seen.filter(x => now - x.at < ANALYSIS_SOURCE_MAX_AGE_MS)
+      const pick = live.length ? live : seen
+      if (pick.length) out[g] = pick.reduce((a, b) => b.count > a.count ? b : a).src
+    }
+    return out
+  }
+
   async function analyseOnce () {
     if (analysis.running || !config) return
     analysis.running = true
@@ -832,7 +859,8 @@ module.exports = function (app) {
       let api
       try { api = typeof app.getHistoryApi === 'function' ? await app.getHistoryApi() : null } catch (e) { api = null }
       if (!api) throw new Error('No history provider: install one (such as signalk-questdb or signalk-parquet)')
-      const sources = Object.fromEntries(Object.keys(INPUTS).map(g => [g, inUse(g)]).filter(([, v]) => v))
+      const sources = analysisSources(Date.now())
+      analysis.sources = sources
       const lack = history.missing(sources)
       if (lack.length) throw new Error(`No sensor in use for ${lack.map(g => INPUT_LABELS[g]).join(', ')}`)
       const now = Date.now()
@@ -948,6 +976,21 @@ module.exports = function (app) {
       if (running && analysis.enabled) startAnalysis()
       else stopAnalysis()
       res.json(analysisView())
+    })
+
+    // Delete every finding (the day files), keeping where the analysis has read up to: a
+    // fresh start, after a change to the boat or findings from a beta since fixed.
+    router.put('/analysis/clear', (req, res) => {
+      if (analysis.running) return res.status(409).json({ errors: ['a run is in progress: try again in a moment'] })
+      let removed = 0
+      try {
+        for (const n of fs.readdirSync(analysisDir())) {
+          if (/^\d{4}-\d{2}-\d{2}\.jsonl$/.test(n)) { fs.unlinkSync(path.join(analysisDir(), n)); removed++ }
+        }
+      } catch (e) {
+        if (e.code !== 'ENOENT') return res.status(500).json({ errors: [`could not clear: ${e.message}`] })
+      }
+      res.json({ ...analysisView(), removed })
     })
 
     // Run now, rather than wait for the timer.

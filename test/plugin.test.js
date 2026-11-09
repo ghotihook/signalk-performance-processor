@@ -1223,7 +1223,44 @@ test('analysis: every few minutes, findings from history, written once each, and
   assert.ok(s.counts['mnv tack compliant stable'] >= 6, JSON.stringify(s.counts))
   assert.strictEqual((await h.call('GET', '/analysis/summary', undefined, { since: 'yesterday' })).status, 400)
 
+  r = await h.call('PUT', '/analysis/clear')
+  assert.ok(r.json.removed >= 1)
+  assert.deepStrictEqual((await h.call('GET', '/analysis/findings', undefined, {})).json, [])
+  assert.ok(r.json.resume, 'the read position is kept')
+
   r = await h.call('PUT', '/analysis', { enabled: false })
   assert.strictEqual(r.json.enabled, false)
   assert.strictEqual(JSON.parse(fs.readFileSync(path.join(h.dir, 'analysis', 'state.json'), 'utf8')).enabled, false)
+})
+
+test('analysis: the saved position is read at start, after the server gives the data directory', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spp-'))
+  fs.mkdirSync(path.join(dir, 'analysis'))
+  fs.writeFileSync(path.join(dir, 'analysis', 'state.json'), JSON.stringify({ enabled: true, readTo: 123000, resume: { win: 120, learn: 60 } }))
+  // As the server does it: the plugin is made first, getDataDirPath added after.
+  const app = { debug () {}, error () {}, setPluginError () {}, setPluginStatus () {}, handleMessage () {}, subscriptionmanager: { subscribe: (s, u) => { u.push(() => {}) } } }
+  const plugin = factory(app)
+  app.getDataDirPath = () => dir
+  const routes = {}
+  plugin.registerWithRouter({ get: (p, fn) => { routes[p] = fn }, put () {} })
+  plugin.start({})
+  let json
+  routes['/analysis/status']({}, { set () {}, json (b) { json = b } })
+  assert.deepStrictEqual(json.resume, { win: 120, learn: 60 })
+  assert.strictEqual(json.readTo, 123000)
+  plugin.stop()
+})
+
+test('analysis: reads each input from the sensor that has sent it most, not the one Auto holds this second', async () => {
+  const h = harness()
+  const asked = []
+  const api = beatingHistory(clock - 3 * 60000)
+  h.app.getHistoryApi = async () => ({ getValues: q => { asked.push(...q.pathSpecs.map(s => s.sourceRef)); return api.getValues(q) } })
+  // The masthead as the server first names it, then renamed (its CAN name) and sending on.
+  h.feed(wind, 'n2k-tcp.100')
+  for (let i = 0; i < 40; i++) h.feed([...wind, ...boat], 'n2k-tcp.c079be00ffd20dcb')
+  h.feed(wind, 'n2k-tcp.100') // a late straggler under the old name: Auto may take it
+  const r = await h.call('PUT', '/analysis/run')
+  assert.strictEqual(r.json.sources.apparentWind, 'n2k-tcp.c079be00ffd20dcb')
+  assert.ok(!asked.includes('n2k-tcp.100'), 'never the temporary name')
 })

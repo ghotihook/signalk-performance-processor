@@ -69,9 +69,12 @@
     selected: 'twa',
     symmetric: false, // STW table: edit the same heel on both sides at once
     live: null,
-    saving: false
+    saving: false,
+    analysis: { status: null, summary: null, recent: null, range: '0', error: '', loadedAt: 0 }
   }
 
+  const VIEWS = ['live', 'calibration', 'settings', 'analysis']
+  const ANALYSIS_MS = 15000
   const $ = id => document.getElementById(id)
   const clone = o => JSON.parse(JSON.stringify(o))
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
@@ -186,11 +189,12 @@
   function renderAll () {
     renderHeader()
     renderSaveBar()
-    for (const v of ['live', 'calibration', 'settings']) $('view-' + v).hidden = v !== state.view
+    for (const v of VIEWS) $('view-' + v).hidden = v !== state.view
     document.querySelectorAll('nav a').forEach(a => a.classList.toggle('current', a.dataset.view === state.view))
     if (state.view === 'live') renderLive()
     if (state.view === 'calibration') renderCalibration()
     if (state.view === 'settings') renderSettings()
+    if (state.view === 'analysis') renderAnalysis()
   }
 
   function renderHeader () {
@@ -562,12 +566,161 @@
     renderSources()
   }
 
+  // ---- analysis (beta) ---------------------------------------------------------
+
+  const localDay = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  const daysAgo = n => { const d = new Date(); d.setDate(d.getDate() - n); return localDay(d) }
+  const clock = t => new Date(t * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const ago = ms => { const m = Math.round((Date.now() - ms) / 60000); return m < 1 ? 'just now' : m < 120 ? `${m} min ago` : `${Math.round(m / 60)} h ago` }
+
+  async function loadAnalysis () {
+    const a = state.analysis
+    const since = a.range === 'all' ? '' : `?since=${daysAgo(Number(a.range))}`
+    try {
+      const [status, summary, recent] = await Promise.all([
+        getJson('/analysis/status'),
+        getJson('/analysis/summary' + since),
+        getJson(`/analysis/findings?since=${daysAgo(0)}`)
+      ])
+      Object.assign(a, { status, summary, recent, error: '', loadedAt: Date.now() })
+    } catch (e) {
+      a.error = /404/.test(e.message) ? 'This version of the plugin has no analysis: update to the beta.' : `Could not load the analysis (${e.message})`
+    }
+    if (state.view === 'analysis') renderAnalysis()
+  }
+
+  async function analysisAction (method, path, body) {
+    const a = state.analysis
+    a.busy = true
+    renderAnalysis()
+    try {
+      const res = await fetch(API + path, { method, credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })
+      const b = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(res.status === 401 || res.status === 403 ? 'not authorised — log in to Signal K' : (b.errors || [res.statusText]).join('; '))
+      a.error = ''
+    } catch (e) {
+      a.error = e.message
+    }
+    a.busy = false
+    await loadAnalysis()
+  }
+
+  function renderAnalysis () {
+    const a = state.analysis
+    const st = a.status
+    $('anToggle').textContent = st && !st.enabled ? 'Resume' : 'Pause'
+    $('anRun').disabled = $('anToggle').disabled = $('anClear').disabled = !!a.busy || !st
+    $('anRange').value = a.range
+    const lines = []
+    if (a.error) lines.push(`<p class="warn">${esc(a.error)}</p>`)
+    if (st) {
+      lines.push(`<p>${st.enabled ? `Runs every ${st.everyMin} minutes` : '<span class="warn">Paused</span>'}${a.busy || st.running ? ' · <b>running now…</b>' : ''}</p>`)
+      if (st.lastRunAt) {
+        lines.push(`<p>Last run ${esc(ago(st.lastRunAt))} (${esc(clock(st.lastRunAt / 1000))}): read ${st.lastRows} s of sailing, ${st.lastFound} new findings.` +
+          (st.readTo ? ` Read up to ${esc(clock(st.readTo / 1000))}; tacks and gybes show about 4 minutes after, a leg when it ends.` : '') + '</p>')
+      } else lines.push('<p class="muted">Not run yet: the first run is a minute after the plugin starts.</p>')
+      if (st.sources) {
+        lines.push('<p class="muted">Reading from history: ' + Object.entries(st.sources).map(([g, src]) => `${esc(SOURCE_LABELS[g] || g)} <code>${esc(src)}</code>`).join(' · ') +
+          '. The source chosen in Settings, else the sensor that has sent most since the plugin started.</p>')
+      }
+      if (st.lastError) lines.push(`<p class="warn">${esc(st.lastError)}</p>`)
+    }
+    $('anStatus').innerHTML = lines.join('') || '<p class="muted">Loading…</p>'
+    renderAnalysisCounts(a.summary)
+    renderAnalysisFits(a.summary)
+    renderAnalysisRecent(a.recent)
+  }
+
+  const KIND_LABEL = { up: 'Window: upwind', between: 'Window: between', reach: 'Window: reaching', down: 'Window: downwind', none: 'Window: no wind', tack: 'Tack', gybe: 'Gybe', comeUp: 'Rounding up', comeDown: 'Bearing away' }
+  const KIND_ORDER = ['win up', 'win between', 'win reach', 'win down', 'win none', 'mnv tack', 'mnv gybe', 'mnv comeUp', 'mnv comeDown', 'leg up', 'leg off']
+
+  function renderAnalysisCounts (s) {
+    if (!s) { $('anCounts').innerHTML = '<tr><td colspan="5" class="muted center">Loading…</td></tr>'; return }
+    const rows = {}
+    for (const [key, n] of Object.entries(s.counts)) {
+      const [type, kind, comp, stab] = key.split(' ')
+      const r = rows[`${type} ${kind}`] = rows[`${type} ${kind}`] || { all: 0, compliant: 0, used: 0, unstable: 0 }
+      r.all += n
+      if (comp === 'compliant') { r.compliant += n; if (stab === 'stable') r.used += n; else r.unstable += n }
+    }
+    const keys = KIND_ORDER.filter(k => rows[k]).concat(Object.keys(rows).filter(k => !KIND_ORDER.includes(k)))
+    if (!keys.length) { $('anCounts').innerHTML = '<tr><td colspan="5" class="muted center">Nothing yet</td></tr>'; return }
+    $('anCounts').innerHTML = keys.map(k => {
+      const r = rows[k]; const [type, kind] = k.split(' ')
+      const label = type === 'leg' ? `Leg: ${kind === 'up' ? 'upwind' : 'off the wind'}` : (KIND_LABEL[kind] || k)
+      const why = [r.all - r.compliant ? `${r.all - r.compliant} missing inputs` : '', r.unstable ? `${r.unstable} not steady` : ''].filter(Boolean).join(', ')
+      return `<tr><td>${esc(label)}</td><td class="num">${r.all}</td><td class="num">${r.compliant}</td><td class="num"><b>${r.used}</b></td><td class="muted sub">${esc(why)}</td></tr>`
+    }).join('')
+  }
+
+  // A fitted table as a grid: only the rows and columns with data, each cell its median,
+  // how many findings it rests on, and the table in use there.
+  function fitGrid (kind, g, corner, rowsKey, colsKey, d) {
+    const R = g[rowsKey]; const C = g[colsKey]
+    const ri = R.map((_, i) => i).filter(i => g.cells[i].some(Boolean))
+    const cs = C.map((_, j) => j).filter(j => ri.some(i => g.cells[i][j]))
+    if (!ri.length) return '<p class="muted sub">No findings for this table yet.</p>'
+    const c0 = Math.min(...cs); const c1 = Math.max(...cs)
+    const cols = C.map((_, j) => j).filter(j => j >= c0 && j <= c1)
+    const head = `<tr><th>${esc(corner)}</th>${cols.map(j => `<th class="num">${C[j]}</th>`).join('')}</tr>`
+    const body = ri.map(i => `<tr><th class="num">${R[i]}</th>${cols.map(j => {
+      const c = g.cells[i][j]
+      if (!c) return '<td></td>'
+      const used = g.proposed[i][j] != null
+      const tip = `${c.n} finding${c.n === 1 ? '' : 's'}; middle half ${fmt(c.p25, d)} to ${fmt(c.p75, d)}; table now ${c.table == null ? 'blank' : fmt(c.table, d)}${used ? '' : `; needs ${g.minN} to propose`}`
+      return `<td class="acell${used ? '' : ' thin'}" title="${esc(tip)}"><b>${fmt(c.median, d)}</b><span>n ${c.n} · now ${c.table == null ? '–' : fmt(c.table, d)}</span></td>`
+    }).join('')}</tr>`)
+    const any = g.proposed.some(r => r.some(v => v != null))
+    const text = any ? PPTables.format(kind, { [rowsKey]: R, [colsKey]: C, add: g.proposed }) : ''
+    return `<div class="table-wrap"><table class="agrid">${head}${body.join('')}</table></div>` +
+      (any ? `<details class="paste"><summary>Proposed table, to paste into Calibration</summary><p class="muted sub">Cells with too few findings are blank. Compare with boatcal on the same days before using it.</p><textarea readonly rows="6">${esc(text)}</textarea></details>` : `<p class="muted sub">Too few findings to propose a table (a cell needs ${g.minN}).</p>`)
+  }
+
+  function renderAnalysisFits (s) {
+    if (!s) { $('anFits').innerHTML = ''; return }
+    const k = s.leeway
+    const panel = (title, note, inner) => `<div class="panel"><h2>${esc(title)}</h2><p class="muted sub">${esc(note)}</p>${inner}</div>`
+    $('anFits').innerHTML =
+      '<p class="muted sub intro">Fitted from raw data in the pipeline\'s order: the boat speed table and K from the GPS, then the TWA table from tacks and gybes using that boat speed table, then the TWS table using both. Each cell: the median of what the findings say (bold), how many, and your table now. Faded cells have too few to propose. Hover for the spread.</p>' +
+      panel('1. Boat speed (STW) table', s.stw.note, fitGrid('stw', s.stw, 'heel\\stw', 'heel', 'stw', 2)) +
+      panel('2. Leeway K', s.leeway.note, k.n ? `<p><b>K ${fmt(k.median, 2)}</b> from ${k.n} windows (middle half ${fmt(k.p25, 2)} to ${fmt(k.p75, 2)}); now ${fmt(k.now, 2)}.${k.proposed == null ? ' Too few to propose.' : ''}</p>` : '<p class="muted sub">No findings for K yet.</p>') +
+      panel('3. TWA table', s.twa.note, fitGrid('twa', s.twa, 'TWA\\TWS', 'twa', 'tws', 1)) +
+      panel('4. TWS table', s.tws.note, fitGrid('tws', s.tws, 'TWA\\TWS', 'twa', 'tws', 2))
+  }
+
+  function renderAnalysisRecent (fs) {
+    if (!fs) { $('anRecent').innerHTML = '<tr><td colspan="8" class="muted center">Loading…</td></tr>'; return }
+    const list = fs.filter(f => f.v === 2).sort((a, b) => b.t - a.t).slice(0, 40)
+    if (!list.length) { $('anRecent').innerHTML = '<tr><td colspan="8" class="muted center">Nothing today yet</td></tr>'; return }
+    $('anRecent').innerHTML = list.map(f => {
+      const used = f.compliant && f.stable
+      const why = !f.compliant ? f.why.join(', ') : !f.stable ? `not steady: ${f.unsteady.join(', ')}` : ''
+      let what; let twa = null; let tws = f.tws; let stw = null; let heel = null; let note = ''
+      if (f.type === 'win') {
+        what = KIND_LABEL[f.cls || 'none']
+        twa = f.twa; stw = f.stw; heel = f.heel
+        note = f.gps ? '' : 'no GPS'
+      } else if (f.type === 'mnv') {
+        what = KIND_LABEL[f.kind] || f.kind
+        twa = f.before && f.after ? `${fmt(f.before.twa, 0)} → ${fmt(f.after.twa, 0)}` : null
+        note = `TWD step ${fmt(f.step, 1)}°` + (f.twaAdd != null ? ` (raw TWA ${f.twaAdd > 0 ? '+' : ''}${fmt(f.twaAdd, 1)}°)` : '')
+      } else {
+        what = `Leg: ${f.kind === 'up' ? 'upwind' : 'off the wind'}, ${Math.round((f.t1 - f.t) / 60)} min`
+        tws = null
+      }
+      const n = (v, d = 1) => typeof v === 'string' ? esc(v) : fmt(v, d)
+      return `<tr class="${used ? '' : 'off'}"><td>${esc(clock(f.t))}</td><td>${esc(what)}</td><td>${used ? '<span class="good">yes</span>' : `<span class="sub">${esc(why)}</span>`}</td>` +
+        `<td class="num">${n(twa, 0)}</td><td class="num">${n(tws)}</td><td class="num">${n(stw, 2)}</td><td class="num">${n(heel, 0)}</td><td class="muted sub">${esc(note)}</td></tr>`
+    }).join('')
+  }
+
   // ---- wiring ----------------------------------------------------------------
 
   function route () {
     const v = location.hash.replace('#', '')
-    state.view = ['live', 'calibration', 'settings'].includes(v) ? v : 'live'
+    state.view = VIEWS.includes(v) ? v : 'live'
     renderAll()
+    if (state.view === 'analysis') loadAnalysis()
   }
 
   document.addEventListener('change', onEdit)
@@ -622,8 +775,19 @@
   window.addEventListener('hashchange', route)
   window.addEventListener('beforeunload', e => { if (state.draft && dirty()) { e.preventDefault(); e.returnValue = '' } })
 
+  $('anRange').addEventListener('change', e => { state.analysis.range = e.target.value; loadAnalysis() })
+  $('anRun').addEventListener('click', () => analysisAction('PUT', '/analysis/run'))
+  $('anClear').addEventListener('click', () => {
+    if (window.confirm('Delete every finding so far? The analysis carries on from where it has read up to; what it found before is gone.')) analysisAction('PUT', '/analysis/clear')
+  })
+  $('anToggle').addEventListener('click', () => {
+    const st = state.analysis.status
+    if (st) analysisAction('PUT', '/analysis', { enabled: !st.enabled })
+  })
+
   route()
   loadConfig()
   pollLive()
   setInterval(pollLive, LIVE_MS)
+  setInterval(() => { if (state.view === 'analysis') loadAnalysis() }, ANALYSIS_MS)
 })()

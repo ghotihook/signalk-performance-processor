@@ -17,6 +17,7 @@
       <a href="#live" data-view="live">Live</a>
       <a href="#calibration" data-view="calibration">Calibration</a>
       <a href="#settings" data-view="settings">Settings</a>
+      <a href="#analysis" data-view="analysis">Analysis</a>
     </nav>
     <div id="status" class="muted status"></div>
     <div id="conn" class="warn" hidden></div>
@@ -103,6 +104,28 @@
         <p class="muted sub">Choose the instrument to read for each input. <b>Auto picks the sensor with the highest data rate</b>: in the first 2 s after the plugin starts it counts each sensor's messages and keeps the one sending most often for as long as it sends. If it goes quiet, the busiest other sensor takes over and the status says so. That is not necessarily the most accurate one (a 10 Hz IMU wins over a 1 Hz compass, whichever reads truer). Auto reads data connections only, never another plugin's output (a copy, later and slower, or already corrected), and never mixes two sensors. Choose a source here to override it: a chosen source is never replaced.</p>
         <p class="sub warn">Apparent wind must be raw: AWA and AWS as the masthead measures them, uncorrected and undamped. Take the wind tables out of the instrument and set its wind damping to 0, or choose a source ahead of it; this plugin corrects and damps them itself. Keep the masthead alignment in the instrument.</p>
         <div id="sources" class="sources"></div>
+      </div>
+    </section>
+
+    <section id="view-analysis" class="view" hidden>
+      <p class="muted sub intro">Beta. Every few minutes the plugin reads the latest sailing from the history (signalk-questdb or another provider), classes it and keeps what it found, never the data itself. From raw inputs only (paddlewheel, masthead, compass, heel, GPS), so the tables in use change nothing here. Over days the findings build up a histogram per table cell. Nothing here changes a table: compare, then paste a proposed table into Calibration if you trust it.</p>
+      <div class="panel">
+        <div class="panel-head"><h2>Status</h2><span><button id="anRun" type="button" class="ghost">Run now</button> <button id="anToggle" type="button" class="ghost">Pause</button> <button id="anClear" type="button" class="ghost">Clear findings</button></span></div>
+        <div id="anStatus" class="sub"><p class="muted">Loading…</p></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>What it has seen</h2>
+          <label class="sub muted">From <select id="anRange">
+            <option value="0">today</option><option value="6">the last 7 days</option><option value="29">the last 30 days</option><option value="all">all</option>
+          </select></label>
+        </div>
+        <p class="muted sub">Windows are 2 minutes, classed on raw TWA: up under 70°, between 70°–80°, reach 80°–120°, down beyond. <b>Compliant</b>: apparent wind, STW, heading and heel all there, sailing over 1 kn. <b>Stable</b>: steady enough to average (heading, TWA, TWD, STW and TWS each within a spread). Only findings that are both are used for the tables.</p>
+        <div class="table-wrap"><table><thead><tr><th>Finding</th><th class="num">All</th><th class="num">Compliant</th><th class="num">Used</th><th>Not used because</th></tr></thead><tbody id="anCounts"></tbody></table></div>
+      </div>
+      <div id="anFits"></div>
+      <div class="panel">
+        <div class="panel-head"><h2>Latest findings</h2><span class="muted sub">today, newest first</span></div>
+        <div class="table-wrap"><table><thead><tr><th>Time</th><th>What</th><th>Used</th><th class="num">TWA</th><th class="num">TWS</th><th class="num">STW</th><th class="num">Heel</th><th>Notes</th></tr></thead><tbody id="anRecent"></tbody></table></div>
       </div>
     </section>
   </main>
